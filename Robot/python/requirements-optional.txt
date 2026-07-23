@@ -1,0 +1,9 @@
+# Optional extras. Install only what you need on the UNO Q.
+# OpenCV can be heavy on the 2 GB board; fswebcam fallback works without it.
+opencv-python-headless>=4.8.0
+numpy>=1.24.0
+sounddevice>=0.4.6
+vosk>=0.3.45
+pillow>=10.0.0
+requests>=2.31.0
+edge-tts>=7.0.0

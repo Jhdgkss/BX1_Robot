@@ -1,0 +1,18 @@
+{
+  "send_periodic_camera_frames": false,
+  "periodic_camera_frame_interval_s": 5.0,
+  "location": {
+    "enabled": true,
+    "mode": "static",
+    "site": "workshop",
+    "room": "bench",
+    "zone": "test_area",
+    "map": "default",
+    "map_x_m": null,
+    "map_y_m": null,
+    "heading_deg": null,
+    "latitude": null,
+    "longitude": null,
+    "altitude_m": null
+  }
+}

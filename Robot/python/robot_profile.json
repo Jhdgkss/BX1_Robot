@@ -1,0 +1,6 @@
+{
+  "deprecated": true,
+  "message": "Robot name and personality are now managed in the desktop Robot Brain instance. Arduino/body client keeps hardware only.",
+  "body_id": "BX1",
+  "brain_owns_identity": true
+}

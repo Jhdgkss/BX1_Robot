@@ -1,0 +1,27 @@
+BX1 UNO Q BODY CLIENT V10.20 - INSTALL FIRST
+
+1. Back up these live files from the UNO Q:
+   /home/arduino/Arduino_Q_Client_V1/python/config.json
+   /home/arduino/Arduino_Q_Client_V1/python/robot_profile.json
+
+2. Stop the body service:
+   sudo systemctl stop bx1-web.service
+
+3. Copy this complete Arduino_Q_Client_V1 folder over the existing project.
+
+4. Make scripts executable:
+   cd /home/arduino/Arduino_Q_Client_V1
+   chmod +x START_BX1_WEB.sh STOP_BX1_WEB.sh tools/*.sh
+
+5. Start it:
+   sudo systemctl restart bx1-web.service
+   sudo systemctl status bx1-web.service --no-pager
+
+6. Open http://BX1.local:8088 and check:
+   - Microphone page: filter controls and live raw/filtered FFT.
+   - Event log: rejected noise/echo events are visible.
+   - Hardware Doctor page: run diagnosis.
+
+7. MCU firmware is NOT flashed automatically. Review and compile manually:
+   bash tools/compile_mcu_sketch.sh sketch
+   Then use the existing upload procedure only when the robot is safe and motors are disabled.

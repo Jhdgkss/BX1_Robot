@@ -1,0 +1,32 @@
+# BX1 editable MicroPython settings
+IMU_I2C_ID=1
+IMU_ADDRESS=0x6A
+LOOP_HZ=50
+HEAD_YAW_PIN=9
+HEAD_LEFT_PIN=10
+HEAD_RIGHT_PIN=11
+YAW_HOME_DEG=0.0
+LEFT_HOME_DEG=0.0
+RIGHT_HOME_DEG=0.0
+YAW_INVERT=True
+PITCH_GAIN=1.0
+ROLL_GAIN=1.0
+LEFT_PITCH_SIGN=1
+RIGHT_PITCH_SIGN=-1
+LEFT_ROLL_SIGN=1
+RIGHT_ROLL_SIGN=1
+LED_PIN=3
+LED_COUNT=100
+LED_BRIGHTNESS_LIMIT=0.20
+LED_ZONES={'mouth':(1,1),'left_eye':(2,2),'right_eye':(3,3),'chest':(4,19),'status':(20,29)}
+MOTOR_ARMED=False
+RS485_UART_ID=1
+RS485_BAUD=115200
+LEFT_MOTOR_ID=1
+RIGHT_MOTOR_ID=2
+
+# Quiet-servo tuning. PWM is released after movement to reduce holding buzz.
+# Disable this if the head needs continuous torque to remain in position.
+SERVO_QUIET_RELEASE_ENABLED=True
+SERVO_RELEASE_AFTER_MS=1200
+SERVO_PULSE_DEADBAND_US=4

@@ -1,0 +1,3 @@
+requests>=2.31.0
+pyserial>=3.5
+msgpack>=1.0.8

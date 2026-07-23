@@ -1,0 +1,31 @@
+{
+  "app_version": "v10.22-head-feedback-mouth-sync",
+  "voice_feedback_audio_enabled": true,
+  "voice_feedback_led_enabled": true,
+  "voice_feedback_tone_level": 0.16,
+  "skip_body_tts_when_brain_audio_present": false,
+  "led_state_profiles": {
+    "heard": {
+      "label": "Heard you",
+      "enabled": true,
+      "zones": {
+        "mouth": {"enabled": true, "colour": "#00ff66", "brightness": 0.55},
+        "left_eye": {"enabled": true, "colour": "#00ff66", "brightness": 0.38},
+        "right_eye": {"enabled": true, "colour": "#00ff66", "brightness": 0.38},
+        "chest": {"enabled": true, "colour": "#00ff66", "brightness": 0.18},
+        "status": {"enabled": true, "colour": "#00ff66", "brightness": 0.22}
+      }
+    },
+    "processing": {
+      "label": "Processing",
+      "enabled": true,
+      "zones": {
+        "mouth": {"enabled": true, "colour": "#ff9900", "brightness": 0.34},
+        "left_eye": {"enabled": true, "colour": "#ff9900", "brightness": 0.22},
+        "right_eye": {"enabled": true, "colour": "#ff9900", "brightness": 0.22},
+        "chest": {"enabled": true, "colour": "#8000ff", "brightness": 0.16},
+        "status": {"enabled": true, "colour": "#ff9900", "brightness": 0.18}
+      }
+    }
+  }
+}

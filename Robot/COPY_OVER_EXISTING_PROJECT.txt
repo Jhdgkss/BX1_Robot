@@ -1,0 +1,11 @@
+BX1 BODY CLIENT v10.39 - AUDIO HANDOVER + QUIET SERVO UPDATE
+
+Copy the contents of this Arduino_Q_Client_V1 folder over:
+  /home/arduino/Arduino_Q_Client_V1
+
+Then run:
+  cd /home/arduino/Arduino_Q_Client_V1
+  chmod +x APPLY_BX1_V10_39_AUDIO_SERVO_FIX.sh
+  ./APPLY_BX1_V10_39_AUDIO_SERVO_FIX.sh
+
+Refresh the browser with Ctrl+F5 after installation.

@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#071019">
+<title>Robot Display</title>
+<style>
+:root{--bg:#050b11;--panel:#0c1924;--line:#29435a;--text:#f3f8fc;--muted:#90a7ba;--cyan:#43e5ff;--good:#42db8b;--warn:#ffc857;--bad:#ff6876;--purple:#b18cff;--accent:#43e5ff}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}html,body{width:100%;max-width:100vw;height:100%;max-height:100vh;margin:0;overflow:hidden;background:radial-gradient(circle at 50% -10%,#17405d 0,#07131d 42%,#03070b 100%);color:var(--text);font-family:"Segoe UI",Arial,sans-serif}body{touch-action:manipulation}
+.shell{position:fixed;inset:0;width:auto;max-width:100%;height:auto;max-height:100%;min-width:0;display:grid;grid-template-rows:auto auto minmax(0,1fr) auto;gap:8px;padding:max(8px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right)) max(8px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));overflow:hidden}
+.header,.state,.content,.footer{min-width:0;max-width:100%}.header{display:grid;grid-template-columns:minmax(0,1fr) auto;align-items:center;gap:8px}.identity{min-width:0}.name{font-size:clamp(25px,7vw,48px);font-weight:900;line-height:.95;letter-spacing:.015em;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.profile{font-size:clamp(10px,2.7vw,15px);color:var(--muted);margin-top:5px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.clock{text-align:right;font-variant-numeric:tabular-nums}.clock .time{font-size:clamp(18px,5vw,30px);font-weight:850;color:var(--cyan)}.clock .date{font-size:10px;color:var(--muted)}
+.state{min-width:0;border:1px solid var(--line);border-left:8px solid var(--accent);border-radius:13px;background:linear-gradient(120deg,rgba(19,42,57,.97),rgba(8,20,29,.97));padding:10px 12px;box-shadow:0 12px 30px rgba(0,0,0,.25);overflow:hidden}.state-row{display:flex;align-items:center;gap:10px;min-width:0}.orb{width:18px;height:18px;flex:0 0 auto;border-radius:50%;background:var(--accent);box-shadow:0 0 18px var(--accent);animation:pulse 1.7s ease-in-out infinite}.state-label{font-size:clamp(19px,5vw,31px);font-weight:900;line-height:1}.state-detail{font-size:clamp(10px,2.8vw,14px);color:var(--muted);margin-top:6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.state.ready{--accent:var(--good)}.state.listening{--accent:var(--cyan)}.state.awake{--accent:#52b7ff}.state.thinking{--accent:var(--warn)}.state.speaking{--accent:var(--purple)}.state.warning{--accent:var(--warn)}.state.fault{--accent:var(--bad)}.state.sleep{--accent:#47637a}.connections{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:6px;margin-top:7px}.connection{min-width:0;border-top:1px solid rgba(144,167,186,.24);padding-top:5px;font-size:9px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}.connection strong{color:var(--text);font-weight:800}.state.thinking .orb,.state.speaking .orb,.state.listening .orb{animation-duration:.75s}@keyframes pulse{0%,100%{opacity:.5;transform:scale(.78)}50%{opacity:1;transform:scale(1.08)}}
+.content{min-width:0;min-height:0;display:grid;grid-template-rows:minmax(0,.82fr) minmax(0,1.18fr) auto;gap:8px}.card{min-height:0;border:1px solid var(--line);border-radius:13px;background:linear-gradient(145deg,rgba(15,31,44,.96),rgba(6,15,22,.96));padding:10px 11px;box-shadow:0 12px 30px rgba(0,0,0,.22);overflow:hidden}.label{font-size:10px;letter-spacing:.14em;text-transform:uppercase;color:var(--muted);font-weight:800}.heard{font-size:clamp(17px,4.4vw,28px);font-weight:800;line-height:1.18;margin-top:6px;display:-webkit-box;-webkit-line-clamp:4;-webkit-box-orient:vertical;overflow:hidden}.heard.empty,.reply.empty{color:#5f7487;font-weight:600}.reply-wrap{height:calc(100% - 20px);overflow:auto;scrollbar-width:thin;padding-right:2px}.reply{font-size:clamp(16px,4vw,24px);line-height:1.25;margin-top:6px;white-space:pre-wrap;overflow-wrap:anywhere}.meta{font-size:10px;color:var(--muted);margin-top:7px}
+.services{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:6px}.service{min-width:0;border:1px solid var(--line);border-bottom:4px solid #5a6873;border-radius:9px;background:#07121a;padding:6px 7px}.service.ok{border-bottom-color:var(--good)}.service.bad{border-bottom-color:var(--bad)}.service .k{font-size:8px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted)}.service .v{font-size:11px;font-weight:850;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:2px}.telemetry{display:flex;gap:10px;align-items:center;justify-content:space-between;margin-top:7px;color:var(--muted);font-size:10px;font-variant-numeric:tabular-nums}.telemetry strong{color:var(--text)}
+.footer{min-width:0;display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:7px}.footer button,.footer a{min-height:44px;border:1px solid #3b5e79;border-radius:11px;background:linear-gradient(#234762,#102b3f);color:var(--text);font:800 13px "Segoe UI",Arial,sans-serif;display:flex;align-items:center;justify-content:center;text-decoration:none}.footer button:active,.footer a:active{filter:brightness(1.35);transform:translateY(1px)}.footer .primary{border-color:#36885f;background:linear-gradient(#23744f,#123c2a)}.footer .warn{border-color:#8b692b;background:linear-gradient(#75521f,#3a2a12)}
+.toast{position:fixed;left:10px;right:10px;bottom:62px;border:1px solid var(--line);border-radius:10px;background:#10212e;padding:9px 11px;text-align:center;font-weight:750;box-shadow:0 12px 35px rgba(0,0,0,.4)}.hidden{display:none!important}
+@media (orientation:landscape){.shell{grid-template-columns:minmax(0,.95fr) minmax(0,1.05fr);grid-template-rows:auto auto minmax(0,1fr);}.header,.state{grid-column:1}.content{grid-column:2;grid-row:1/4}.footer{grid-column:1;align-self:end}.services{grid-template-columns:repeat(2,minmax(0,1fr))}}
+</style>
+</head>
+<body>
+<div class="shell">
+  <header class="header">
+    <div class="identity"><div id="robotName" class="name">Robot</div><div id="profile" class="profile">Onboard status display</div></div>
+    <div class="clock"><div id="time" class="time">--:--</div><div id="date" class="date"></div></div>
+  </header>
+
+  <section id="stateCard" class="state warning">
+    <div class="state-row"><div class="orb"></div><div id="stateLabel" class="state-label">Connecting</div></div>
+    <div id="stateDetail" class="state-detail">Waiting for the robot body service…</div>
+    <div class="connections">
+      <div id="bodyEndpoint" class="connection"><strong>Body</strong> detecting…</div>
+      <div id="brainEndpoint" class="connection"><strong>Brain</strong> not configured</div>
+    </div>
+  </section>
+
+  <main class="content">
+    <section class="card">
+      <div class="label">What I heard</div>
+      <div id="heard" class="heard empty">Nothing heard yet.</div>
+      <div id="heardMeta" class="meta"></div>
+    </section>
+    <section class="card">
+      <div class="label">My response</div>
+      <div class="reply-wrap"><div id="reply" class="reply empty">Waiting for the first conversation.</div><div id="replyMeta" class="meta"></div></div>
+    </section>
+    <section class="card">
+      <div id="services" class="services"></div>
+      <div id="telemetry" class="telemetry"></div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <button id="repeatBtn" class="primary" type="button">Repeat</button>
+    <button id="refreshBtn" type="button">Refresh</button>
+    <a class="warn" href="/overview">Controls</a>
+  </footer>
+</div>
+<div id="toast" class="toast hidden"></div>
+<script>
+const $=id=>document.getElementById(id);
+let lastReply='';let busy=false;
+function clock(){const d=new Date();$('time').textContent=d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});$('date').textContent=d.toLocaleDateString([], {weekday:'short',day:'2-digit',month:'short'});}clock();setInterval(clock,1000);
+function ago(value){if(!value)return'';const t=Date.parse(value);if(!Number.isFinite(t))return'';const s=Math.max(0,Math.round((Date.now()-t)/1000));if(s<5)return'just now';if(s<60)return`${s}s ago`;const m=Math.round(s/60);if(m<60)return`${m}m ago`;return new Date(t).toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'});}
+function setText(id,text,empty){const el=$(id);el.textContent=text||empty;el.classList.toggle('empty',!text);}
+function toast(text){const el=$('toast');el.textContent=text;el.classList.remove('hidden');clearTimeout(toast.timer);toast.timer=setTimeout(()=>el.classList.add('hidden'),2200);}
+function serviceLabel(key){return ({brain:'Brain',stt:'STT',microphone:'Mic',mcu:'MCU',imu:'IMU',camera:'Camera'})[key]||key;}
+function render(d){
+  const identity=d.identity||{},status=d.status||{},heard=d.heard||{},response=d.response||{},services=d.services||{},tele=d.telemetry||{},network=d.network||{};
+  $('robotName').textContent=identity.robot_name||'Robot';
+  $('profile').textContent=identity.profile?`${identity.profile} • ${identity.body_id||''}`:(identity.body_id||'Onboard status display');
+  const state=$('stateCard');state.className=`state ${status.key||'warning'}`;$('stateLabel').textContent=status.label||'Unknown';$('stateDetail').textContent=status.detail||status.voice_state||'';
+  const body=network.body_web_endpoint||((network.primary_ip&&network.body_web_port)?`http://${network.primary_ip}:${network.body_web_port}`:'detecting…');const brain=network.brain_endpoint||'not configured';$('bodyEndpoint').innerHTML=`<strong>Body</strong> ${body.replace(/^https?:\/\//,'')}`;$('bodyEndpoint').title=body;$('brainEndpoint').innerHTML=`<strong>Brain</strong> ${brain.replace(/^https?:\/\//,'')}`;$('brainEndpoint').title=brain;
+  setText('heard',heard.text,'Nothing heard yet.');$('heardMeta').textContent=[heard.wake_word?`Wake: ${heard.wake_word}`:'',ago(heard.updated_at)].filter(Boolean).join(' • ');
+  setText('reply',response.text,'Waiting for the first conversation.');lastReply=response.text||'';$('replyMeta').textContent=[response.source||'',ago(response.updated_at)].filter(Boolean).join(' • ');$('repeatBtn').disabled=!lastReply;
+  const box=$('services');box.replaceChildren();for(const [key,item] of Object.entries(services)){const card=document.createElement('div');card.className=`service ${item&&item.ok?'ok':'bad'}`;const k=document.createElement('div');k.className='k';k.textContent=serviceLabel(key);const v=document.createElement('div');v.className='v';v.textContent=item&&item.ok?'ONLINE':'OFFLINE';v.title=(item&&item.detail)||'';card.append(k,v);box.append(card);}
+  const bits=[];if(tele.pitch_deg!=null)bits.push(`Pitch <strong>${tele.pitch_deg}°</strong>`);if(tele.roll_deg!=null)bits.push(`Roll <strong>${tele.roll_deg}°</strong>`);if(tele.person_present===true)bits.push('<strong>Person seen</strong>');if(tele.brain_latency_ms!=null)bits.push(`Brain <strong>${tele.brain_latency_ms} ms</strong>`);$('telemetry').innerHTML=bits.join('<span>•</span>');
+}
+async function refresh(){if(busy)return;busy=true;try{const r=await fetch('/api/touchscreen',{cache:'no-store'});if(!r.ok)throw new Error(`HTTP ${r.status}`);render(await r.json());}catch(e){const state=$('stateCard');state.className='state fault';$('stateLabel').textContent='Display disconnected';$('stateDetail').textContent=e.message;}finally{busy=false;}}
+$('repeatBtn').addEventListener('click',async()=>{try{const r=await fetch('/api/repeat_last_response',{method:'POST',headers:{'Content-Type':'application/json'},body:'{}'});const d=await r.json();toast(d.ok?'Repeating response':(d.error||'Repeat failed'));}catch(e){toast(e.message);}});
+$('refreshBtn').addEventListener('click',()=>{refresh();toast('Refreshing');});
+refresh();setInterval(refresh,800);document.addEventListener('visibilitychange',()=>{if(!document.hidden)refresh();});
+</script>
+</body>
+</html>

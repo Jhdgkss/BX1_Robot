@@ -1,0 +1,23 @@
+[Unit]
+Description=BX1 UNO Q Body Client v10.42
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arduino
+WorkingDirectory=/home/arduino/Arduino_Q_Client_V1
+Environment=PYTHONUNBUFFERED=1
+Environment=BX1_WEB_ENABLED=1
+Environment=BX1_WEB_HOST=0.0.0.0
+Environment=BX1_WEB_PORT=8088
+ExecStart=/home/arduino/Arduino_Q_Client_V1/tools/run_robot_body.sh
+ExecStartPost=/home/arduino/Arduino_Q_Client_V1/tools/check_web_health.sh
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStartSec=35
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

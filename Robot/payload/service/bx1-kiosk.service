@@ -1,0 +1,20 @@
+[Unit]
+Description=BX1 Touchscreen Kiosk
+Wants=display-manager.service network-online.target
+After=display-manager.service network-online.target bx1-web.service
+
+[Service]
+Type=simple
+User=arduino
+Group=arduino
+Environment=HOME=/home/arduino
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/arduino/.Xauthority
+ExecStart=/home/arduino/Arduino_Q_Client_V1/tools/bx1_touchscreen_kiosk.sh
+Restart=always
+RestartSec=10
+TimeoutStopSec=10
+KillMode=mixed
+
+[Install]
+WantedBy=graphical.target

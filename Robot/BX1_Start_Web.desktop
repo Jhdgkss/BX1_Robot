@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Start BX1 Web Control
+Comment=Start the BX1 UNO Q body client and web debug interface
+Exec=bash -c 'cd "$(dirname "%k")" && bash START_BX1_WEB.sh'
+Terminal=true
+Categories=Development;Robotics;

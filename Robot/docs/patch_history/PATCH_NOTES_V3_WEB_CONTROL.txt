@@ -1,0 +1,24 @@
+BX1 Arduino Q Client V3 - Web Control Patch
+
+Added:
+- Browser-based web control/debug interface at http://127.0.0.1:8088
+- Network access via http://BX1.local:8088 or the UNO Q IP address
+- Manual text input to send messages to the Brain App without microphone/STT
+- Manual sensor/camera context injection for debugging before hardware is live
+- Safe action buttons: stop, head pose, eye LED, tone
+- Service command buttons: status, frame, vision test, stop service
+- Event/conversation log in the browser
+- Single-click Linux starter: START_BX1_WEB.sh
+- Windows test starter: START_BX1_WEB.bat
+- Linux desktop launcher: BX1_Start_Web.desktop
+- Documentation: docs/WEB_INTERFACE.md
+
+Changed:
+- main.py now starts the web interface when web_enabled=true in config.json
+- handle_user_text, handle_vision and handle_camera_frame now return structured results for the web UI
+- Manual debug state is added into the body-state packet when enabled
+
+Safety:
+- Manual actions still pass through the UNO Q action validator
+- motor_armed remains false by default
+- No low-level wheel torque/PWM commands were added

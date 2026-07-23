@@ -1,0 +1,40 @@
+BX1 Arduino Q Client V4 - Web Brain IP Settings
+================================================
+
+This patch adds a Brain App Connection panel to the Arduino Q web control page.
+
+New features
+------------
+- Change the Brain App URL/IP from the browser.
+- Save the setting directly into python/config.json.
+- Apply the new Brain URL immediately without restarting the web service.
+- Test the Brain App API connection from BX1.
+- One-click "Use This Browser PC" button.
+  - When the web page is opened from the laptop running the Brain App, BX1 uses the browser client's IP address and port 8765.
+  - Example result: http://192.168.68.53:8765
+
+Files changed
+-------------
+- python/main.py
+- python/web_control.py
+
+How to use
+----------
+1. Start the Brain App on the laptop and press Start API.
+2. Start the Arduino Q web service.
+3. Open http://BX1.local:8088 from the laptop browser.
+4. In Brain App Connection, click "Use This Browser PC".
+5. Click "Test Brain Connection".
+6. If OK, use Manual Chat / Debug Input.
+
+Manual entry
+------------
+You can also type a URL directly:
+
+    http://192.168.68.53:8765
+
+or just an IP address:
+
+    192.168.68.53
+
+If no port is supplied, the client defaults to port 8765.

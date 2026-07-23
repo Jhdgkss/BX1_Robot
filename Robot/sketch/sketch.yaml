@@ -1,0 +1,11 @@
+profiles:
+  default:
+    fqbn: arduino:zephyr:unoq
+    platforms:
+      - platform: arduino:zephyr
+    libraries:
+      - Arduino_RouterBridge (0.4.3)
+      - Arduino_LSM6DSOX (1.1.2)
+      - Arduino_HardwareServo (0.0.1)
+      - Adafruit NeoPixel (1.15.5)
+default_profile: default

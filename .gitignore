@@ -1,0 +1,70 @@
+﻿# ============================================================
+# BX1 Robot repository exclusions
+# ============================================================
+
+# Python virtual environments
+**/.venv/
+**/venv/
+**/env/
+**/ENV/
+
+# Python generated files
+**/__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+
+# Downloaded AI/STT models
+**/models/
+**/model_cache/
+**/huggingface/
+**/.cache/
+
+# Archives and project snapshots
+*.zip
+*.7z
+*.rar
+*.tar
+*.tar.gz
+*.tgz
+
+# Logs and diagnostics
+**/logs/
+**/diagnostics/
+**/diagnostic_traces/
+**/traces/
+*.log
+*.trace
+*.dump
+
+# Runtime-generated data
+**/runtime/backups/
+**/runtime/doctor/generated_sketches/
+**/runtime/touchscreen-browser/
+**/runtime/cache/
+**/browser-profile/
+**/chrome-profile/
+**/chromium-profile/
+
+# Backup and temporary files
+*.bak
+*.old
+*.tmp
+*.temp
+*.backup
+*.before_*
+*.pre_*
+
+# IDE folders
+**/.vscode/
+**/.idea/
+
+# Environment files and secrets
+.env
+.env.*
+!.env.example
+
+# Operating-system files
+.DS_Store
+Thumbs.db
+desktop.ini

@@ -1,0 +1,10 @@
+BX1 UNO Q Client V2 camera/sensor/location update
+
+Added:
+- location_io.py static location provider.
+- /frame console command to send one camera frame to the Brain App without LLM analysis.
+- optional periodic raw camera frame sending using send_periodic_camera_frames.
+- richer body_state packets containing location, camera, microphone and nested sensors.
+- BX1_DATA_PACKET_CONTRACT.md documentation.
+
+Existing /vision still sends an image plus prompt to the Brain App for model analysis.

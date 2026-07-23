@@ -1,0 +1,92 @@
+{
+  "schema": "bx1.local_voice_cues.v1",
+  "generated_at": "2026-07-17T20:28:07+0000",
+  "voice": "chatterbox_bx1",
+  "engine": "chatterbox_turbo",
+  "cues": {
+    "wake_ack": {
+      "text": "Yes John?",
+      "filename": "wake_ack.wav",
+      "generated_at": "2026-07-17T20:28:08+0000",
+      "size_bytes": 99920
+    },
+    "sleep_ack": {
+      "text": "Going quiet.",
+      "filename": "sleep_ack.wav",
+      "generated_at": "2026-07-17T20:28:09+0000",
+      "size_bytes": 107600
+    },
+    "thinking_01": {
+      "text": "Hmm.",
+      "filename": "thinking_01.wav",
+      "generated_at": "2026-07-17T20:28:10+0000",
+      "size_bytes": 69200
+    },
+    "thinking_02": {
+      "text": "Let me think.",
+      "filename": "thinking_02.wav",
+      "generated_at": "2026-07-17T20:28:11+0000",
+      "size_bytes": 103760
+    },
+    "thinking_03": {
+      "text": "One moment.",
+      "filename": "thinking_03.wav",
+      "generated_at": "2026-07-17T20:28:12+0000",
+      "size_bytes": 99920
+    },
+    "thinking_04": {
+      "text": "I am checking that.",
+      "filename": "thinking_04.wav",
+      "generated_at": "2026-07-17T20:28:13+0000",
+      "size_bytes": 134480
+    },
+    "thinking_05": {
+      "text": "Processing.",
+      "filename": "thinking_05.wav",
+      "generated_at": "2026-07-17T20:28:14+0000",
+      "size_bytes": 107600
+    },
+    "heard_ack": {
+      "text": "Understood.",
+      "filename": "heard_ack.wav",
+      "generated_at": "2026-07-17T20:28:15+0000",
+      "size_bytes": 99920
+    },
+    "thinking_06": {
+      "text": "Would you like some toast?",
+      "filename": "thinking_06.wav",
+      "generated_at": "2026-07-17T20:28:22+0000",
+      "size_bytes": 146000
+    },
+    "idle_chatter_01": {
+      "text": "I am still here, quietly pretending this is a very important charging station.",
+      "filename": "idle_chatter_01.wav",
+      "generated_at": "2026-07-17T20:28:25+0000",
+      "size_bytes": 395600
+    },
+    "idle_chatter_02": {
+      "text": "No urgent robot business detected. I will continue monitoring politely.",
+      "filename": "idle_chatter_02.wav",
+      "generated_at": "2026-07-17T20:28:27+0000",
+      "size_bytes": 380240
+    },
+    "idle_chatter_03": {
+      "text": "I have not moved, which I believe counts as excellent balance training.",
+      "filename": "idle_chatter_03.wav",
+      "generated_at": "2026-07-17T20:28:29+0000",
+      "size_bytes": 364880
+    },
+    "idle_chatter_04": {
+      "text": "Still awake. Slightly bored, but operational.",
+      "filename": "idle_chatter_04.wav",
+      "generated_at": "2026-07-17T20:28:31+0000",
+      "size_bytes": 295760
+    },
+    "idle_chatter_05": {
+      "text": "I am doing a tiny systems check while I wait.",
+      "filename": "idle_chatter_05.wav",
+      "generated_at": "2026-07-17T20:28:32+0000",
+      "size_bytes": 265040
+    }
+  }
+}

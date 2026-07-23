@@ -1,0 +1,30 @@
+BX1 Arduino Q Client v0.2 readable console patch
+
+Files included:
+- python/main.py
+
+What changed:
+- Reduces repeated telemetry spam in the SSH terminal.
+- Keeps body telemetry posting to the BX1 Brain App in the background.
+- Prints status only once at startup and then only if important state changes.
+- Adds cleaner chat formatting:
+  John: ...
+  [brain] waiting for reply...
+  BX1 says: ...
+- Adds console commands:
+  /help
+  /status
+  /clear
+  /vision <prompt>
+  /quiet
+  /debug
+  /quit
+
+Install:
+1) Stop the robot client with CTRL+C.
+2) Copy python/main.py into /home/arduino/Arduino_Q_Client_V1/python/main.py on the Arduino Q.
+3) Run:
+   cd ~/Arduino_Q_Client_V1
+   bash tools/run_robot_body.sh
+
+This patch deliberately does not include config.json, so your Brain App IP address is not overwritten.

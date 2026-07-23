@@ -1,0 +1,32 @@
+BX1 v10.21 INSTALL ORDER
+========================
+
+1. Back up the existing UNO Q project and python/config.json.
+2. Copy this full project over /home/arduino/Arduino_Q_Client_V1.
+3. Preserve the existing .venv folder if it is already working.
+4. Run:
+
+   cd /home/arduino/Arduino_Q_Client_V1
+   chmod +x START_BX1_WEB.sh STOP_BX1_WEB.sh tools/*.sh
+   bash tools/BX1_MCU_BRIDGE_PERMANENT_REPAIR.sh
+
+   This updates /home/arduino/ArduinoApps/bx1-mcu-runtime and keeps it as the
+   persistent default Arduino App after reboot.
+
+5. Open http://BX1.local:8088 and press Ctrl+F5.
+6. Confirm the web header shows v10.21.
+7. Open Hardware / GPIO and configure:
+   - yaw servo
+   - left gimbal servo
+   - right gimbal servo
+   - logical pitch/roll mixer
+8. Begin linkage calibration with rods disconnected or ±3 degree tests only.
+   Servo degree values are offsets from the 1500 µs neutral pulse; the min/max
+   values are genuine physical travel limits.
+9. Open LED States, choose colours/brightness and save the profiles.
+10. Reboot and run:
+
+   cd /home/arduino/Arduino_Q_Client_V1
+   ./.venv/bin/python tools/check_mcu_router_bridge.py
+
+Expected: RESULT: PASS.

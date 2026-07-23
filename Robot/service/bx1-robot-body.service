@@ -1,0 +1,19 @@
+[Unit]
+Description=BX1 UNO Q Web Control
+After=network-online.target sound.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=arduino
+WorkingDirectory=/home/arduino/Arduino_Q_Client_V1
+Environment=PYTHONUNBUFFERED=1
+Environment=BX1_WEB_PORT=8088
+ExecStart=/home/arduino/Arduino_Q_Client_V1/tools/run_robot_body.sh
+Restart=always
+RestartSec=5
+KillSignal=SIGTERM
+TimeoutStopSec=15
+
+[Install]
+WantedBy=multi-user.target

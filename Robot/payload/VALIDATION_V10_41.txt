@@ -1,0 +1,10 @@
+BX1 Robot Body v10.41 validation
+
+- Python source compile: required
+- Embedded touchscreen JavaScript syntax: required when Node is available
+- Shell script syntax: required
+- /display HTTP response: checked after service restart
+- /api/touchscreen JSON response: checked after service restart
+- Existing config.json: preserved
+- Existing robot and Brain profile: preserved
+- MCU sketch compile/upload: not performed
