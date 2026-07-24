@@ -213,6 +213,7 @@ from bx1_modules.behaviour_workshop import (
     limits_from_config,
     validate_behaviour,
 )
+from bx1_modules.behaviour_suggestions import format_suggestion_for_workshop, suggest_behaviour_capability
 from bx1_services.robot_update_service import (
     DEFAULT_SSH_PORT,
     DEFAULT_SSH_USERNAME,
@@ -235,6 +236,7 @@ from bx1_integrations.events import IntegrationEventLog, mask_secret_text
 from bx1_integrations.octoprint_connector import OctoPrintConnector
 from bx1_integrations.registry import IntegrationRegistry
 from bx1_integrations.spotify_connector import SpotifyConnector
+from bx1_integrations.support_assistant import SupportAssistantConnector
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -1857,6 +1859,17 @@ class BX1BrainCore:
             source_task=task,
             approved_by="John",
         )
+
+    def suggest_behaviour_capability(self, context: str = "") -> Dict[str, Any]:
+        suggestion = suggest_behaviour_capability(self.behaviour_store.list_installed(), context)
+        return {
+            "ok": True,
+            "title": suggestion.title,
+            "task": suggestion.task,
+            "rationale": suggestion.rationale,
+            "trigger_phrases": suggestion.trigger_phrases,
+            "workshop_text": format_suggestion_for_workshop(suggestion),
+        }
 
     def remember_body_state(self, state: Any, source: str = "api") -> Dict[str, Any]:
         packet = normalise_body_state(state, source=source)
@@ -4983,10 +4996,11 @@ class MainWindow(QMainWindow):
         top_buttons = QHBoxLayout()
         self.workshop_generate_button = QPushButton("Forge Behaviour")
         self.workshop_generate_button.setObjectName("PrimaryButton")
+        self.workshop_suggest_button = QPushButton("Suggest Capability Sketch")
         self.workshop_example_button = QPushButton("Load Example")
         self.workshop_use_reply_button = QPushButton("Use Last Reply")
         self.workshop_clear_button = QPushButton("Clear")
-        for button in (self.workshop_generate_button, self.workshop_example_button, self.workshop_use_reply_button, self.workshop_clear_button):
+        for button in (self.workshop_generate_button, self.workshop_suggest_button, self.workshop_example_button, self.workshop_use_reply_button, self.workshop_clear_button):
             top_buttons.addWidget(button)
         centre_layout.addLayout(top_buttons)
 
@@ -5039,6 +5053,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(main_splitter, 1)
 
         self.workshop_generate_button.clicked.connect(self.generate_workshop_draft_ui)
+        self.workshop_suggest_button.clicked.connect(self.suggest_workshop_capability_ui)
         self.workshop_validate_button.clicked.connect(self.validate_workshop_draft_ui)
         self.workshop_install_button.clicked.connect(self.install_workshop_behaviour_ui)
         self.workshop_queue_button.clicked.connect(self.queue_workshop_behaviour_test_ui)
@@ -5066,12 +5081,14 @@ class MainWindow(QMainWindow):
             OctoPrintConnector(IntegrationSettings(mock_mode=mock_mode)),
             SpotifyConnector(IntegrationSettings(mock_mode=mock_mode)),
             DanceService(IntegrationSettings(mock_mode=mock_mode)),
+            SupportAssistantConnector(IntegrationSettings(mock_mode=mock_mode)),
         ])
 
     def _build_integrations_workspace(self) -> QWidget:
         self.integrations_tabs = self._section_tabs([
             ("OctoPrint", self._build_octoprint_tab()),
             ("Spotify", self._build_spotify_tab()),
+            ("Support Assistant", self._build_support_assistant_tab()),
             ("Robot Behaviours", self._build_robot_behaviours_tab()),
             ("Activity Log", self._build_integration_activity_tab()),
         ])
@@ -5169,6 +5186,51 @@ class MainWindow(QMainWindow):
         self.spotify_volume_button.clicked.connect(lambda: self.integration_action_ui("spotify", "volume", self.spotify_status_text, {"volume": self.spotify_volume_slider.value()}, confirm=True))
         return w
 
+    def _build_support_assistant_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("CardPanel")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(14, 14, 14, 14)
+        form_box = QGroupBox("Support Mention Responder")
+        form = QFormLayout(form_box)
+        self.support_trigger_edit = QLineEdit("@John_Support")
+        self.support_groups_edit = QPlainTextEdit()
+        self.support_groups_edit.setMaximumHeight(90)
+        self.support_groups_edit.setPlainText("Field Tech Support")
+        self.support_draft_only_check = QCheckBox("Draft-only mode")
+        self.support_draft_only_check.setChecked(True)
+        form.addRow("Trigger mention", self.support_trigger_edit)
+        form.addRow("Approved groups", self.support_groups_edit)
+        form.addRow("Sending", self.support_draft_only_check)
+        layout.addWidget(form_box)
+
+        buttons = QHBoxLayout()
+        self.support_scan_button = QPushButton("Scan Mentions")
+        self.support_draft_button = QPushButton("Draft Reply")
+        self.support_send_button = QPushButton("Approve Send")
+        self.support_send_button.setObjectName("DangerButton")
+        buttons.addWidget(self.support_scan_button)
+        buttons.addWidget(self.support_draft_button)
+        buttons.addWidget(self.support_send_button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+
+        self.support_mentions_text = QPlainTextEdit()
+        self.support_mentions_text.setReadOnly(True)
+        self.support_mentions_text.setPlainText("Approved support mentions will appear here. Mock mode supplies one technical example.")
+        self.support_draft_text = QPlainTextEdit()
+        self.support_draft_text.setPlaceholderText("Drafted support reply will appear here for review/edit before sending.")
+        layout.addWidget(QLabel("Detected mentions"))
+        layout.addWidget(self.support_mentions_text, 1)
+        layout.addWidget(QLabel("Draft reply"))
+        layout.addWidget(self.support_draft_text, 1)
+        self.support_last_message: Dict[str, Any] = {}
+        self.support_last_draft_id = ""
+        self.support_scan_button.clicked.connect(self.scan_support_mentions_ui)
+        self.support_draft_button.clicked.connect(self.draft_support_reply_ui)
+        self.support_send_button.clicked.connect(self.send_support_reply_ui)
+        return w
+
     def _build_robot_behaviours_tab(self) -> QWidget:
         w = QWidget()
         w.setObjectName("CardPanel")
@@ -5216,6 +5278,14 @@ class MainWindow(QMainWindow):
         if isinstance(connector, OctoPrintConnector):
             connector.settings.values["server_url"] = self.octoprint_url_edit.text().strip()
             connector.settings.session_secrets["api_key"] = self.octoprint_key_edit.text()
+        return connector  # type: ignore[return-value]
+
+    def configure_support_assistant_from_ui(self) -> SupportAssistantConnector:
+        connector = self.integration_registry.get("support_mentions")
+        if isinstance(connector, SupportAssistantConnector):
+            connector.settings.values["trigger"] = self.support_trigger_edit.text().strip() or "@John_Support"
+            connector.settings.values["approved_groups"] = self.support_groups_edit.toPlainText()
+            connector.settings.values["draft_only"] = bool(self.support_draft_only_check.isChecked())
         return connector  # type: ignore[return-value]
 
     def log_integration_event(self, integration_id: str, level: str, message: str) -> None:
@@ -5272,6 +5342,50 @@ class MainWindow(QMainWindow):
 
     def run_octoprint_control_ui(self, action_id: str) -> None:
         self.integration_action_ui("octoprint", action_id, self.octoprint_info_text, confirm=True)
+
+    def scan_support_mentions_ui(self) -> None:
+        self.configure_support_assistant_from_ui()
+        result = self.integration_registry.execute("support_mentions", "scan_mentions")
+        matches = list((result.data or {}).get("matches") or [])
+        self.support_last_message = matches[0] if matches else {}
+        self.support_mentions_text.setPlainText(self.format_integration_result(result))
+        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
+
+    def draft_support_reply_ui(self) -> None:
+        self.configure_support_assistant_from_ui()
+        params = {"message": self.support_last_message} if self.support_last_message else {}
+        result = self.integration_registry.execute("support_mentions", "draft_reply", params)
+        draft = ((result.data or {}).get("draft") or {}) if result.ok else {}
+        self.support_last_draft_id = str(draft.get("draft_id") or "")
+        self.support_mentions_text.setPlainText(self.format_integration_result(result))
+        if draft:
+            notes = "\n".join(f"- {note}" for note in draft.get("notes") or [])
+            self.support_draft_text.setPlainText(f"{draft.get('reply_text')}\n\nNotes:\n{notes}")
+        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
+
+    def send_support_reply_ui(self) -> None:
+        self.configure_support_assistant_from_ui()
+        if not self.support_last_draft_id:
+            QMessageBox.information(self, "Support Assistant", "Draft a reply before sending.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Send support reply",
+            "Send this approved support reply to the approved group?\n\nDraft-only mode will still block sending if enabled.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        reply_text = self.support_draft_text.toPlainText().split("\n\nNotes:", 1)[0].strip()
+        result = self.integration_registry.execute(
+            "support_mentions",
+            "send_approved_reply",
+            {"draft_id": self.support_last_draft_id, "reply_text": reply_text},
+            confirmed=True,
+        )
+        self.support_mentions_text.setPlainText(self.format_integration_result(result))
+        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
 
     def connect_spotify_ui(self) -> None:
         connector = self.integration_registry.get("spotify")
@@ -8966,10 +9080,31 @@ class MainWindow(QMainWindow):
         self.workshop_install_button.setEnabled(behaviour_mode)
         self.workshop_queue_button.setEnabled(behaviour_mode)
         self.workshop_example_button.setEnabled(behaviour_mode)
+        self.workshop_suggest_button.setEnabled(behaviour_mode)
         if behaviour_mode:
             self.workshop_draft_edit.setPlaceholderText("A generated BX1 behaviour JSON object will appear here. You may edit it before validation and approval.")
         else:
             self.workshop_draft_edit.setPlaceholderText("The review-only code or patch draft will appear here. It will not be executed or applied.")
+
+    def suggest_workshop_capability_ui(self) -> None:
+        self.workshop_mode_combo.setCurrentIndex(0)
+        context = self.workshop_task_edit.toPlainText().strip() or self.core.last_reply_text
+        suggestion = self.core.suggest_behaviour_capability(context)
+        self.workshop_task_edit.setPlainText(str(suggestion.get("task") or ""))
+        triggers = ", ".join(str(item) for item in suggestion.get("trigger_phrases") or [])
+        self.workshop_validation_text.setPlainText(
+            f"{suggestion.get('workshop_text')}\n\n"
+            "Next step: press Forge Behaviour to ask the coding model for bounded JSON. "
+            "The result still must validate and be approved before it is installed."
+        )
+        self.workshop_pipeline_text.setPlainText(
+            "✓ Suggested capability sketch\n"
+            "○ Generate bounded JSON\n"
+            "○ Validate limits and permissions\n"
+            "○ Human approval\n"
+            "○ Install with revision backup\n"
+            f"Suggested trigger phrases: {triggers}"
+        )
 
     def generate_workshop_draft_ui(self) -> None:
         if self.workshop_worker and self.workshop_worker.isRunning():

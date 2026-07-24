@@ -111,3 +111,31 @@ Planned control commands:
 - "Stop behaviour."
 
 Until command routing is added, use the Integrations page buttons.
+
+## Support Mention Responder
+
+Available from **Integrations / Support Assistant**.
+
+This is the safe first version of the workgroup support idea. It is messaging-platform neutral and runs in mock/demo mode until a legitimate connector, such as an official business messaging API, is added.
+
+Settings:
+
+- trigger mention, default `@John_Support`
+- approved group IDs or names
+- draft-only mode, enabled by default
+
+Actions:
+
+- scan approved groups for support mentions
+- draft a technical support reply
+- send an approved reply
+
+Only approved groups are scanned. Messages from unapproved groups are ignored even if they contain the trigger mention. Sending is a CONTROL action and requires confirmation through the integration permission layer. Draft-only mode blocks sending entirely.
+
+The intended operator flow is:
+
+1. A work support group message includes `@John_Support`.
+2. BX1 detects it only if the group is approved.
+3. BX1 drafts a reply with notes and confidence.
+4. The user reviews or edits the reply.
+5. The user explicitly approves sending, or leaves draft-only mode enabled.
