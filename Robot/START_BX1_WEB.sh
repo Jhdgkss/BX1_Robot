@@ -3,7 +3,7 @@ set -u
 set -o pipefail
 
 # Single-click / SSH starter for the BX1 UNO Q body client.
-# v10.39: capture-ID diagnostics, transient-safe endpointing and faster primary STT.
+# v10.42: capture-ID diagnostics, transient-safe endpointing and faster primary STT.
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PY_DIR="$ROOT_DIR/python"
@@ -100,7 +100,7 @@ kill_port_pids() {
 
 print_header() {
   echo "============================================================"
-  echo " BX1 UNO Q Body Client - Web Control Starter v10.39"
+  echo " BX1 UNO Q Body Client - Web Control Starter v10.42"
   echo "============================================================"
   echo "Project : $ROOT_DIR"
   echo "Web UI  : $URL"

@@ -1,5 +1,5 @@
 [Unit]
-Description=BX1 UNO Q Body Client v10.39
+Description=BX1 UNO Q Body Client v10.42
 After=network-online.target sound.target
 Wants=network-online.target
 

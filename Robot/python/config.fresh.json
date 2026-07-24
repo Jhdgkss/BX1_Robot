@@ -173,7 +173,7 @@
             "colour": "cyan"
         }
     },
-    "app_version": "10.39",
+    "app_version": "10.42",
     "brain_discovery_mode": "browser_pc",
     "hardware_registry": {
         "schema": "bx1.hardware_registry.v1",
@@ -365,7 +365,7 @@
     "expression_eye_right_zone": "right_eye",
     "brain_tts_endpoint": "/api/tts",
     "brain_tts_status_endpoint": "/api/tts/status",
-    "version": "10.39",
+    "version": "10.42",
     "wake_voice_ack_enabled": true,
     "wake_ack_phrase": "Yes John?",
     "sleep_ack_phrase": "Going quiet.",
