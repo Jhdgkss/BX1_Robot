@@ -229,6 +229,12 @@ from bx1_services.robot_release_builder import (
     RobotReleaseBuilder,
     SourceInspection,
 )
+from bx1_integrations.base import IntegrationSettings
+from bx1_integrations.dance_service import DanceService
+from bx1_integrations.events import IntegrationEventLog, mask_secret_text
+from bx1_integrations.octoprint_connector import OctoPrintConnector
+from bx1_integrations.registry import IntegrationRegistry
+from bx1_integrations.spotify_connector import SpotifyConnector
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -4423,6 +4429,8 @@ class MainWindow(QMainWindow):
         self.robot_release_source_info: Optional[SourceInspection] = None
         self.robot_release_last_result: Optional[ReleaseBuildResult] = None
         self.robot_update_connection_ok = False
+        self.integration_event_log = IntegrationEventLog()
+        self.integration_registry = self._create_integration_registry(mock_mode=True)
         self.api_server = BX1RobotAPIServer(self.core)
         self.current_image_b64: Optional[str] = None
         self.chat_worker: Optional[ChatWorker] = None
@@ -4562,6 +4570,7 @@ class MainWindow(QMainWindow):
             ("Knowledge", "Documents and memory"),
             ("Skills", "Design bounded capabilities"),
             ("Body", "Telemetry, camera and actions"),
+            ("Integrations", "External services and behaviours"),
             ("System", "Health, services and settings"),
             ("Studios", "Create and manage the robot"),
             ("Help", "Setup and troubleshooting"),
@@ -4593,6 +4602,7 @@ class MainWindow(QMainWindow):
         self.workspace_stack.addWidget(self._build_library_workspace())
         self.workspace_stack.addWidget(self._build_workshop_workspace())
         self.workspace_stack.addWidget(self._build_body_workspace())
+        self.workspace_stack.addWidget(self._build_integrations_workspace())
         self.workspace_stack.addWidget(self._build_diagnostics_workspace())
         self.workspace_stack.addWidget(self._build_control_workspace())
         self.help_tab_index = self.workspace_stack.addWidget(self._build_help_tab())
@@ -4600,7 +4610,7 @@ class MainWindow(QMainWindow):
 
         self.api_help_button.clicked.connect(self.show_api_urls)
         self.profile_manager_button.clicked.connect(self.open_profile_manager)
-        self.open_studios_header_button.clicked.connect(lambda: self.switch_workspace(6))
+        self.open_studios_header_button.clicked.connect(lambda: self.switch_workspace(7))
         self.save_header_button.clicked.connect(self.save_settings)
         self.clear_button.clicked.connect(self.chat_view.clear)
         self.send_button.clicked.connect(self.send_chat)
@@ -5050,6 +5060,237 @@ class MainWindow(QMainWindow):
             ("Actions / API", self._build_actions_tab()),
         ])
         return self.body_tabs
+
+    def _create_integration_registry(self, *, mock_mode: bool = True) -> IntegrationRegistry:
+        return IntegrationRegistry.load_defaults([
+            OctoPrintConnector(IntegrationSettings(mock_mode=mock_mode)),
+            SpotifyConnector(IntegrationSettings(mock_mode=mock_mode)),
+            DanceService(IntegrationSettings(mock_mode=mock_mode)),
+        ])
+
+    def _build_integrations_workspace(self) -> QWidget:
+        self.integrations_tabs = self._section_tabs([
+            ("OctoPrint", self._build_octoprint_tab()),
+            ("Spotify", self._build_spotify_tab()),
+            ("Robot Behaviours", self._build_robot_behaviours_tab()),
+            ("Activity Log", self._build_integration_activity_tab()),
+        ])
+        return self.integrations_tabs
+
+    def _build_octoprint_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("CardPanel")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(14, 14, 14, 14)
+        form_box = QGroupBox("OctoPrint connection")
+        form = QFormLayout(form_box)
+        self.integration_mock_check = QCheckBox("Mock/demo mode")
+        self.integration_mock_check.setChecked(True)
+        self.octoprint_url_edit = QLineEdit()
+        self.octoprint_url_edit.setPlaceholderText("http://octopi.local")
+        self.octoprint_key_edit = QLineEdit()
+        self.octoprint_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.octoprint_key_edit.setPlaceholderText("Session-only API key")
+        self.octoprint_status_label = QLabel("Not connected.")
+        self.octoprint_status_label.setWordWrap(True)
+        form.addRow("Mode", self.integration_mock_check)
+        form.addRow("Server URL", self.octoprint_url_edit)
+        form.addRow("API key", self.octoprint_key_edit)
+        form.addRow("Status", self.octoprint_status_label)
+        layout.addWidget(form_box)
+
+        buttons = QHBoxLayout()
+        self.octoprint_test_button = QPushButton("Connection Test")
+        self.octoprint_refresh_button = QPushButton("Refresh Printer")
+        self.octoprint_files_button = QPushButton("List Files")
+        self.octoprint_pause_button = QPushButton("Pause")
+        self.octoprint_resume_button = QPushButton("Resume")
+        self.octoprint_cancel_button = QPushButton("Cancel Print")
+        for button in (self.octoprint_test_button, self.octoprint_refresh_button, self.octoprint_files_button, self.octoprint_pause_button, self.octoprint_resume_button, self.octoprint_cancel_button):
+            buttons.addWidget(button)
+        buttons.addStretch(1)
+        layout.addLayout(buttons)
+        self.octoprint_info_text = QPlainTextEdit()
+        self.octoprint_info_text.setReadOnly(True)
+        self.octoprint_info_text.setPlainText("Printer state, temperatures, job and file-list output will appear here.")
+        layout.addWidget(self.octoprint_info_text, 1)
+        self.integration_mock_check.stateChanged.connect(self.rebuild_integration_registry_ui)
+        self.octoprint_test_button.clicked.connect(self.test_octoprint_ui)
+        self.octoprint_refresh_button.clicked.connect(self.refresh_octoprint_ui)
+        self.octoprint_files_button.clicked.connect(self.list_octoprint_files_ui)
+        self.octoprint_pause_button.clicked.connect(lambda: self.run_octoprint_control_ui("pause_print"))
+        self.octoprint_resume_button.clicked.connect(lambda: self.run_octoprint_control_ui("resume_print"))
+        self.octoprint_cancel_button.clicked.connect(lambda: self.run_octoprint_control_ui("cancel_print"))
+        return w
+
+    def _build_spotify_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("CardPanel")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(14, 14, 14, 14)
+        controls = QHBoxLayout()
+        self.spotify_connect_button = QPushButton("Connect Spotify")
+        self.spotify_disconnect_button = QPushButton("Disconnect")
+        self.spotify_state_button = QPushButton("Playback State")
+        self.spotify_devices_button = QPushButton("Devices")
+        self.spotify_prev_button = QPushButton("Previous")
+        self.spotify_play_pause_button = QPushButton("Play / Pause")
+        self.spotify_next_button = QPushButton("Next")
+        for button in (self.spotify_connect_button, self.spotify_disconnect_button, self.spotify_state_button, self.spotify_devices_button, self.spotify_prev_button, self.spotify_play_pause_button, self.spotify_next_button):
+            controls.addWidget(button)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+        volume_row = QHBoxLayout()
+        self.spotify_search_edit = QLineEdit()
+        self.spotify_search_edit.setPlaceholderText("Search text for a future track picker")
+        self.spotify_playlist_combo = QComboBox()
+        self.spotify_playlist_combo.addItem("No playlist loaded")
+        self.spotify_volume_slider = QSlider(Qt.Orientation.Horizontal)
+        self.spotify_volume_slider.setRange(0, 100)
+        self.spotify_volume_slider.setValue(50)
+        self.spotify_volume_button = QPushButton("Set Volume")
+        volume_row.addWidget(self.spotify_search_edit, 2)
+        volume_row.addWidget(self.spotify_playlist_combo, 1)
+        volume_row.addWidget(QLabel("Volume"))
+        volume_row.addWidget(self.spotify_volume_slider)
+        volume_row.addWidget(self.spotify_volume_button)
+        layout.addLayout(volume_row)
+        self.spotify_status_text = QPlainTextEdit()
+        self.spotify_status_text.setReadOnly(True)
+        self.spotify_status_text.setPlainText("Spotify uses OAuth Authorization Code with PKCE. Mock mode avoids live login during tests.")
+        layout.addWidget(self.spotify_status_text, 1)
+        self.spotify_connect_button.clicked.connect(self.connect_spotify_ui)
+        self.spotify_disconnect_button.clicked.connect(self.disconnect_spotify_ui)
+        self.spotify_state_button.clicked.connect(lambda: self.integration_action_ui("spotify", "get_playback_state", self.spotify_status_text))
+        self.spotify_devices_button.clicked.connect(lambda: self.integration_action_ui("spotify", "list_devices", self.spotify_status_text))
+        self.spotify_prev_button.clicked.connect(lambda: self.integration_action_ui("spotify", "previous", self.spotify_status_text, confirm=True))
+        self.spotify_play_pause_button.clicked.connect(lambda: self.integration_action_ui("spotify", "play_pause", self.spotify_status_text, confirm=True))
+        self.spotify_next_button.clicked.connect(lambda: self.integration_action_ui("spotify", "next", self.spotify_status_text, confirm=True))
+        self.spotify_volume_button.clicked.connect(lambda: self.integration_action_ui("spotify", "volume", self.spotify_status_text, {"volume": self.spotify_volume_slider.value()}, confirm=True))
+        return w
+
+    def _build_robot_behaviours_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("CardPanel")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(14, 14, 14, 14)
+        row = QHBoxLayout()
+        self.behaviour_routine_combo = QComboBox()
+        for name in sorted(DanceService().routines.keys()):
+            self.behaviour_routine_combo.addItem(name)
+        self.behaviour_run_button = QPushButton("Run Behaviour")
+        self.behaviour_stop_button = QPushButton("Global Stop")
+        self.behaviour_wheels_label = QLabel("Wheel movement disabled")
+        row.addWidget(self.behaviour_routine_combo)
+        row.addWidget(self.behaviour_run_button)
+        row.addWidget(self.behaviour_stop_button)
+        row.addWidget(self.behaviour_wheels_label)
+        row.addStretch(1)
+        layout.addLayout(row)
+        self.behaviour_status_text = QPlainTextEdit()
+        self.behaviour_status_text.setReadOnly(True)
+        self.behaviour_status_text.setPlainText("Built-in routines: greeting, celebration, curious, listening, simple_dance.")
+        layout.addWidget(self.behaviour_status_text, 1)
+        self.behaviour_run_button.clicked.connect(self.run_behaviour_ui)
+        self.behaviour_stop_button.clicked.connect(lambda: self.integration_action_ui("robot_behaviours", "stop_behaviour", self.behaviour_status_text, confirm=True))
+        return w
+
+    def _build_integration_activity_tab(self) -> QWidget:
+        w = QWidget()
+        w.setObjectName("CardPanel")
+        layout = QVBoxLayout(w)
+        layout.setContentsMargins(14, 14, 14, 14)
+        self.integration_activity_text = QPlainTextEdit()
+        self.integration_activity_text.setReadOnly(True)
+        self.integration_activity_text.setPlainText("Integration activity will appear here.")
+        layout.addWidget(self.integration_activity_text, 1)
+        return w
+
+    def rebuild_integration_registry_ui(self, *_args: Any) -> None:
+        mock_mode = bool(self.integration_mock_check.isChecked()) if hasattr(self, "integration_mock_check") else True
+        self.integration_registry = self._create_integration_registry(mock_mode=mock_mode)
+        self.log_integration_event("hub", "info", f"Integration registry rebuilt. Mock mode: {mock_mode}.")
+
+    def configure_octoprint_from_ui(self) -> OctoPrintConnector:
+        connector = self.integration_registry.get("octoprint")
+        if isinstance(connector, OctoPrintConnector):
+            connector.settings.values["server_url"] = self.octoprint_url_edit.text().strip()
+            connector.settings.session_secrets["api_key"] = self.octoprint_key_edit.text()
+        return connector  # type: ignore[return-value]
+
+    def log_integration_event(self, integration_id: str, level: str, message: str) -> None:
+        secrets: List[str] = []
+        if hasattr(self, "octoprint_key_edit"):
+            secrets.append(self.octoprint_key_edit.text())
+        event = self.integration_event_log.add(integration_id, level, message, secrets=secrets)
+        if hasattr(self, "integration_activity_text"):
+            self.integration_activity_text.setPlainText(self.integration_event_log.text())
+        self.statusBar().showMessage(f"{event.integration_id}: {event.message}", 5000)
+
+    def format_integration_result(self, result: Any) -> str:
+        if not hasattr(result, "ok"):
+            return str(result)
+        payload = json.dumps(getattr(result, "data", {}) or {}, indent=2, sort_keys=True)
+        return (
+            f"OK: {result.ok}\n"
+            f"Action: {result.action_id}\n"
+            f"Message: {result.message}\n"
+            f"Error: {result.error_code or 'none'}\n"
+            f"Requires confirmation: {result.requires_confirmation}\n\n"
+            f"{payload}"
+        )
+
+    def integration_action_ui(self, integration_id: str, action_id: str, output: QPlainTextEdit, params: Optional[Dict[str, Any]] = None, *, confirm: bool = False) -> None:
+        if integration_id == "octoprint":
+            self.configure_octoprint_from_ui()
+        if confirm:
+            answer = QMessageBox.question(
+                self,
+                "Confirm integration action",
+                f"Run {action_id} on {integration_id}?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.No,
+            )
+            if answer != QMessageBox.StandardButton.Yes:
+                return
+        result = self.integration_registry.execute(integration_id, action_id, params or {}, initiated_by_ai=False, confirmed=confirm)
+        output.setPlainText(self.format_integration_result(result))
+        self.log_integration_event(integration_id, "info" if result.ok else "error", f"{action_id}: {result.message or result.error_code}")
+
+    def test_octoprint_ui(self) -> None:
+        connector = self.configure_octoprint_from_ui()
+        result = connector.health_check()
+        self.octoprint_status_label.setText(result.message or ("Connected" if result.ok else "Connection failed"))
+        self.octoprint_info_text.setPlainText(self.format_integration_result(result))
+        self.log_integration_event("octoprint", "info" if result.ok else "error", f"health_check: {result.message or result.error_code}")
+
+    def refresh_octoprint_ui(self) -> None:
+        self.integration_action_ui("octoprint", "get_printer_status", self.octoprint_info_text)
+
+    def list_octoprint_files_ui(self) -> None:
+        self.integration_action_ui("octoprint", "list_files", self.octoprint_info_text)
+
+    def run_octoprint_control_ui(self, action_id: str) -> None:
+        self.integration_action_ui("octoprint", action_id, self.octoprint_info_text, confirm=True)
+
+    def connect_spotify_ui(self) -> None:
+        connector = self.integration_registry.get("spotify")
+        if isinstance(connector, SpotifyConnector):
+            auth = connector.begin_authorization()
+            result = connector.connect()
+            text = self.format_integration_result(result) + "\n\nPKCE challenge prepared. Open this URL manually when live Spotify OAuth is enabled:\n" + auth["url"]
+            self.spotify_status_text.setPlainText(mask_secret_text(text, [auth.get("verifier", "")]))
+            self.log_integration_event("spotify", "info", "PKCE authorization prepared.")
+
+    def disconnect_spotify_ui(self) -> None:
+        connector = self.integration_registry.get("spotify")
+        result = connector.disconnect()
+        self.spotify_status_text.setPlainText(self.format_integration_result(result))
+        self.log_integration_event("spotify", "info", "Disconnected.")
+
+    def run_behaviour_ui(self) -> None:
+        name = self.behaviour_routine_combo.currentText()
+        self.integration_action_ui("robot_behaviours", "run_named_behaviour", self.behaviour_status_text, {"name": name}, confirm=True)
 
     def _build_diagnostics_workspace(self) -> QWidget:
         self.system_tabs = self._section_tabs([
@@ -6320,7 +6561,7 @@ class MainWindow(QMainWindow):
         heading.setObjectName("SectionTitle")
         layout.addWidget(heading)
         summary = QLabel(
-            "Hover over controls for short explanations. This guide covers the normal operator workflow and the most common recovery steps."
+            "Hover over controls for short explanations. This guide covers the normal operator workflow, integrations and the most common recovery steps."
         )
         summary.setObjectName("HintLabel")
         summary.setWordWrap(True)
@@ -6358,17 +6599,32 @@ class MainWindow(QMainWindow):
         <h2>6. Themes</h2>
         <p>Settings provides friendly theme names and an immediate live preview. Press Apply Theme or Save Settings to retain the selection.</p>
 
-        <h2>7. Common faults</h2>
+        <h2>7. Integrations</h2>
+        <p>Open <b>Integrations</b> for external services and robot behaviours. The page has tabs for <b>OctoPrint</b>, <b>Spotify</b>, <b>Robot Behaviours</b> and the shared <b>Integration Activity Log</b>. Mock/demo mode is enabled by default so the page can be tested without contacting OctoPrint, Spotify or robot hardware.</p>
+        <p><b>OctoPrint:</b> enter the server URL and a session-only API key, then use Connection Test, Refresh Printer or List Files. Read-only status includes printer state, nozzle temperature, bed temperature, current job, progress and estimated time remaining. Pause, resume, start, cancel and file-selection actions are controlled actions; starting or cancelling a print must be explicitly confirmed. Arbitrary G-code is not exposed.</p>
+        <p><b>Spotify:</b> Connect Spotify prepares OAuth Authorization Code with PKCE. Playback must occur through an existing Spotify client or Spotify Connect device; Robot Brain does not download, proxy, record or stream Spotify audio. Mock mode can show the UI and action flow without a live login.</p>
+        <p><b>Robot Behaviours:</b> built-in routines include greeting, celebration, curious, listening and simple_dance. The global stop button clears the active routine. Wheel movement is disabled by default, head and LED limits are enforced, and hardware commands are not sent during mock/demo mode.</p>
+        <p><b>Voice command status:</b> the integration services and safety registry exist, but natural-language voice routing is not enabled yet. Planned commands include "what is the printer status", "how much time is left on the print", "what is playing on Spotify", "pause Spotify", "run greeting behaviour" and "stop behaviour". Until command routing is added, use the Integrations page buttons.</p>
+        <p><b>Secrets:</b> API keys and Spotify tokens must not be saved in Git-tracked JSON. The integration framework prefers Windows Credential Manager through keyring when available; otherwise secrets are session-only and are masked in logs.</p>
+
+        <h2>8. Robot updates</h2>
+        <p>Open <b>System / Robot Updates</b> to inspect Robot Linux release archives, run dry-run update plans and build release packages from an explicitly selected Robot source folder. Normal Robot Linux packages preserve robot-local configuration, touchscreen environment, custom audio and calibration data. MCU firmware is separate and disabled in this workflow.</p>
+
+        <h2>9. Common faults</h2>
         <ul>
           <li><b>Ollama offline:</b> run <code>ollama serve</code>, then use Diagnostics → Test Ollama.</li>
           <li><b>Model missing:</b> use Settings → Refresh Models and select an installed model.</li>
+          <li><b>Integration action does nothing:</b> confirm mock/demo mode, connection status and whether the action requires confirmation.</li>
+          <li><b>OctoPrint unavailable:</b> verify the server URL, API key, timeout and that OctoPrint access control is enabled.</li>
+          <li><b>Spotify unavailable:</b> confirm an existing Spotify client or Spotify Connect device is active, and re-authorize if the token expired.</li>
           <li><b>Identity apparently not saved:</b> confirm the save dialog points to the active profile config, usually <code>app_config_bx1.json</code>.</li>
           <li><b>PDF imports with no text:</b> it is probably scanned. Convert it to a searchable PDF before importing.</li>
           <li><b>Voice fails:</b> open Voice / Memory and press Check Health, or run <code>CHECK_DOT_TTS_WSL.bat</code>.</li>
         </ul>
 
-        <h2>8. Safety and architecture</h2>
-        <p>The desktop Brain owns language, identity, memory, documents and high-level intent. The UNO Q/body owns hardware I/O, limits and balance safety. Document text is treated as reference material and cannot override the Brain's safety instructions.</p>
+        <h2>10. Safety and architecture</h2>
+        <p>The desktop Brain owns language, identity, memory, documents, integrations and high-level intent. The UNO Q/body owns hardware I/O, limits and balance safety. Document text and integration results are reference material and cannot override the Brain's safety instructions.</p>
+        <p>Integration actions use three safety levels: READ_ONLY, CONTROL and SAFETY_CRITICAL. Read-only actions may run normally. Control actions require confirmation when initiated by AI. Safety-critical actions require explicit confirmation every time and must never run automatically.</p>
         """)
         layout.addWidget(guide)
 

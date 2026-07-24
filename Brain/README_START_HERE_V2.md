@@ -67,9 +67,45 @@ BX1's tested starter reference is stored as a deliberate project asset under `as
 - **Knowledge:** local documents and memory.
 - **Behaviours:** bounded behaviour design and human approval.
 - **Hardware:** telemetry, camera and robot actions.
+- **Integrations:** OctoPrint, Spotify, reusable robot behaviours and the shared integration activity log.
 - **System:** diagnostics and maintenance.
 - **Preferences:** models, API and appearance.
 - **Help:** setup and troubleshooting guidance.
+
+## Integration Hub
+
+Open **Integrations** to test external-service and robot-behaviour modules. Mock/demo mode is enabled by default, so the UI can be exercised without contacting OctoPrint, Spotify or robot hardware.
+
+### OctoPrint
+
+Enter the OctoPrint server URL and a session-only API key, then use **Connection Test**, **Refresh Printer** or **List Files**. Read-only status shows the printer state, nozzle temperature, bed temperature, current job, progress and estimated time remaining.
+
+Pause, resume, select-file, start-print and cancel-print actions are controlled through the integration permission layer. Starting or cancelling a print must be explicitly confirmed. Arbitrary G-code is not exposed to the AI.
+
+### Spotify
+
+**Connect Spotify** prepares OAuth Authorization Code with PKCE. Live playback must use an existing Spotify client or Spotify Connect device. Robot Brain does not download, proxy, record or stream Spotify audio.
+
+The integration architecture supports playback state, available devices, transfer playback, play, pause, next, previous, volume and queue-track actions. Live login and callback completion remain future work; mock/demo mode is available now.
+
+### Robot behaviours
+
+Built-in routines include `greeting`, `celebration`, `curious`, `listening` and `simple_dance`. The service validates choreography steps, enforces head and LED limits, prevents conflicting active routines and provides **Global Stop**.
+
+Wheel movement is disabled by default. Future wheel-enabled behaviours must require explicit confirmation and must remain subject to the body controller's hardware safeguards.
+
+### Voice command status
+
+The Integration Hub exposes structured actions for future conversation-engine routing, but natural-language voice commands are not enabled yet. Planned commands include:
+
+- "What is the printer status?"
+- "How much time is left on the print?"
+- "What is playing on Spotify?"
+- "Pause Spotify."
+- "Run greeting behaviour."
+- "Stop behaviour."
+
+Until voice routing is added, use the **Integrations** page buttons. See `docs/INTEGRATION_HUB.md` for the focused operator reference.
 
 ## Local documents and live sources
 
@@ -90,4 +126,3 @@ The Arduino/body controller must continue to own balance, motor limits, collisio
 ## Personality projects — V2.11.0
 
 Open **Robot → Identity / Personality → Open Personality Studio** to create and manage complete character projects. A project keeps the robot name, personality prompt, sliders, GUI theme and personality-specific voice. Use **Export File** and **Import File** for portable `.bxpersonality` packages. See `docs/PERSONALITY_PROJECTS_GUIDE.md`.
-

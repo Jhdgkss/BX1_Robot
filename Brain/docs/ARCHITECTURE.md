@@ -29,6 +29,22 @@ Edge speech runs in the Windows application as the sole fallback. It can generat
 
 The Dot.TTS Python environment and model cache remain in the Linux user's home directory. Windows application dependencies remain in `.venv`.
 
+## Integration Hub
+
+`bx1_integrations/` contains the modular framework for external services and robot behaviours. `main_pyqt.py` owns only the GUI wiring; credentials, HTTP calls, permissions and behaviour validation remain in integration modules.
+
+- `base.py` defines the common integration interface, structured result/error objects and safety levels.
+- `registry.py` registers integrations and exposes safe structured actions for future conversation-engine routing.
+- `permissions.py` enforces READ_ONLY, CONTROL and SAFETY_CRITICAL action gates. CONTROL actions require confirmation when initiated by AI. SAFETY_CRITICAL actions require explicit confirmation every time and must never run automatically.
+- `events.py` stores activity events and masks API keys, bearer tokens and OAuth tokens before logging.
+- `octoprint_connector.py` implements mocked and live-ready OctoPrint status/control calls with HTTP timeouts and response-size limits. Arbitrary G-code is not exposed.
+- `spotify_connector.py` implements mocked and live-ready Spotify OAuth Authorization Code with PKCE, playback state and Spotify Connect controls. Robot Brain does not download, proxy, record or stream Spotify audio.
+- `dance_service.py` provides reusable choreography definitions and built-in routines. Head and LED limits are enforced; wheel movement is disabled by default.
+
+Secrets must not be stored in Git-tracked JSON. The framework prefers OS credential storage through `keyring` when available and otherwise falls back to session-only secrets with a visible warning path in the UI.
+
+Natural-language voice routing into the integration registry is intentionally separate work. The GUI can test the integrations in mock/demo mode now; the conversation engine should later call `IntegrationRegistry.execute(...)` and honour the same permission decisions.
+
 ## Service lifetime
 
 The shared Dot.TTS service remains running when the Brain window closes or changes profile. This preserves the loaded and compiled model. The Voice page's explicit **Stop Voice Service** action releases it when GPU memory is needed; Edge remains the fallback while it is unavailable.
