@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import importlib.util
 import math
 import os
@@ -9,6 +10,7 @@ import random
 import re
 import shutil
 import signal
+import socket
 import sys
 import threading
 import time
@@ -101,6 +103,7 @@ RUNTIME_DIR = PROJECT_ROOT / "runtime"
 LOCAL_CUE_DIR = RUNTIME_DIR / "audio" / "cues"
 LOCAL_CUE_MANIFEST = LOCAL_CUE_DIR / "manifest.json"
 VOICE_FEEDBACK_DIR = RUNTIME_DIR / "audio" / "feedback"
+BRAIN_PROFILE_CACHE = RUNTIME_DIR / "brain_profile_cache.json"
 
 DEFAULT_SLEEP_PHRASES = [
     "sleep",
@@ -658,8 +661,8 @@ def load_config() -> Dict[str, Any]:
 
     # Natural conversation with strict noise/repetition rejection,
     # unambiguous voice phases and body-owned low-latency feedback.
-    cfg["app_version"] = "10.39"
-    cfg["version"] = "10.39"
+    cfg["app_version"] = "10.42"
+    cfg["version"] = "10.42"
     cfg.setdefault("stt_transcription_backend", "brain_faster_whisper")
     cfg.setdefault("brain_stt_enabled", True)
     cfg.setdefault("brain_stt_timeout_s", 120)
@@ -667,6 +670,15 @@ def load_config() -> Dict[str, Any]:
     cfg.setdefault("brain_stt_language", "en")
     cfg.setdefault("brain_stt_hotwords", "")
     cfg.setdefault("brain_stt_initial_prompt", "")
+    cfg.setdefault("shared_audio_stream_enabled", True)
+    cfg.setdefault("dynamic_wake_enabled", True)
+    cfg.setdefault("wake_engine", "dynamic_vosk")
+    cfg.setdefault("wake_sensitivity", 0.72)
+    cfg.setdefault("wake_stream_window_s", 2.0)
+    cfg.setdefault("wake_capture_pre_roll_ms", 1800)
+    cfg.setdefault("brain_profile_sync_enabled", True)
+    cfg.setdefault("brain_profile_sync_interval_s", 15.0)
+    cfg.setdefault("queued_speech_owner", "brain_app")
     cfg.setdefault("stt_defer_local_vosk_when_brain_enabled", True)
     cfg.setdefault("stt_speech_resume_trigger_ms", 140)
     cfg.setdefault("stt_transient_guard_after_ms", 220)
@@ -704,7 +716,7 @@ def load_config() -> Dict[str, Any]:
     # The desktop Brain may choose the wording/personality, but the robot body
     # must own immediate playback timing. Otherwise the user hears nothing while
     # Dot.TTS is generating the final reply.
-    cfg.setdefault("brain_controls_thinking_cues", False)
+    cfg["brain_controls_thinking_cues"] = True
     cfg.setdefault("brain_request_watchdog_s", 50.0)
     cfg.setdefault("idle_life_enabled", True)
     cfg.setdefault("idle_life_micro_actions_enabled", True)
@@ -845,6 +857,12 @@ class BX1RobotBodyService:
             vision_timeout_s=int(config.get("vision_timeout_s", 180)),
             command_ack_timeout_s=int(config.get("command_ack_timeout_s", 10)),
         ))
+        self.brain_profile_lock = threading.Lock()
+        self.brain_profile_runtime: Dict[str, Any] = {
+            "ok": False, "source": "none", "last_sync_at": "", "last_attempt_at": "",
+            "last_cache_load_at": "", "last_error": "", "brain_profile": "",
+            "bundle_version": "", "generated_audio_count": 0, "audio_sync": {},
+        }
         self.tts = TextToSpeech(self.build_audio_config())
         if hasattr(self.tts, "set_mouth_event_handler"):
             self.tts.set_mouth_event_handler(self.handle_mouth_audio_event)  # type: ignore[attr-defined]
@@ -873,9 +891,9 @@ class BX1RobotBodyService:
         self.stt: Optional[VoskSpeechToText] = None
         self.last_stt_capture_id = ""
         self.last_stt_debug_audio_urls: Dict[str, str] = {}
-        # One microphone capture device cannot be owned by wake listening,
-        # Listen Once, and diagnostics at the same time.  The lock gives clear
-        # behaviour instead of random ALSA "Device or resource busy" failures.
+        # Compatibility fields retained for older API snapshots. v10.42 uses one
+        # permanent shared ALSA owner, so normal capture paths never contend for
+        # the physical microphone and do not use this lock for handover.
         self.audio_capture_lock = threading.Lock()
         self.manual_audio_capture_requested = threading.Event()
         self.tts_capture_mute_lock = threading.Lock()
@@ -894,6 +912,9 @@ class BX1RobotBodyService:
             dsp_settings=build_audio_dsp_settings(config),
             fft_bins=int(config.get("audio_live_fft_bins", 48)),
         )
+        # Use the last Brain-owned name/wake/cue bundle immediately when the
+        # desktop Brain is offline during boot. The sync thread refreshes it later.
+        self._load_brain_profile_cache()
         self.last_mic_test_wav = str(Path(tempfile.gettempdir()) / "bx1_mic_test.wav")
         self._mic_devices_cache: Dict[str, Any] = {"ok": False, "devices": []}
         self._mic_devices_cache_time = 0.0
@@ -2146,6 +2167,15 @@ class BX1RobotBodyService:
 
     def start(self) -> None:
         self.print_banner()
+        if bool(self.cfg.get("shared_audio_stream_enabled", True)):
+            self._refresh_mic_monitor_settings()
+            mic_start = self.mic_monitor.start()
+            if not mic_start.get("ok"):
+                self.web_log("error", f"shared microphone stream failed: {mic_start.get('error')}", mic_start)
+            else:
+                print("[audio] Shared ALSA microphone stream active.")
+        if bool(self.cfg.get("brain_profile_sync_enabled", True)):
+            self._start_thread("brain_profile_sync", self.brain_profile_sync_loop)
         if bool(self.cfg.get("web_enabled", True)):
             self.start_web_interface()
         self._start_thread("telemetry", self.telemetry_loop)
@@ -2749,38 +2779,40 @@ class BX1RobotBodyService:
                     loop_active=True,
                     last_error="",
                 )
+            wake_pre_result: Dict[str, Any] = {}
             try:
-                # Own the capture device while Vosk/ALSA listens.  This avoids
-                # arecord/sounddevice fighting with the diagnostics page.
-                got_lock = self.audio_capture_lock.acquire(timeout=1.0)
-                if not got_lock:
-                    self.set_voice_runtime("paused", "Wake listener waiting for microphone to become free...", loop_active=True)
-                    self.stop_event.wait(0.25)
-                    continue
-                monitor_was_running = bool(self.mic_monitor.is_running())
-                try:
-                    if monitor_was_running:
-                        self.mic_monitor.stop()
-                        time.sleep(0.1)
-                    stt_result = self.stt.listen_once_detailed(
-                        float(self.cfg.get("record_seconds", 5)),
-                        defer_local_recognition=self._defer_local_vosk_for_primary_stt(),
-                        cancel_event=self.manual_audio_capture_requested,
+                # When the conversation is asleep, use the loaded Vosk model as a
+                # small grammar recogniser for the Brain-supplied name phrases. It
+                # reads the permanent shared PCM stream and never opens ALSA.
+                dynamic_wake = bool(self.cfg.get("dynamic_wake_enabled", True)) and bool(wake_words) and not is_awake_waiting
+                force_start = False
+                pre_roll_override: Optional[int] = None
+                if dynamic_wake and getattr(self.stt, "vosk_ready", False):
+                    wake_pre_result = self.stt.wait_for_wake_phrase(
+                        self.mic_monitor, wake_words,
+                        timeout_s=float(self.cfg.get("wake_stream_window_s", 2.0) or 2.0),
+                        stop_event=self.stop_event,
+                        sensitivity=float(self.cfg.get("wake_sensitivity", 0.72) or 0.72),
                     )
-                    if not stt_result.get("cancelled"):
-                        stt_result = self._apply_primary_stt(stt_result, source="live_voice", stt_engine=self.stt)
-                    text = str(stt_result.get("text") or "").strip()
-                finally:
-                    # A manual Listen Once request may have interrupted this live
-                    # capture. Do not reopen the level-meter arecord process while
-                    # the manual request is waiting to take ownership.
-                    if monitor_was_running and not self.manual_audio_capture_requested.is_set():
-                        try:
-                            self._refresh_mic_monitor_settings()
-                            self.mic_monitor.start()
-                        except Exception:
-                            pass
-                    self.audio_capture_lock.release()
+                    if not wake_pre_result.get("detected"):
+                        if wake_pre_result.get("error"):
+                            self.set_voice_runtime("degraded", f"Wake model unavailable: {wake_pre_result.get('error')}", loop_active=True)
+                        continue
+                    force_start = True
+                    pre_roll_override = int(self.cfg.get("wake_capture_pre_roll_ms", 1800) or 1800)
+                    self.set_voice_runtime(
+                        "recording",
+                        f"Wake phrase detected: {wake_pre_result.get('wake_phrase')}. Listening for command...",
+                        loop_active=True, last_wake_word=str(wake_pre_result.get("wake_phrase") or ""), last_wake_at=now_iso(),
+                    )
+                stt_result = self.stt.listen_once_detailed(
+                    float(self.cfg.get("record_seconds", 5)),
+                    defer_local_recognition=self._defer_local_vosk_for_primary_stt(),
+                    audio_source=self.mic_monitor, force_start=force_start,
+                    pre_roll_override_ms=pre_roll_override,
+                )
+                stt_result = self._apply_primary_stt(stt_result, source="live_voice", stt_engine=self.stt)
+                text = str(stt_result.get("text") or "").strip()
             except Exception as exc:
                 err = str(exc)
                 self.set_voice_runtime("error", f"Listen failed: {err}", loop_active=True, last_error=err)
@@ -2823,7 +2855,17 @@ class BX1RobotBodyService:
                 "transcript_quality": stt_result.get("transcript_quality", {}),
                 "duration_s": (stt_result.get("capture") or {}).get("duration_s"),
                 "duration_after_vad_s": (stt_result.get("brain_stt") or {}).get("duration_after_vad_s") if isinstance(stt_result.get("brain_stt"), dict) else None,
+                "wake_detector": str(wake_pre_result.get("engine") or ""),
+                "wake_detector_text": str(wake_pre_result.get("recognised_text") or ""),
+                "wake_detector_phrase": str(wake_pre_result.get("wake_phrase") or ""),
             }
+            if not stt_result.get("accepted", False) and wake_pre_result.get("detected"):
+                # A verified local wake phrase is sufficient to open the command
+                # window even when the remote full transcription returns empty.
+                text = str(wake_pre_result.get("recognised_text") or wake_pre_result.get("wake_phrase") or "").strip()
+                stt_result["accepted"] = bool(text)
+                stt_result["text"] = text
+                stt_result["reason"] = "accepted by dynamic wake grammar"
             if not stt_result.get("accepted", False):
                 reason = str(stt_result.get("reason") or stt_result.get("error") or "speech rejected")
                 if text or reason not in {"no recognised speech", ""}:
@@ -2852,6 +2894,11 @@ class BX1RobotBodyService:
                 matched_wake, wake_score, wake_method = self._match_wake_word_detailed(local_wake_text, wake_words)
                 if matched_wake:
                     wake_match_source = "local_vosk_fallback"
+            if not matched_wake and wake_pre_result.get("detected"):
+                matched_wake = str(wake_pre_result.get("wake_phrase") or "")
+                wake_score = 1.0
+                wake_method = str(wake_pre_result.get("engine") or "dynamic_vosk_grammar")
+                wake_match_source = "dynamic_vosk_wake"
             metrics.update({
                 "wake_match": matched_wake,
                 "wake_match_score": round(float(wake_score or 0.0), 3),
@@ -4049,9 +4096,239 @@ class BX1RobotBodyService:
             if error:
                 self.performance["last_error"] = str(error)[:300]
 
+    def _save_brain_profile_cache(self, profile: Dict[str, Any]) -> None:
+        RUNTIME_DIR.mkdir(parents=True, exist_ok=True)
+        temporary = BRAIN_PROFILE_CACHE.with_suffix(".json.tmp")
+        temporary.write_text(json.dumps(profile, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+        temporary.replace(BRAIN_PROFILE_CACHE)
+
+    def _load_brain_profile_cache(self) -> Dict[str, Any]:
+        try:
+            if BRAIN_PROFILE_CACHE.exists():
+                data = json.loads(BRAIN_PROFILE_CACHE.read_text(encoding="utf-8"))
+                if isinstance(data, dict):
+                    self.apply_brain_body_profile(data, source="cache", save_cache=False, download_audio=False)
+                    return data
+        except Exception as exc:
+            with self.brain_profile_lock:
+                self.brain_profile_runtime["last_error"] = str(exc)[:400]
+        return {}
+
+    def brain_profile_snapshot(self) -> Dict[str, Any]:
+        with self.brain_profile_lock:
+            runtime = dict(self.brain_profile_runtime)
+        runtime.update({
+            "robot_name": self.robot_name,
+            "wake_phrases": list(self.cfg.get("brain_wake_phrases", [])),
+            "cache_path": str(BRAIN_PROFILE_CACHE),
+            "identity_owner": "brain_app",
+        })
+        return runtime
+
+    @staticmethod
+    def _sha256_path(path: Path) -> str:
+        digest = hashlib.sha256()
+        with path.open("rb") as handle:
+            for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    def _sync_brain_phrase_audio(self, profile: Dict[str, Any]) -> Dict[str, Any]:
+        local = profile.get("local_speech") if isinstance(profile.get("local_speech"), dict) else {}
+        items = local.get("items") if isinstance(local.get("items"), list) else []
+        manifest = self._load_local_cue_manifest()
+        cues = manifest.get("cues") if isinstance(manifest.get("cues"), dict) else {}
+        manifest["cues"] = cues
+
+        # Definitions are published immediately, even before their replacement
+        # audio has been generated. Remove any old Brain-managed file whose text
+        # no longer matches, otherwise the body could speak yesterday's wording
+        # after the operator edits a phrase in the Brain UI.
+        definitions = local.get("definitions") if isinstance(local.get("definitions"), list) else []
+        definition_text = {
+            str(item.get("key") or "").strip(): str(item.get("text") or "").strip()
+            for item in definitions if isinstance(item, dict) and str(item.get("key") or "").strip()
+        }
+        current_audio_text = {
+            str(item.get("key") or "").strip(): str(item.get("text") or "").strip()
+            for item in items if isinstance(item, dict) and str(item.get("key") or "").strip()
+        }
+        managed_prefixes = ("wake_ack", "thinking_", "sleep_ack")
+        invalidated = 0
+        for cue_key in list(cues):
+            cue_item = cues.get(cue_key)
+            if not isinstance(cue_item, dict) or not str(cue_key).startswith(managed_prefixes):
+                continue
+            expected_text = definition_text.get(str(cue_key), "")
+            generated_text = current_audio_text.get(str(cue_key), "")
+            existing_text = str(cue_item.get("text") or "").strip()
+            valid = bool(expected_text and generated_text and expected_text == generated_text and existing_text == generated_text)
+            if valid:
+                continue
+            old_path = LOCAL_CUE_DIR / Path(str(cue_item.get("filename") or "")).name
+            if str(cue_item.get("source") or "") == "brain_profile":
+                try:
+                    old_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+            cues.pop(cue_key, None)
+            invalidated += 1
+
+        downloaded = 0
+        reused = 0
+        errors: List[Dict[str, Any]] = []
+        LOCAL_CUE_DIR.mkdir(parents=True, exist_ok=True)
+        for item in items:
+            if not isinstance(item, dict):
+                continue
+            key = re.sub(r"[^a-zA-Z0-9_\-]+", "_", str(item.get("key") or "").strip().lower()).strip("_")
+            filename = Path(str(item.get("filename") or "")).name
+            audio_url = str(item.get("audio_url") or "").strip()
+            expected_hash = str(item.get("sha256") or "").strip().lower()
+            text = str(item.get("text") or "").strip()
+            if not key or not filename or not audio_url:
+                continue
+            suffix = Path(filename).suffix.lower()
+            if suffix not in {".wav", ".mp3", ".ogg"}:
+                suffix = ".wav"
+            target = LOCAL_CUE_DIR / f"{key}{suffix}"
+            current_ok = False
+            if target.exists():
+                try:
+                    current_ok = (not expected_hash) or self._sha256_path(target).lower() == expected_hash
+                except Exception:
+                    current_ok = False
+            try:
+                if not current_ok:
+                    self.brain.download_body_audio(audio_url, target, timeout_s=120)
+                    if expected_hash and self._sha256_path(target).lower() != expected_hash:
+                        target.unlink(missing_ok=True)
+                        raise RuntimeError("downloaded phrase checksum did not match the Brain manifest")
+                    downloaded += 1
+                else:
+                    reused += 1
+                cues[key] = {
+                    "text": text, "filename": target.name, "generated_at": str(item.get("generated_at") or now_iso()),
+                    "size_bytes": target.stat().st_size, "sha256": expected_hash or self._sha256_path(target),
+                    "source": "brain_profile", "audio_url": audio_url,
+                }
+            except Exception as exc:
+                errors.append({"key": key, "error": str(exc)[:500]})
+        manifest.update({
+            "schema": "bx1.local_voice_cues.v2", "source": "brain_profile",
+            "bundle_version": str(local.get("bundle_version") or ""),
+            "generated_at": str(local.get("generated_at") or now_iso()),
+            "brain_profile": str(profile.get("brain_profile") or ""),
+            "robot_name": str(profile.get("robot_name") or self.robot_name),
+            "expected_count": int(local.get("expected_count") or len(items)),
+        })
+        self._save_local_cue_manifest(manifest)
+        return {
+            "downloaded": downloaded, "reused": reused, "invalidated": invalidated,
+            "errors": errors, "available": len(items),
+        }
+
+    def apply_brain_body_profile(
+        self, profile: Dict[str, Any], *, source: str = "brain", save_cache: bool = True, download_audio: bool = True,
+    ) -> Dict[str, Any]:
+        if not isinstance(profile, dict) or not profile.get("ok", True):
+            return {"ok": False, "error": "invalid Brain body profile"}
+        name = " ".join(str(profile.get("robot_name") or "Robot Body").split()).strip() or "Robot Body"
+        wake = profile.get("wake") if isinstance(profile.get("wake"), dict) else {}
+        wake_phrases = [" ".join(str(item or "").lower().split()) for item in (wake.get("phrases") or [])]
+        wake_phrases = list(dict.fromkeys(item for item in wake_phrases if item))
+        local = profile.get("local_speech") if isinstance(profile.get("local_speech"), dict) else {}
+        definitions = local.get("definitions") if isinstance(local.get("definitions"), list) else []
+        wake_ack = [str(item).strip() for item in (local.get("wake_ack_phrases") or []) if str(item).strip()]
+        waiting = [str(item).strip() for item in (local.get("waiting_phrases") or []) if str(item).strip()]
+        if not wake_ack:
+            wake_ack = [str(item.get("text") or "").strip() for item in definitions if isinstance(item, dict) and str(item.get("key") or "").startswith("wake_ack") and str(item.get("text") or "").strip()]
+        if not waiting:
+            waiting = [str(item.get("text") or "").strip() for item in definitions if isinstance(item, dict) and str(item.get("key") or "").startswith("thinking_") and str(item.get("text") or "").strip()]
+        self.robot_name = name
+        if wake_phrases:
+            self.cfg["brain_wake_phrases"] = wake_phrases
+            self.cfg["wake_words"] = wake_phrases
+        self.cfg["wake_engine"] = str(wake.get("engine_preference") or "dynamic_vosk")
+        self.cfg["wake_sensitivity"] = float(wake.get("sensitivity", self.cfg.get("wake_sensitivity", 0.72)) or 0.72)
+        try:
+            self.cfg["brain_profile_sync_interval_s"] = max(5.0, min(300.0, float(profile.get("sync_interval_s", self.cfg.get("brain_profile_sync_interval_s", 15.0)) or 15.0)))
+        except Exception:
+            pass
+        if wake_ack:
+            self.cfg["wake_ack_phrases"] = wake_ack
+            self.cfg["wake_ack_phrase"] = wake_ack[0]
+        if waiting:
+            self.cfg["thinking_cues"] = waiting
+        sleep_ack = str(local.get("sleep_ack_phrase") or "").strip()
+        if sleep_ack:
+            self.cfg["sleep_ack_phrase"] = sleep_ack
+        for src_key, cfg_key in (("initial_delay_s", "thinking_cue_delay_s"), ("repeat_s", "thinking_cue_repeat_s")):
+            if local.get(src_key) is not None:
+                try: self.cfg[cfg_key] = float(local.get(src_key))
+                except Exception: pass
+        if local.get("max_per_reply") is not None:
+            try: self.cfg["thinking_cue_max_per_reply"] = int(local.get("max_per_reply"))
+            except Exception: pass
+        audio_result: Dict[str, Any] = {"downloaded": 0, "reused": 0, "errors": [], "available": 0}
+        if download_audio and self.brain.base_url:
+            audio_result = self._sync_brain_phrase_audio(profile)
+        if save_cache:
+            self._save_brain_profile_cache(profile)
+        now = now_iso()
+        with self.brain_profile_lock:
+            self.brain_profile_runtime.update({
+                "ok": True, "source": source, "last_sync_at": now if source == "brain" else self.brain_profile_runtime.get("last_sync_at", ""),
+                "last_cache_load_at": now if source == "cache" else self.brain_profile_runtime.get("last_cache_load_at", ""),
+                "last_error": "", "brain_profile": str(profile.get("brain_profile") or ""),
+                "bundle_version": str(local.get("bundle_version") or ""),
+                "generated_audio_count": int(local.get("count") or 0),
+                "audio_sync": audio_result,
+            })
+        return {"ok": True, "robot_name": name, "wake_phrases": wake_phrases, "audio_sync": audio_result}
+
+    def sync_brain_profile_once(self) -> Dict[str, Any]:
+        if not self.brain.base_url:
+            return {"ok": False, "error": "Brain App URL is not configured"}
+        try:
+            profile = self.brain.body_profile()
+            result = self.apply_brain_body_profile(profile, source="brain", save_cache=True, download_audio=True)
+            if result.get("ok"):
+                self.web_log("system", f"Brain profile synced: {result.get('robot_name')}", result)
+            return result
+        except Exception as exc:
+            with self.brain_profile_lock:
+                self.brain_profile_runtime["last_error"] = str(exc)[:500]
+                self.brain_profile_runtime["last_attempt_at"] = now_iso()
+            return {"ok": False, "error": str(exc)}
+
+    def web_sync_brain_profile(self) -> Dict[str, Any]:
+        """Manual web action for an immediate Brain identity/audio refresh."""
+        result = self.sync_brain_profile_once()
+        return {
+            "ok": bool(result.get("ok")),
+            "sync": result,
+            "brain_profile": self.brain_profile_snapshot(),
+            "voice": self.get_voice_settings(),
+            "thinking_cues": self.get_thinking_cue_settings(),
+        }
+
+    def brain_profile_sync_loop(self) -> None:
+        # First sync is immediate; later runs follow the interval published by the
+        # Brain or the local safe default.
+        while not self.stop_event.is_set():
+            self.sync_brain_profile_once()
+            interval = max(5.0, min(300.0, float(self.cfg.get("brain_profile_sync_interval_s", 15.0) or 15.0)))
+            if self.stop_event.wait(interval):
+                return
+
     def get_wake_words(self) -> List[str]:
-        words = [str(w).strip().lower() for w in self.cfg.get("wake_words", ["hello", "hey", "robot"]) if str(w).strip()]
-        return words or ["hello", "hey", "robot"]
+        source = self.cfg.get("brain_wake_phrases") or self.cfg.get("wake_words") or []
+        words = [" ".join(str(w).strip().lower().split()) for w in source if str(w).strip()]
+        if words:
+            return list(dict.fromkeys(words))
+        fallback_name = " ".join(str(self.robot_name or "robot").lower().split())
+        return [f"hey {fallback_name}", f"hello {fallback_name}"]
 
     def _load_local_cue_manifest(self) -> Dict[str, Any]:
         try:
@@ -4119,7 +4396,7 @@ class BX1RobotBodyService:
             "manifest": str(LOCAL_CUE_MANIFEST),
             "generated_at": str(manifest.get("generated_at", "")),
             "count": sum(1 for f in files if f.get("exists")),
-            "expected_count": len(self.get_local_voice_cue_texts()),
+            "expected_count": int(manifest.get("expected_count") or len(self.get_local_voice_cue_texts())),
             "files": files,
         }
 
@@ -4184,83 +4461,28 @@ class BX1RobotBodyService:
         ).start()
 
     def web_regenerate_local_voice_cues(self, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Compatibility button: generation now occurs in the desktop Brain app."""
         data = data or {}
-        try:
-            self.resolve_brain_tts_base_url(update_config=True)
-            self.tts.update_config(self.build_audio_config())
-        except Exception as exc:
-            return {"ok": False, "error": "Brain voice URL could not be derived from the Brain App URL: " + str(exc)}
-        LOCAL_CUE_DIR.mkdir(parents=True, exist_ok=True)
-        all_cues = self.get_local_voice_cue_texts()
         selected_raw = data.get("keys") or []
-        selected = [str(x).strip() for x in selected_raw if str(x).strip()] if isinstance(selected_raw, list) else []
-        cue_map = {k: v for k, v in all_cues.items() if (not selected or k in selected)}
-        max_items = max(1, min(50, int(float(data.get("max_items", len(cue_map)) or len(cue_map)))))
-        cue_map = dict(list(cue_map.items())[:max_items])
-        manifest = {
-            "schema": "bx1.local_voice_cues.v1",
-            "generated_at": now_iso(),
-            "voice": str(self.cfg.get("brain_tts_voice", "active_profile")),
-            "engine": str(self.cfg.get("brain_tts_engine", "dottts")),
-            "cues": {},
-        }
-        results: List[Dict[str, Any]] = []
-        old_tts_cfg = self.tts.cfg
-        self.tts.update_config(self.build_audio_config())
+        selected = [str(item).strip() for item in selected_raw if str(item).strip()] if isinstance(selected_raw, list) else []
         try:
-            for key, text in cue_map.items():
-                safe_key = re.sub(r"[^a-zA-Z0-9_\-]+", "_", key).strip("_") or "cue"
-                try:
-                    report = self.tts._request_brain_tts_audio(text)  # type: ignore[attr-defined]
-                    item: Dict[str, Any] = {"key": safe_key, "text": text, "ok": bool(report.get("ok")), "elapsed": report.get("elapsed_sec")}
-                    if report.get("ok") and report.get("filename"):
-                        src = Path(str(report.get("filename")))
-                        suffix = src.suffix.lower() or ".wav"
-                        dst = LOCAL_CUE_DIR / f"{safe_key}{suffix}"
-                        shutil.copyfile(src, dst)
-                        item.update({"filename": dst.name, "size_bytes": dst.stat().st_size})
-                        manifest["cues"][safe_key] = {
-                            "text": text,
-                            "filename": dst.name,
-                            "generated_at": now_iso(),
-                            "size_bytes": dst.stat().st_size,
-                        }
-                    else:
-                        item["error"] = str(report.get("error") or report)[:600]
-                    results.append(item)
-                    self.web_log("system" if item.get("ok") else "error", f"voice cue {safe_key}: {'ok' if item.get('ok') else item.get('error')}")
-                except Exception as exc:
-                    results.append({"key": key, "text": text, "ok": False, "error": str(exc)[:600]})
-        finally:
-            self.tts.update_config(old_tts_cfg)
-        # Preserve old valid cue files if a regeneration item failed.
-        old_manifest = self._load_local_cue_manifest()
-        old_cues = old_manifest.get("cues", {}) if isinstance(old_manifest.get("cues"), dict) else {}
-        for key in all_cues:
-            if key not in manifest["cues"] and isinstance(old_cues, dict) and key in old_cues:
-                manifest["cues"][key] = old_cues[key]
-        self._save_local_cue_manifest(manifest)
-        ok_count = sum(1 for item in results if item.get("ok"))
-        return {"ok": ok_count > 0, "generated": ok_count, "requested": len(results), "results": results, "status": self.local_voice_cue_status()}
-
-    def register_active_thinking_cues(self, stop: threading.Event) -> None:
-        """Remember the current progress-cue worker until real reply audio begins."""
-        with self.active_thinking_lock:
-            previous = self.active_thinking_stop
-            if previous is not None and previous is not stop:
-                previous.set()
-            self.active_thinking_stop = stop
-            self.active_thinking_started_mono = time.monotonic()
-
-    def stop_active_thinking_cues(self, reason: str = "") -> None:
-        with self.active_thinking_lock:
-            stop = self.active_thinking_stop
-            self.active_thinking_stop = None
-            self.active_thinking_started_mono = 0.0
-        if stop is not None:
-            stop.set()
-            if reason:
-                self.web_log("thinking", f"progress cues stopped: {reason}")
+            generated = self.brain.generate_body_audio(selected or None)
+            profile = generated.get("profile") if isinstance(generated.get("profile"), dict) else self.brain.body_profile()
+            sync = self.apply_brain_body_profile(profile, source="brain", save_cache=True, download_audio=True)
+            self.web_log("system", "Brain-generated queued speech synchronised to the UNO Q.", sync)
+            return {
+                "ok": bool(generated.get("ok")) and bool(sync.get("ok")),
+                "owner": "desktop_brain_app",
+                "generated": generated,
+                "sync": sync,
+                "status": self.local_voice_cue_status(),
+            }
+        except Exception as exc:
+            self.web_log("error", f"Brain queued-speech generation failed: {exc}")
+            return {
+                "ok": False, "owner": "desktop_brain_app", "error": str(exc),
+                "hint": "Open Brain > Body Wake / Queued Speech, save the definitions, then use Generate Phrase or Generate All.",
+            }
 
     def start_thinking_cues(self, reason: str = "chat") -> threading.Event:
         """Give immediate, then progressively richer feedback while Brain works.
@@ -4386,10 +4608,16 @@ class BX1RobotBodyService:
         if not parsed.hostname:
             raise ValueError("Brain App URL must include an IP address or hostname.")
 
-        # If John types only an IP/host, default to the Brain App robot API port.
-        port = parsed.port or 8765
-        host = parsed.hostname
-        return f"{parsed.scheme}://{host}:{port}"
+        # If only an IP/host is entered, default to the Brain App robot API port.
+        try:
+            port = parsed.port or 8765
+        except ValueError as exc:
+            raise ValueError("Brain App port must be a number between 1 and 65535.") from exc
+        if not 1 <= int(port) <= 65535:
+            raise ValueError("Brain App port must be between 1 and 65535.")
+        host = str(parsed.hostname or "").strip()
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{parsed.scheme}://{url_host}:{int(port)}"
 
     def normalise_brain_tts_base_url(self, value: str) -> str:
         """Return the shared Brain API URL used by compatibility TTS requests."""
@@ -4403,8 +4631,15 @@ class BX1RobotBodyService:
             raise ValueError("Brain voice URL must start with http:// or https://")
         if not parsed.hostname:
             raise ValueError("Brain voice URL must include an IP address or hostname.")
-        port = parsed.port or 8765
-        return f"{parsed.scheme}://{parsed.hostname}:{port}"
+        try:
+            port = parsed.port or 8765
+        except ValueError as exc:
+            raise ValueError("Brain voice port must be a number between 1 and 65535.") from exc
+        if not 1 <= int(port) <= 65535:
+            raise ValueError("Brain voice port must be between 1 and 65535.")
+        host = str(parsed.hostname or "").strip()
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{parsed.scheme}://{url_host}:{int(port)}"
 
     def make_same_host_url(self, base_url: str, port: int) -> str:
         """Reuse the host/scheme from one Brain URL with another port."""
@@ -4415,7 +4650,9 @@ class BX1RobotBodyService:
         if not parsed.hostname:
             raise ValueError("Cannot derive host from Brain URL.")
         scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "http"
-        return f"{scheme}://{parsed.hostname}:{int(port)}"
+        host = str(parsed.hostname or "").strip()
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        return f"{scheme}://{url_host}:{int(port)}"
 
     def _is_placeholder_url(self, value: str) -> bool:
         raw = str(value or "").strip().lower()
@@ -4495,12 +4732,20 @@ class BX1RobotBodyService:
         profile = normalise_robot_profile(self.robot_profile, self.cfg)
         self.robot_profile = profile
         self.robot_id = str(profile.get("body_id", profile.get("robot_id", "UNO_Q_BODY"))).strip() or "UNO_Q_BODY"
-        self.robot_name = "Robot Body"
+        # Never overwrite a name already supplied by the desktop Brain profile.
+        # During first boot, before a Brain profile or cache exists, use a neutral
+        # body label only as a temporary display fallback.
+        if not str(getattr(self, "robot_name", "") or "").strip():
+            self.robot_name = "Robot Body"
         self.cfg["robot_id"] = self.robot_id
         self.cfg["brain_owns_identity"] = True
-        # Wake words are local STT routing only now. They do not define the
-        # robot's character or Brain identity.
-        self.cfg["wake_words"] = list(profile.get("wake_words", self.cfg.get("wake_words", ["hello", "hey", "robot"])))
+        # Active wake phrases are Brain-owned. Retain body-profile words only as
+        # an offline fallback when no Brain profile has ever been synchronised.
+        if not self.cfg.get("brain_wake_phrases"):
+            fallback_wake = list(profile.get("wake_words", self.cfg.get("offline_wake_words", self.cfg.get("wake_words", []))))
+            if fallback_wake:
+                self.cfg["offline_wake_words"] = fallback_wake
+                self.cfg["wake_words"] = fallback_wake
         ui = dict(profile.get("ui") or {})
         self.cfg["ui_theme"] = str(ui.get("theme", self.cfg.get("ui_theme", "dark-blue")))
         voice = dict(profile.get("voice_profile") or {})
@@ -4585,6 +4830,8 @@ class BX1RobotBodyService:
         self.brain.base_url = clean_url.rstrip("/")
         self.brain.cfg.base_url = clean_url.rstrip("/")
         self.brain.cfg.api_key = clean_key
+        self._network_status_cache = None
+        self._network_status_cache_at = 0.0
 
         if save:
             self.save_config_file()
@@ -4592,19 +4839,96 @@ class BX1RobotBodyService:
         self.web_log("system", f"Brain App URL saved: {clean_url}")
         return self.get_brain_settings()
 
+    def get_network_status(self, force: bool = False) -> Dict[str, Any]:
+        """Return the addresses currently used by the onboard UI and Brain API.
+
+        The result is cached briefly because both browser interfaces poll status
+        frequently. UDP connect is used only to ask Linux which local interface
+        would be selected; it does not transmit application data.
+        """
+        now_mono = time.monotonic()
+        cached = getattr(self, "_network_status_cache", None)
+        cached_at = float(getattr(self, "_network_status_cache_at", 0.0) or 0.0)
+        if not force and isinstance(cached, dict) and (now_mono - cached_at) < 5.0:
+            return dict(cached)
+
+        brain_url = str(self.cfg.get("brain_base_url", getattr(self.brain, "base_url", "")) or "").strip()
+        brain_scheme = "http"
+        brain_host = ""
+        brain_port = 8765
+        if brain_url:
+            raw = brain_url if "://" in brain_url else "http://" + brain_url
+            try:
+                parsed = urlparse(raw)
+                brain_scheme = parsed.scheme if parsed.scheme in {"http", "https"} else "http"
+                brain_host = str(parsed.hostname or "").strip()
+                brain_port = int(parsed.port or 8765)
+            except Exception:
+                brain_host = ""
+                brain_port = 8765
+
+        addresses: List[str] = []
+        primary_ip = ""
+        try:
+            with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as sock:
+                sock.connect(("1.1.1.1", 80))
+                primary_ip = str(sock.getsockname()[0] or "").strip()
+        except Exception:
+            primary_ip = ""
+
+        try:
+            for info in socket.getaddrinfo(socket.gethostname(), None, socket.AF_INET, socket.SOCK_DGRAM):
+                candidate = str(info[4][0] or "").strip()
+                if candidate and not candidate.startswith("127.") and candidate not in addresses:
+                    addresses.append(candidate)
+        except Exception:
+            pass
+
+        if primary_ip and not primary_ip.startswith("127.") and primary_ip not in addresses:
+            addresses.insert(0, primary_ip)
+        if not primary_ip and addresses:
+            primary_ip = addresses[0]
+        if not primary_ip:
+            primary_ip = "127.0.0.1"
+
+        web_port = int(self.cfg.get("web_port", 8088) or 8088)
+        url_brain_host = f"[{brain_host}]" if ":" in brain_host and not brain_host.startswith("[") else brain_host
+        brain_endpoint = f"{brain_scheme}://{url_brain_host}:{brain_port}" if brain_host else ""
+        body_endpoint = f"http://{primary_ip}:{web_port}"
+
+        result = {
+            "hostname": socket.gethostname(),
+            "primary_ip": primary_ip,
+            "ipv4_addresses": addresses,
+            "body_web_port": web_port,
+            "body_web_endpoint": body_endpoint,
+            "brain_scheme": brain_scheme,
+            "brain_host": brain_host,
+            "brain_port": brain_port,
+            "brain_endpoint": brain_endpoint,
+        }
+        self._network_status_cache = dict(result)
+        self._network_status_cache_at = now_mono
+        return result
+
     def get_brain_settings(self) -> Dict[str, Any]:
         try:
             active_tts_url = self.resolve_brain_tts_base_url(update_config=False)
         except Exception:
             active_tts_url = str(self.cfg.get("brain_tts_base_url", ""))
+        network = self.get_network_status()
         return {
             "base_url": str(self.cfg.get("brain_base_url", self.brain.base_url)),
+            "scheme": str(network.get("brain_scheme") or "http"),
+            "host": str(network.get("brain_host") or ""),
+            "port": int(network.get("brain_port") or 8765),
+            "endpoint": str(network.get("brain_endpoint") or ""),
             "brain_tts_base_url": active_tts_url,
             "api_key_set": bool(str(self.cfg.get("api_key", "")).strip()),
             "chat_timeout_s": int(self.cfg.get("chat_timeout_s", 180)),
             "vision_timeout_s": int(self.cfg.get("vision_timeout_s", 180)),
             "command_ack_timeout_s": int(self.cfg.get("command_ack_timeout_s", 10)),
-            "portable_hint": "If you move network, open this page from the Brain PC and press Use This Browser PC.",
+            "portable_hint": "If you move network, enter the Brain host and port or open this page from the Brain PC and press Use This Browser PC.",
         }
 
     def get_control_ownership(self) -> Dict[str, Any]:
@@ -4621,14 +4945,15 @@ class BX1RobotBodyService:
                 "LLM/model selection and prompts",
                 "memory and internet policy",
                 "TTS engine, voice model and emotion",
-                "thinking cue wording and timing",
+                "robot name, wake phrases and wake sensitivity",
+                "queued local speech wording, generation and timing",
                 "autonomous spoken idle dialogue",
                 "semantic vision reasoning",
             ],
             "body_client": [
                 "microphone device, gain and DSP",
                 "speech endpointing and acceptance gates",
-                "local wake words and conversation session",
+                "shared microphone stream, dynamic wake detector and conversation session",
                 "speaker output device and volume",
                 "camera capture hardware",
                 "MCU bridge, GPIO and hardware registry",
@@ -4638,6 +4963,7 @@ class BX1RobotBodyService:
             "shared_contract": [
                 "Brain sends reply, expression and bounded action packets",
                 "Body returns telemetry, provenance and command acknowledgements",
+                "Body caches Brain-generated wake acknowledgements and waiting phrases for instant playback",
                 "Body may use explicit local camera phrases as a capture routing fallback",
             ],
             "flags": {
@@ -4828,6 +5154,149 @@ class BX1RobotBodyService:
         self.web_log(kind, "Speech test: " + str(report.get("message", "sent")))
         return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
+    def web_touchscreen_snapshot(self) -> Dict[str, Any]:
+        """Return a compact, display-safe runtime view for the onboard screen.
+
+        This intentionally exposes only operational state and recent conversation
+        text. Configuration and safety controls remain on the full web interface.
+        """
+        state = self.latest_state or self.read_body_state()
+        voice = self.get_voice_runtime_snapshot()
+        brain_profile = self.brain_profile_snapshot()
+        awareness = self.get_visual_awareness_settings()
+        runtime_awareness = awareness.get("runtime") if isinstance(awareness.get("runtime"), dict) else awareness
+
+        events = list(self.web_events)
+        conversation: List[Dict[str, Any]] = []
+        last_user = ""
+        last_user_at = ""
+        for event in events:
+            if not isinstance(event, dict):
+                continue
+            kind = str(event.get("kind") or "").strip().lower()
+            message = str(event.get("message") or "").strip()
+            if not message:
+                continue
+            role = ""
+            if kind == "user":
+                role = "user"
+                last_user = message
+                last_user_at = str(event.get("timestamp") or "")
+            elif kind in {"bx1", "robot"}:
+                role = "robot"
+            elif kind in {"error", "warning"}:
+                role = kind
+            if role:
+                conversation.append({
+                    "role": role,
+                    "text": message,
+                    "timestamp": str(event.get("timestamp") or ""),
+                })
+        conversation = conversation[-10:]
+
+        voice_state = str(voice.get("state") or "idle").strip().lower()
+        speech_active = bool(self.speech_output_active())
+        processing = bool(self.command_processing.is_set())
+        if bool(state.get("fallen", False)) or not bool(state.get("safety_ok", True)):
+            status_key, status_label = "fault", "Safety stop"
+        elif voice_state == "error":
+            status_key, status_label = "fault", "Voice fault"
+        elif speech_active or voice_state == "speaking":
+            status_key, status_label = "speaking", "Speaking"
+        elif processing or voice_state in {"processing", "speechgen", "transcribing", "starting"}:
+            status_key, status_label = "thinking", "Thinking"
+        elif voice_state in {"listening", "recording"}:
+            status_key, status_label = "listening", "Listening"
+        elif voice_state in {"heard", "awake"}:
+            status_key, status_label = "awake", "Conversation active"
+        elif voice_state in {"asleep", "sleep"}:
+            status_key, status_label = "sleep", "Sleeping"
+        elif not bool(state.get("mcu_ok", False)):
+            status_key, status_label = "warning", "Body bridge offline"
+        else:
+            status_key, status_label = "ready", "Ready"
+
+        last_heard = str(voice.get("last_heard") or voice.get("last_accepted") or last_user or "").strip()
+        last_reply = str(getattr(self, "last_reply_text", "") or "").strip()
+        detail = str(voice.get("label") or "").strip()
+        if status_key == "ready" and not detail:
+            detail = "Waiting for a wake phrase or touchscreen command."
+
+        def _number(*keys: str) -> Optional[float]:
+            for key in keys:
+                value = state.get(key)
+                if value is None:
+                    continue
+                try:
+                    return round(float(value), 1)
+                except (TypeError, ValueError):
+                    continue
+            return None
+
+        brain_error = str(state.get("brain_error") or brain_profile.get("last_error") or "").strip()
+        imu_value = state.get("imu_ok")
+        if imu_value is None:
+            imu_value = state.get("imu_online", state.get("imu", False))
+        stt_ready = bool(voice.get("stt_ready", False))
+        mic_enabled = bool(voice.get("enabled", False))
+        mcu_ok = bool(state.get("mcu_ok", False))
+        brain_ok = bool(brain_profile.get("ok", False)) and not bool(brain_error)
+        stt_detail = str(voice.get("stt_error") or ("Ready" if stt_ready else "Not ready"))
+        mcu_detail = str(state.get("bridge_error") or state.get("mcu_error") or ("Online" if mcu_ok else "Offline"))
+        imu_detail = str(state.get("imu_error") or ("Online" if bool(imu_value) else "Offline"))
+        camera_ok = bool(runtime_awareness.get("camera_ok", False))
+        camera_detail = str(runtime_awareness.get("last_error") or ("Ready" if camera_ok else "Unavailable"))
+
+        return {
+            "ok": True,
+            "updated_at": now_iso(),
+            "identity": {
+                "robot_name": str(self.robot_name or "Robot").strip() or "Robot",
+                "profile": str(brain_profile.get("brain_profile") or "").strip(),
+                "body_id": self.robot_id,
+            },
+            "network": self.get_network_status(),
+            "status": {
+                "key": status_key,
+                "label": status_label,
+                "detail": detail,
+                "voice_state": voice_state,
+                "speech_active": speech_active,
+                "processing": processing,
+            },
+            "heard": {
+                "text": last_heard,
+                "last_user_text": last_user,
+                "updated_at": str(voice.get("updated_at") or last_user_at or ""),
+                "wake_word": str(voice.get("last_wake_word") or ""),
+                "rejected": str(voice.get("last_rejected") or ""),
+                "rejection_reason": str(voice.get("last_rejection_reason") or ""),
+            },
+            "response": {
+                "text": last_reply,
+                "updated_at": str(getattr(self, "last_reply_at", "") or ""),
+                "source": str(getattr(self, "last_reply_source", "") or ""),
+            },
+            "conversation": conversation,
+            "services": {
+                "brain": {"ok": brain_ok, "detail": brain_error or str(self.brain.base_url)},
+                "stt": {"ok": stt_ready, "detail": stt_detail},
+                "microphone": {"ok": mic_enabled and stt_ready, "detail": str(self.cfg.get("mic_device", "default"))},
+                "mcu": {"ok": mcu_ok, "detail": mcu_detail},
+                "imu": {"ok": bool(imu_value), "detail": imu_detail},
+                "camera": {"ok": camera_ok, "detail": camera_detail},
+            },
+            "telemetry": {
+                "pitch_deg": _number("pitch_deg", "pitch"),
+                "roll_deg": _number("roll_deg", "roll"),
+                "safety_ok": bool(state.get("safety_ok", True)),
+                "fallen": bool(state.get("fallen", False)),
+                "person_present": runtime_awareness.get("person_present"),
+                "face_count": runtime_awareness.get("face_count"),
+                "brain_latency_ms": self.performance.get("last_brain_latency_ms"),
+            },
+        }
+
     def web_snapshot(self) -> Dict[str, Any]:
         state = self.latest_state or self.read_body_state()
         return {
@@ -4837,10 +5306,12 @@ class BX1RobotBodyService:
             "input_events": list(self.input_events),
             "hardware_doctor": self.hardware_doctor.snapshot(),
             "brain": self.get_brain_settings(),
+            "network": self.get_network_status(),
             "ownership": self.get_control_ownership(),
             "audio": self.get_audio_settings(),
             "identity": self.get_identity_settings(),
             "robot_profile": self.get_robot_profile_payload(),
+            "brain_profile": self.brain_profile_snapshot(),
             "theme": self.get_theme_settings(),
             "voice": self.get_voice_settings(),
             "voice_runtime": self.get_voice_runtime_snapshot(),
@@ -4876,13 +5347,40 @@ class BX1RobotBodyService:
         sync_tts = bool(data.get("sync_tts_to_brain_host", use_browser_ip))
         api_key = str(data.get("api_key", self.cfg.get("api_key", "")))
 
+        scheme = str(data.get("brain_scheme", "http") or "http").strip().lower()
+        if scheme not in {"http", "https"}:
+            return {"ok": False, "error": "Brain connection scheme must be http or https."}
+        try:
+            port = int(str(data.get("brain_port", "8765") or "8765").strip())
+        except (TypeError, ValueError):
+            return {"ok": False, "error": "Brain port must be a number between 1 and 65535."}
+        if not 1 <= port <= 65535:
+            return {"ok": False, "error": "Brain port must be between 1 and 65535."}
+
         if use_browser_ip:
             if not client_ip:
                 return {"ok": False, "error": "Browser client IP was not available."}
-            port = str(data.get("brain_port", "8765") or "8765").strip()
-            base_url = f"http://{client_ip}:{port}"
+            host = str(client_ip).strip()
+            if host.startswith("::ffff:"):
+                host = host.split("::ffff:", 1)[1]
         else:
-            base_url = str(data.get("brain_base_url", "") or data.get("base_url", "")).strip()
+            host = str(data.get("brain_host", "") or "").strip()
+            if not host:
+                base_url = str(data.get("brain_base_url", "") or data.get("base_url", "")).strip()
+                try:
+                    parsed_existing = urlparse(base_url if "://" in base_url else "http://" + base_url)
+                    host = str(parsed_existing.hostname or "").strip()
+                    if "brain_scheme" not in data and parsed_existing.scheme in {"http", "https"}:
+                        scheme = parsed_existing.scheme
+                    if "brain_port" not in data and parsed_existing.port:
+                        port = int(parsed_existing.port)
+                except Exception:
+                    host = ""
+            if not host:
+                return {"ok": False, "error": "Brain host/IP cannot be empty."}
+
+        url_host = f"[{host}]" if ":" in host and not host.startswith("[") else host
+        base_url = f"{scheme}://{url_host}:{port}"
 
         try:
             settings = self.apply_brain_connection(base_url, api_key=api_key, save=False)
@@ -4961,56 +5459,33 @@ class BX1RobotBodyService:
         return {"ok": True, "chat_bridge": self.get_chat_bridge_settings(), "saved_to": str(CONFIG_PATH)}
 
     def web_stt_once(self, data: Dict[str, Any]) -> Dict[str, Any]:
-        """Exercise the exact production STT path once, with optional Brain send."""
+        """Exercise production STT using the permanent shared microphone stream."""
         send_to_brain = bool(data.get("send", False))
-        self.manual_audio_capture_requested.set()
-        got_lock = False
-        monitor_was_running = bool(self.mic_monitor.is_running())
         result: Dict[str, Any] = {}
         self.last_stt_capture_id = ""
         self.last_stt_debug_audio_urls = {}
+        self.set_voice_runtime(
+            "recording", "Diagnostic listen: waiting for a complete utterance on the shared stream...",
+            loop_active=bool(self.voice_runtime.get("loop_active", False)),
+        )
+        ready = self.mic_monitor.ensure_running(timeout_s=3.0)
+        if not ready.get("ok"):
+            return {"ok": False, "stage": "capture", "error": str(ready.get("error") or "shared microphone unavailable")}
+        stt = self.stt
+        if stt is None or not stt.ready:
+            stt = VoskSpeechToText(self.build_audio_config())
+            self.stt = stt
+        if not stt.ready:
+            return {"ok": False, "stage": "initialise", "error": stt.error}
         try:
-            # The live wake capture cooperatively exits when the handover event is
-            # set, normally within one 20 ms audio frame. Keep a bounded fallback
-            # wait in case ALSA itself is stalled.
-            got_lock = self.audio_capture_lock.acquire(timeout=4.0)
-            if not got_lock:
-                return {
-                    "ok": False, "stage": "capture",
-                    "error": "microphone handover timed out",
-                    "hint": "The live arecord process did not release within four seconds.",
-                }
-            if monitor_was_running:
-                self.mic_monitor.stop()
-                time.sleep(0.15)
-            self.set_voice_runtime("recording", "Diagnostic listen: waiting for a complete utterance...", loop_active=bool(self.voice_runtime.get("loop_active", False)))
-            # Reuse the already-loaded Vosk model. The old diagnostic path
-            # rebuilt the model for every button press, which could add several
-            # seconds before transcription even started.
-            stt = self.stt
-            if stt is None or not stt.ready:
-                stt = VoskSpeechToText(self.build_audio_config())
-                self.stt = stt
-            if not stt.ready:
-                return {"ok": False, "stage": "initialise", "error": stt.error}
             result = stt.listen_once_detailed(
                 float(self.cfg.get("stt_start_timeout_s", self.cfg.get("record_seconds", 8))),
                 defer_local_recognition=self._defer_local_vosk_for_primary_stt(),
+                audio_source=self.mic_monitor,
             )
             result = self._apply_primary_stt(result, source="web_stt_diagnostic", stt_engine=stt)
-        finally:
-            if got_lock:
-                try:
-                    self.audio_capture_lock.release()
-                except RuntimeError:
-                    pass
-            self.manual_audio_capture_requested.clear()
-            if monitor_was_running:
-                try:
-                    self._refresh_mic_monitor_settings()
-                    self.mic_monitor.start()
-                except Exception:
-                    pass
+        except Exception as exc:
+            result = {"accepted": False, "text": "", "reason": "diagnostic listen failed", "error": str(exc)}
 
         capture_id = str(result.get("capture_id") or "").strip()
         debug_paths = result.get("debug_audio") if isinstance(result.get("debug_audio"), dict) else {}
@@ -5087,9 +5562,14 @@ class BX1RobotBodyService:
             "message": "Robot name, character and personality are now configured in the desktop Robot Brain instance, not on the Arduino body client.",
             "body_id": self.robot_id,
             "robot_id": self.robot_id,
-            "robot_name": "",
-            "display_name": "",
+            "robot_name": self.robot_name,
+            "display_name": self.robot_name,
             "wake_words": self.get_wake_words(),
+            "wake_owner": "desktop_brain_app",
+            "wake_engine": str(self.cfg.get("wake_engine", "dynamic_vosk")),
+            "dynamic_wake_enabled": bool(self.cfg.get("dynamic_wake_enabled", True)),
+            "shared_audio_stream": self.mic_monitor.snapshot(),
+            "brain_profile": self.brain_profile_snapshot(),
             "personality_summary": "",
             "personality_tone": "",
             "personality_verbosity": "brain-managed",
@@ -5112,8 +5592,12 @@ class BX1RobotBodyService:
         body_id = str(data.get("body_id") or data.get("robot_id") or self.robot_id).strip() or "UNO_Q_BODY"
         self.robot_id = body_id
         self.cfg["robot_id"] = body_id
-        raw_wake = data.get("wake_words", self.cfg.get("wake_words", ["hello", "hey", "robot"]))
-        self.cfg["wake_words"] = normalise_text_list(raw_wake) or ["hello", "hey", "robot"]
+        raw_wake = data.get("wake_words", self.cfg.get("offline_wake_words", []))
+        offline_wake = normalise_text_list(raw_wake)
+        if offline_wake:
+            self.cfg["offline_wake_words"] = offline_wake
+            if not self.cfg.get("brain_wake_phrases"):
+                self.cfg["wake_words"] = offline_wake
         caps_in = data.get("capabilities", {}) if isinstance(data.get("capabilities", {}), dict) else {}
         old_caps = dict(self.robot_profile.get("capabilities") or {})
         capabilities = {
@@ -5131,7 +5615,7 @@ class BX1RobotBodyService:
             "body_id": body_id,
             "robot_id": body_id,
             "brain_owns_identity": True,
-            "wake_words": list(self.cfg.get("wake_words", ["hello", "hey", "robot"])),
+            "wake_words": list(self.get_wake_words()),
             "capabilities": capabilities,
             "physical_description": physical,
         })
@@ -5227,9 +5711,10 @@ class BX1RobotBodyService:
             "stt_echo_similarity_threshold": float(self.cfg.get("stt_echo_similarity_threshold", 0.78)),
             "mic_playback_device": str(self.cfg.get("mic_playback_device", "default")),
             "mic_monitor_running": bool(self.mic_monitor.is_running()),
-            "capture_busy": bool(self.audio_capture_lock.locked()),
-            "manual_capture_requested": bool(self.manual_audio_capture_requested.is_set()),
-            "capture_handover": "cooperative_v10_39",
+            "capture_busy": False,
+            "manual_capture_requested": False,
+            "capture_handover": "shared_stream_v10_40",
+            "shared_stream": self.mic_monitor.snapshot(),
             "last_mic_test_wav": self.last_mic_test_wav,
             "devices": devices.get("devices", []),
             "devices_raw": devices.get("raw", ""),
@@ -5313,20 +5798,18 @@ class BX1RobotBodyService:
         return {"ok": True, "mic": self.get_mic_settings(), "volume_report": volume_report, "saved_to": str(CONFIG_PATH)}
 
     def web_start_mic_monitor(self) -> Dict[str, Any]:
-        # The live wake listener and level meter cannot own the same ALSA device
-        # simultaneously. Pause the wake loop while the diagnostic meter is open.
-        self.manual_audio_capture_requested.set()
-        self._refresh_mic_monitor_settings()
-        result = self.mic_monitor.start()
-        if not result.get("ok"):
-            self.manual_audio_capture_requested.clear()
+        # The meter is now a view onto the permanent shared ALSA stream. It never
+        # competes with wake recognition or Production STT.
+        if not self.mic_monitor.is_running():
+            self._refresh_mic_monitor_settings()
+            self.mic_monitor.start()
+        result = self.mic_monitor.set_meter_enabled(True)
         self.web_log("system" if result.get("ok") else "error", str(result.get("message") or result.get("error") or "mic monitor"))
         return result
 
     def web_stop_mic_monitor(self) -> Dict[str, Any]:
-        result = self.mic_monitor.stop()
-        self.manual_audio_capture_requested.clear()
-        self.web_log("system", "Microphone monitor stopped")
+        result = self.mic_monitor.set_meter_enabled(False)
+        self.web_log("system", "Microphone level display stopped; shared audio stream remains active")
         return result
 
     def web_mic_level(self) -> Dict[str, Any]:
@@ -5374,41 +5857,23 @@ class BX1RobotBodyService:
         t0 = time.perf_counter()
         started_at = now_iso()
         report: Dict[str, Any]
-        self.manual_audio_capture_requested.set()
-        got_lock = False
-        monitor_was_running = bool(self.mic_monitor.is_running())
-        try:
-            got_lock = self.audio_capture_lock.acquire(timeout=max(2.0, float(seconds) + 2.0))
-            if not got_lock:
-                report = {
-                    "ok": False,
-                    "error": "microphone is busy - live wake listener or another diagnostic is using the capture device",
-                    "hint": "Disable live microphone/STT briefly, or wait for the current wake-listen sample to finish.",
-                }
+        ready = self.mic_monitor.ensure_running(timeout_s=3.0)
+        if not ready.get("ok"):
+            report = {"ok": False, "error": str(ready.get("error") or "shared microphone unavailable")}
+        else:
+            capture = self.mic_monitor.capture_fixed(float(seconds))
+            if capture.get("ok"):
+                raw_pcm = bytes(capture.pop("_raw_pcm", b"") or b"")
+                clean_pcm = bytes(capture.pop("_clean_pcm", b"") or b"")
+                pcm = raw_pcm or clean_pcm
+                try:
+                    from audio_io import _write_pcm16_wav  # local helper; keeps WAV format identical to production
+                    _write_pcm16_wav(path, pcm, int(capture.get("sample_rate") or sample_rate), 1)
+                    report = {**capture, "ok": True, "filename": path, "analysis": analyse_wav_file(path)}
+                except Exception as exc:
+                    report = {"ok": False, "error": str(exc), "filename": path}
             else:
-                if monitor_was_running:
-                    self.mic_monitor.stop()
-                    time.sleep(0.2)
-                report = record_microphone_sample(
-                    path,
-                    device=device,
-                    sample_rate=sample_rate,
-                    seconds=float(seconds),
-                    channels=int(self.cfg.get("mic_channels", 1)),
-                )
-        finally:
-            if got_lock:
-                try:
-                    self.audio_capture_lock.release()
-                except RuntimeError:
-                    pass
-            self.manual_audio_capture_requested.clear()
-            if monitor_was_running:
-                try:
-                    self._refresh_mic_monitor_settings()
-                    self.mic_monitor.start()
-                except Exception:
-                    pass
+                report = dict(capture)
         elapsed_ms = round((time.perf_counter() - t0) * 1000.0, 1)
         report["started_at"] = started_at
         report["completed_at"] = now_iso()
@@ -5502,6 +5967,12 @@ class BX1RobotBodyService:
             "end_silence_ms": int(self.cfg.get("stt_end_silence_ms", 1350)),
             "pre_roll_ms": int(self.cfg.get("stt_pre_roll_ms", 700)),
             "wake_words": self.get_wake_words(),
+            "wake_owner": "desktop_brain_app",
+            "robot_name": self.robot_name,
+            "wake_engine": str(self.cfg.get("wake_engine", "dynamic_vosk")),
+            "dynamic_wake_enabled": bool(self.cfg.get("dynamic_wake_enabled", True)),
+            "shared_audio_stream": self.mic_monitor.snapshot(),
+            "brain_profile": self.brain_profile_snapshot(),
             "stt_ready": bool(getattr(self.stt, "ready", False)) if self.stt is not None else False,
             "local_vosk_ready": bool(getattr(self.stt, "vosk_ready", False)) if self.stt is not None else False,
             "stt_error": (str(getattr(self.stt, "error", "")) if self.stt is not None and not bool(getattr(self.stt, "ready", False)) else ""),
@@ -5525,25 +5996,20 @@ class BX1RobotBodyService:
         self.cfg["vosk_model_path"] = str(data.get("vosk_model_path", self.cfg.get("vosk_model_path", "models/vosk-model-small-en-us-0.15"))).strip()
         self.cfg["record_seconds"] = clamp_int(data.get("record_seconds", self.cfg.get("record_seconds", 5)), 2, 20, 5)
         self.cfg["sample_rate"] = clamp_int(data.get("sample_rate", self.cfg.get("sample_rate", 16000)), 8000, 48000, 16000)
-        raw_wake = data.get("wake_words", self.cfg.get("wake_words", []))
+        raw_wake = data.get("wake_words", self.cfg.get("offline_wake_words", []))
         if isinstance(raw_wake, str):
-            wake_words = [w.strip().lower() for w in raw_wake.replace(",", "\n").splitlines() if w.strip()]
+            wake_words = [" ".join(w.strip().lower().split()) for w in raw_wake.replace(",", "\n").splitlines() if w.strip()]
         else:
-            wake_words = [str(w).strip().lower() for w in raw_wake if str(w).strip()]
-        # Wake words are local STT routing only. Do not automatically inject the
-        # Brain robot name or body ID here.
-        self.cfg["wake_words"] = wake_words or ["hello", "hey", "robot"]
-        self.robot_profile["wake_words"] = list(self.cfg["wake_words"])
-        self.save_robot_profile_file()
+            wake_words = [" ".join(str(w).strip().lower().split()) for w in raw_wake if str(w).strip()]
+        # The active phrases come from /api/body_profile. This field is retained
+        # only as an offline fallback if no Brain profile has ever been cached.
+        self.cfg["offline_wake_words"] = list(dict.fromkeys(wake_words))
+        if not self.cfg.get("brain_wake_phrases") and wake_words:
+            self.cfg["wake_words"] = list(dict.fromkeys(wake_words))
         self.save_config_file()
         if self.cfg["voice_enabled"] and input_mode in {"voice", "voice_or_keyboard", "both"}:
-            # A running diagnostic level meter holds the ALSA device open. Stop it
-            # automatically when the user enables normal always-listening mode.
-            try:
-                if self.mic_monitor.is_running():
-                    self.mic_monitor.stop()
-            finally:
-                self.manual_audio_capture_requested.clear()
+            # Shared audio remains open; rebuilding Vosk changes only the decoder.
+            self.mic_monitor.ensure_running(timeout_s=3.0)
             self.stt = VoskSpeechToText(self.build_audio_config())
             if self.stt.ready:
                 if not any(t.name == "bx1-voice" and t.is_alive() for t in self.threads):
@@ -5563,7 +6029,7 @@ class BX1RobotBodyService:
         # local feedback because only it knows exactly when the microphone, TTS
         # generation and physical speaker are active.
         return {
-            "owner": "robot_body_runtime",
+            "owner": "brain_app_definitions_body_runtime_playback",
             "thinking_cues_enabled": bool(self.cfg.get("thinking_cues_enabled", True)),
             "thinking_cue_speak": bool(self.cfg.get("thinking_cue_speak", True)),
             "thinking_feedback_enabled": bool(self.cfg.get("thinking_feedback_enabled", True)),
@@ -5589,35 +6055,28 @@ class BX1RobotBodyService:
             "sleep_phrases": self.cfg.get("sleep_phrases", DEFAULT_SLEEP_PHRASES),
             "thinking_cues": self.get_thinking_cues(),
             "local_voice_cues": self.local_voice_cue_status(),
+            "brain_profile": self.brain_profile_snapshot(),
         }
 
     def web_update_thinking_cue_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Save body playback/safety switches without overriding Brain wording.
+
+        Phrase text, wake acknowledgements, sleep acknowledgement, and the first/
+        repeat/max timing values are owned by the active desktop Brain profile.
+        """
         def clamp_float(value: Any, lo: float, hi: float, default: float) -> float:
             try:
                 return max(lo, min(hi, float(value)))
             except Exception:
                 return default
-        def clamp_int(value: Any, lo: int, hi: int, default: int) -> int:
-            try:
-                return max(lo, min(hi, int(float(value))))
-            except Exception:
-                return default
-        raw_cues = data.get("thinking_cues", self.cfg.get("thinking_cues", []))
-        if isinstance(raw_cues, str):
-            cues = [c.strip() for c in raw_cues.splitlines() if c.strip()]
-        else:
-            cues = [str(c).strip() for c in raw_cues if str(c).strip()]
 
-        # v10.35 keeps local acknowledgement/progress timing as a body responsibility.
-        # This removes the previous ownership branch that silently forced every
-        # audible cue off whenever the desktop Brain owned personality wording.
-        self.cfg["brain_controls_thinking_cues"] = False
+        self.cfg["brain_controls_thinking_cues"] = True
         self.cfg["thinking_cues_enabled"] = bool(data.get("thinking_cues_enabled", self.cfg.get("thinking_cues_enabled", True)))
         self.cfg["thinking_cue_speak"] = bool(data.get("thinking_cue_speak", self.cfg.get("thinking_cue_speak", True)))
-        self.cfg["thinking_cue_delay_s"] = clamp_float(data.get("thinking_cue_delay_s", self.cfg.get("thinking_cue_delay_s", 1.1)), 0.4, 30.0, 1.1)
-        self.cfg["thinking_cue_repeat_s"] = clamp_float(data.get("thinking_cue_repeat_s", self.cfg.get("thinking_cue_repeat_s", 8.0)), 3.0, 60.0, 8.0)
-        self.cfg["thinking_cue_max_per_reply"] = clamp_int(data.get("thinking_cue_max_per_reply", self.cfg.get("thinking_cue_max_per_reply", 5)), 0, 8, 5)
-        self.cfg["thinking_cue_total_timeout_s"] = clamp_float(data.get("thinking_cue_total_timeout_s", self.cfg.get("thinking_cue_total_timeout_s", 65.0)), 10.0, 120.0, 65.0)
+        self.cfg["thinking_cue_total_timeout_s"] = clamp_float(
+            data.get("thinking_cue_total_timeout_s", self.cfg.get("thinking_cue_total_timeout_s", 65.0)),
+            10.0, 120.0, 65.0,
+        )
         self.cfg["thinking_cue_use_main_tts_when_uncached"] = bool(data.get("thinking_cue_use_main_tts_when_uncached", self.cfg.get("thinking_cue_use_main_tts_when_uncached", False)))
         self.cfg["voice_command_immediate_cue_enabled"] = bool(data.get("voice_command_immediate_cue_enabled", self.cfg.get("voice_command_immediate_cue_enabled", True)))
         self.cfg["thinking_feedback_enabled"] = bool(data.get("thinking_feedback_enabled", self.cfg.get("thinking_feedback_enabled", True)))
@@ -5632,12 +6091,19 @@ class BX1RobotBodyService:
         self.cfg["voice_feedback_audio_enabled"] = bool(data.get("voice_feedback_audio_enabled", self.cfg.get("voice_feedback_audio_enabled", True)))
         self.cfg["voice_feedback_led_enabled"] = bool(data.get("voice_feedback_led_enabled", self.cfg.get("voice_feedback_led_enabled", True)))
         self.cfg["voice_feedback_tone_level"] = clamp_float(data.get("voice_feedback_tone_level", self.cfg.get("voice_feedback_tone_level", 0.30)), 0.02, 0.50, 0.30)
-        self.cfg["wake_ack_phrase"] = str(data.get("wake_ack_phrase", self.cfg.get("wake_ack_phrase", "Yes John?")) or "Yes John?").strip()
-        self.cfg["sleep_ack_phrase"] = str(data.get("sleep_ack_phrase", self.cfg.get("sleep_ack_phrase", "Going quiet.")) or "Going quiet.").strip()
-        self.cfg["thinking_cues"] = cues or self.get_thinking_cues()
         self.save_config_file()
-        self.web_log("system", "Local acknowledgement and thinking cue settings saved")
-        return {"ok": True, "thinking_cues": self.get_thinking_cue_settings(), "saved_to": str(CONFIG_PATH)}
+        ignored = sorted(set(data).intersection({
+            "thinking_cues", "thinking_cue_delay_s", "thinking_cue_repeat_s",
+            "thinking_cue_max_per_reply", "wake_ack_phrase", "sleep_ack_phrase",
+        }))
+        self.web_log("system", "Body queued-speech playback settings saved; Brain-owned wording/timing preserved", {"ignored_brain_owned_fields": ignored})
+        return {
+            "ok": True,
+            "owner": "desktop_brain_app",
+            "ignored_brain_owned_fields": ignored,
+            "thinking_cues": self.get_thinking_cue_settings(),
+            "saved_to": str(CONFIG_PATH),
+        }
 
     def get_performance_snapshot(self) -> Dict[str, Any]:
         with self.metrics_lock:
@@ -5850,6 +6316,10 @@ class BX1RobotBodyService:
 
     def stop(self) -> None:
         self.stop_event.set()
+        try:
+            self.mic_monitor.stop()
+        except Exception:
+            pass
         if self.web_server is not None:
             try:
                 self.web_server.stop()
