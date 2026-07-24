@@ -1,0 +1,861 @@
+{
+    "robot_id": "BX1",
+    "brain_base_url": "",
+    "api_key": "",
+    "telemetry_interval_s": 1.0,
+    "chat_timeout_s": 480,
+    "vision_timeout_s": 480,
+    "command_ack_timeout_s": 10,
+    "input_mode": "both",
+    "voice_enabled": true,
+    "voice_backend": "vosk",
+    "vosk_model_path": "models/vosk-model-small-en-us-0.15",
+    "record_seconds": 5,
+    "sample_rate": 16000,
+    "wake_words": [
+        "hello",
+        "hey",
+        "robot"
+    ],
+    "tts_enabled": true,
+    "tts_command": "espeak-ng -ven-gb -s 155 -p 35",
+    "camera_enabled": true,
+    "camera_index": 0,
+    "camera_device": "/dev/video0",
+    "jpeg_quality": 85,
+    "vision_trigger_phrases": [
+        "what can you see",
+        "look around",
+        "describe what you see",
+        "describe this",
+        "describe that",
+        "use your camera",
+        "use the camera",
+        "check the camera",
+        "take a look",
+        "look at this",
+        "look here",
+        "can you see this",
+        "what is this",
+        "what's this",
+        "what is that",
+        "what's that",
+        "what am i holding",
+        "what is in my hand",
+        "what's in my hand",
+        "what do i have here",
+        "what am i showing you",
+        "identify this",
+        "look at my hand",
+        "tell me what this is",
+        "can you tell me what this is",
+        "do you recognise this",
+        "do you recognize this",
+        "who is this",
+        "who is that"
+    ],
+    "send_periodic_vision": false,
+    "periodic_vision_interval_s": 30,
+    "periodic_vision_prompt": "Briefly describe anything important in front of the robot.",
+    "motor_armed": false,
+    "allow_head_servo": true,
+    "allow_leds": true,
+    "max_drive_speed_mps": 0.25,
+    "max_drive_duration_s": 1.5,
+    "min_front_distance_mm": 220,
+    "max_abs_pitch_deg": 35,
+    "max_abs_roll_deg": 35,
+    "status_print_interval_s": 5,
+    "use_web_for_robot_questions": false,
+    "use_memory": true,
+    "web_enabled": true,
+    "web_host": "0.0.0.0",
+    "web_port": 8088,
+    "web_log_http": false,
+    "web_event_log_limit": 200,
+    "manual_debug_state": {
+        "enabled": false,
+        "visual_context": "",
+        "location_label": "",
+        "pitch_deg": "",
+        "roll_deg": "",
+        "yaw_deg": "",
+        "front_distance_mm": "",
+        "battery_v": ""
+    },
+    "console_quiet": true,
+    "tts_backend": "edge-tts",
+    "tts_voice": "en-gb+f3",
+    "tts_rate": 155,
+    "tts_pitch": 42,
+    "tts_volume": 80,
+    "tts_piper_model": "models/piper/en_GB-alan-medium.onnx",
+    "tts_piper_config": "",
+    "tts_edge_voice": "en-GB-SoniaNeural",
+    "thinking_cues_enabled": true,
+    "thinking_cue_speak": true,
+    "thinking_cue_delay_s": 1.15,
+    "thinking_cue_repeat_s": 5.5,
+    "thinking_cue_max_per_reply": 2,
+    "thinking_cues": [
+        "Hmm.",
+        "Let me check that.",
+        "One moment.",
+        "I am looking into it.",
+        "Still working on that."
+    ],
+    "tts_queue_enabled": true,
+    "tts_chunking_enabled": true,
+    "tts_chunk_max_chars": 650,
+    "tts_fallback_to_espeak": true,
+    "brain_tts_base_url": "",
+    "brain_tts_engine": "dottts",
+    "brain_tts_voice": "active_profile",
+    "brain_tts_format": "wav",
+    "brain_tts_timeout_s": 240,
+    "brain_response_audio_enabled": true,
+    "hardware_map": {
+        "head_yaw": {
+            "label": "Head rotation / yaw",
+            "role": "head_yaw",
+            "device_type": "servo",
+            "enabled": true,
+            "pin": 9,
+            "min_deg": -20,
+            "home_deg": 0,
+            "max_deg": 20,
+            "invert": true,
+            "speed_deg_s": 90
+        },
+        "head_pitch": {
+            "label": "Head up/down / pitch",
+            "role": "head_pitch",
+            "device_type": "servo",
+            "enabled": true,
+            "pin": 10,
+            "min_deg": -10,
+            "home_deg": 0,
+            "max_deg": 10,
+            "invert": false,
+            "speed_deg_s": 90
+        },
+        "head_roll": {
+            "label": "Head tilt / roll",
+            "role": "head_roll",
+            "device_type": "servo",
+            "enabled": true,
+            "pin": 11,
+            "min_deg": -10,
+            "home_deg": 0,
+            "max_deg": 10,
+            "invert": false,
+            "speed_deg_s": 90
+        },
+        "eyes_led": {
+            "label": "Eyes LED zones",
+            "role": "eyes",
+            "device_type": "neopixel_zone",
+            "enabled": true,
+            "pin": 3,
+            "count": 2,
+            "brightness": 0.25,
+            "colour": "blue"
+        },
+        "mouth_led": {
+            "label": "Mouth LED zone",
+            "role": "mouth",
+            "device_type": "neopixel_zone",
+            "enabled": true,
+            "pin": 3,
+            "count": 1,
+            "brightness": 0.2,
+            "colour": "cyan"
+        }
+    },
+    "app_version": "10.40",
+    "brain_discovery_mode": "browser_pc",
+    "hardware_registry": {
+        "schema": "bx1.hardware_registry.v1",
+        "led_buses": {
+            "main": {
+                "label": "Main addressable LED chain",
+                "type": "neopixel",
+                "enabled": true,
+                "data_pin": 3,
+                "total_pixels": 100,
+                "brightness_limit": 0.6,
+                "colour_order": "GRB",
+                "human_addressing": true
+            }
+        },
+        "led_zones": {
+            "mouth": {
+                "label": "Mouth",
+                "bus": "main",
+                "enabled": true,
+                "start": 1,
+                "end": 1,
+                "default_colour": "#00ffff",
+                "brightness": 0.4
+            },
+            "left_eye": {
+                "label": "Left eye",
+                "bus": "main",
+                "enabled": true,
+                "start": 2,
+                "end": 2,
+                "default_colour": "#0000ff",
+                "brightness": 0.25
+            },
+            "right_eye": {
+                "label": "Right eye",
+                "bus": "main",
+                "enabled": true,
+                "start": 3,
+                "end": 3,
+                "default_colour": "#0000ff",
+                "brightness": 0.25
+            },
+            "chest": {
+                "label": "Chest / status",
+                "bus": "main",
+                "enabled": false,
+                "start": 4,
+                "end": 19,
+                "default_colour": "#00ffff",
+                "brightness": 0.2
+            },
+            "status": {
+                "label": "Status strip",
+                "bus": "main",
+                "enabled": false,
+                "start": 20,
+                "end": 29,
+                "default_colour": "#ff9900",
+                "brightness": 0.2
+            }
+        },
+        "servos": {
+            "head_yaw": {
+                "label": "Head rotation / yaw",
+                "enabled": true,
+                "pin": 9,
+                "min_deg": -20,
+                "home_deg": 0,
+                "max_deg": 20,
+                "invert": true,
+                "speed_deg_s": 90
+            },
+            "gimbal_left": {
+                "label": "Left push-pull gimbal servo",
+                "enabled": true,
+                "pin": 10,
+                "min_deg": -10,
+                "home_deg": 0,
+                "max_deg": 10,
+                "invert": false,
+                "speed_deg_s": 90
+            },
+            "gimbal_right": {
+                "label": "Right push-pull gimbal servo",
+                "enabled": true,
+                "pin": 11,
+                "min_deg": -10,
+                "home_deg": 0,
+                "max_deg": 10,
+                "invert": false,
+                "speed_deg_s": 90
+            }
+        },
+        "sensors": {
+            "modulino_movement": {
+                "label": "Arduino Modulino Movement IMU",
+                "enabled": true,
+                "bus": "Wire1/Qwiic",
+                "i2c_address": "0x6A",
+                "use_for": [
+                    "pitch",
+                    "roll",
+                    "gyro",
+                    "motion_awareness"
+                ],
+                "driver": "Arduino_LSM6DSOX explicit Wire1",
+                "sample_rate_hz": 50
+            }
+        },
+        "drive_buses": {
+            "rs485_wheels": {
+                "label": "Future RS485 closed-loop wheel steppers",
+                "enabled": false,
+                "adapter": "usb_rs485_or_uart_rs485",
+                "port": "",
+                "baud": 115200,
+                "left_motor_id": 1,
+                "right_motor_id": 2,
+                "max_linear_mps": 0.25,
+                "max_angular_dps": 60.0,
+                "safety_timeout_ms": 500,
+                "motor_armed": false,
+                "primary_control": "step_dir_enable_pending_confirmation",
+                "diagnostics_interface": "rs485",
+                "protocol_confirmed": false
+            }
+        },
+        "head_kinematics": {
+            "type": "dual_servo_push_pull",
+            "pitch_min_deg": -10.0,
+            "pitch_home_deg": 0.0,
+            "pitch_max_deg": 10.0,
+            "roll_min_deg": -10.0,
+            "roll_home_deg": 0.0,
+            "roll_max_deg": 10.0,
+            "pitch_gain": 1.0,
+            "roll_gain": 1.0,
+            "left_pitch_sign": 1,
+            "right_pitch_sign": -1,
+            "left_roll_sign": 1,
+            "right_roll_sign": 1
+        },
+        "servo_behaviour": {
+            "quiet_release_enabled": true,
+            "release_after_ms": 1200,
+            "pulse_deadband_us": 4,
+            "note": "Release PWM after a pose settles to reduce servo buzz; disable if the head needs continuous holding torque."
+        }
+    },
+    "hardware_auto_apply_on_start": true,
+    "hardware_startup_home_servos": true,
+    "mouth_audio_reactive_enabled": true,
+    "mouth_audio_idle_colour": "cyan",
+    "mouth_audio_idle_brightness": 0.03,
+    "mouth_audio_speaking_colours": [
+        "cyan",
+        "blue",
+        "purple",
+        "amber"
+    ],
+    "mouth_audio_min_brightness": 0.03,
+    "mouth_audio_max_brightness": 0.55,
+    "mouth_audio_pulse_min_s": 0.045,
+    "mouth_audio_pulse_max_s": 0.12,
+    "mouth_audio_off_after_speech": false,
+    "mouth_audio_use_text_intent": true,
+    "mouth_audio_use_wav_profile": true,
+    "mouth_audio_generation_colour": "amber",
+    "expression_engine_enabled": true,
+    "expression_local_fallback_enabled": true,
+    "expression_ai_override_enabled": true,
+    "expression_head_enabled": true,
+    "expression_led_enabled": true,
+    "expression_idle_head_enabled": true,
+    "expression_idle_head_min_s": 7.0,
+    "expression_idle_head_max_s": 18.0,
+    "expression_idle_yaw_deg": 6.0,
+    "expression_idle_pitch_deg": 3.0,
+    "expression_speaking_head_enabled": true,
+    "expression_speaking_estimated_chars_per_s": 13.0,
+    "expression_speaking_min_s": 1.2,
+    "expression_speaking_max_s": 12.0,
+    "expression_head_home_after_reply": true,
+    "expression_led_idle_after_reply": true,
+    "expression_debug_log": true,
+    "expression_mouth_zone": "mouth",
+    "expression_eye_left_zone": "left_eye",
+    "expression_eye_right_zone": "right_eye",
+    "brain_tts_endpoint": "/api/tts",
+    "brain_tts_status_endpoint": "/api/tts/status",
+    "version": "10.40",
+    "wake_voice_ack_enabled": true,
+    "wake_ack_phrase": "Yes John?",
+    "sleep_ack_phrase": "Going quiet.",
+    "sleep_phrases": [
+        "sleep",
+        "go to sleep",
+        "stand down",
+        "stop listening",
+        "that is all",
+        "that's all",
+        "goodnight",
+        "good night"
+    ],
+    "wake_command_window_s": 12.0,
+    "conversation_followup_window_s": 45.0,
+    "wake_after_reply_guard_s": 1.25,
+    "stt_pause_during_tts": true,
+    "stt_post_tts_guard_s": 1.25,
+    "voice_command_immediate_cue_enabled": false,
+    "local_voice_cue_cache_enabled": true,
+    "local_cue_fallback_espeak_enabled": true,
+    "thinking_cue_use_main_tts_when_uncached": false,
+    "brain_tts_follow_brain_host": true,
+    "skip_body_tts_when_brain_audio_present": true,
+    "stability_mode_enabled": true,
+    "brain_owns_identity": true,
+    "idle_life_enabled": true,
+    "idle_life_micro_actions_enabled": true,
+    "idle_life_self_chatter_enabled": true,
+    "idle_life_internet_curiosity_enabled": false,
+    "idle_life_sleep_announce_enabled": false,
+    "idle_life_micro_action_delay_s": 60.0,
+    "idle_life_micro_action_interval_s": 90.0,
+    "idle_life_comment_delay_s": 180.0,
+    "idle_life_min_comment_interval_s": 600.0,
+    "idle_life_curiosity_delay_s": 900.0,
+    "idle_life_curiosity_interval_s": 1800.0,
+    "idle_life_sleep_after_s": 1800.0,
+    "idle_life_max_comments_per_hour": 3,
+    "idle_life_head_yaw_deg": 8.0,
+    "idle_life_head_pitch_deg": 4.0,
+    "idle_life_eye_colour": "blue",
+    "idle_life_eye_brightness": 0.14,
+    "idle_life_phrases": [
+        "I am still here, quietly pretending this is a very important charging station.",
+        "No urgent robot business detected. I will continue monitoring politely.",
+        "I have not moved, which I believe counts as excellent balance training.",
+        "Still awake. Slightly bored, but operational.",
+        "I am doing a tiny systems check while I wait."
+    ],
+    "idle_life_curiosity_prompt": "",
+    "ui_theme": "dark-blue",
+    "audio_filter_enabled": true,
+    "audio_highpass_enabled": true,
+    "audio_highpass_hz": 90.0,
+    "audio_notch_enabled": true,
+    "audio_notch_hz": 50.0,
+    "audio_notch_q": 25.0,
+    "audio_notch_harmonics": 2,
+    "audio_noise_reduction_enabled": true,
+    "audio_noise_reduction_strength": 0.1,
+    "audio_noise_gate_knee_db": 10.0,
+    "audio_live_fft_bins": 48,
+    "mic_noise_gate_dbfs": -48.0,
+    "stt_validation_enabled": true,
+    "stt_min_confidence": 0.4,
+    "stt_min_voiced_ms": 280,
+    "stt_min_longest_voiced_ms": 160,
+    "stt_min_words": 1,
+    "stt_min_chars": 2,
+    "stt_noise_margin_db": 6.0,
+    "stt_reject_fillers": true,
+    "stt_duplicate_window_s": 12.0,
+    "stt_echo_compare_window_s": 90.0,
+    "stt_echo_similarity_threshold": 0.78,
+    "hardware_doctor_enabled": true,
+    "hardware_doctor_auto_recovery_enabled": true,
+    "hardware_doctor_interval_s": 15.0,
+    "hardware_doctor_failure_threshold": 3,
+    "hardware_doctor_recovery_cooldown_s": 90.0,
+    "hardware_doctor_allow_compile": false,
+    "hardware_doctor_allow_flash": false,
+    "input_event_log_limit": 150,
+    "led_state_profiles": {
+        "idle": {
+            "label": "Idle",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.03
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#0066ff",
+                    "brightness": 0.16
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#0066ff",
+                    "brightness": 0.16
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#003344",
+                    "brightness": 0.04
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#003322",
+                    "brightness": 0.04
+                }
+            }
+        },
+        "listening": {
+            "label": "Listening",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.1
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.3
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.3
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#0066ff",
+                    "brightness": 0.1
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.14
+                }
+            }
+        },
+        "awake": {
+            "label": "Conversation active",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.1
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#33ccff",
+                    "brightness": 0.26
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#33ccff",
+                    "brightness": 0.26
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#004488",
+                    "brightness": 0.08
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#00aaff",
+                    "brightness": 0.12
+                }
+            }
+        },
+        "thinking": {
+            "label": "Thinking / processing",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.12
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.24
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.24
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#8000ff",
+                    "brightness": 0.1
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.16
+                }
+            }
+        },
+        "speaking": {
+            "label": "Talking",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.4
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#00ccff",
+                    "brightness": 0.24
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#00ccff",
+                    "brightness": 0.24
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#0066ff",
+                    "brightness": 0.1
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#00ffff",
+                    "brightness": 0.12
+                }
+            }
+        },
+        "success": {
+            "label": "Success / ready",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#00ff66",
+                    "brightness": 0.22
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#00ff88",
+                    "brightness": 0.28
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#00ff88",
+                    "brightness": 0.28
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#00aa44",
+                    "brightness": 0.12
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#00ff66",
+                    "brightness": 0.16
+                }
+            }
+        },
+        "warning": {
+            "label": "Warning",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.26
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#ff6600",
+                    "brightness": 0.3
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#ff6600",
+                    "brightness": 0.3
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#552200",
+                    "brightness": 0.12
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.2
+                }
+            }
+        },
+        "error": {
+            "label": "Error / fault",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#ff0000",
+                    "brightness": 0.3
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#ff0000",
+                    "brightness": 0.34
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#ff0000",
+                    "brightness": 0.34
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#660000",
+                    "brightness": 0.16
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#ff0000",
+                    "brightness": 0.24
+                }
+            }
+        },
+        "sleep": {
+            "label": "Sleeping",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#000000",
+                    "brightness": 0
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#001133",
+                    "brightness": 0.05
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#001133",
+                    "brightness": 0.05
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#000000",
+                    "brightness": 0
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#000000",
+                    "brightness": 0
+                }
+            }
+        },
+        "vision": {
+            "label": "Using camera",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#8000ff",
+                    "brightness": 0.14
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#cc33ff",
+                    "brightness": 0.28
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#cc33ff",
+                    "brightness": 0.28
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#440066",
+                    "brightness": 0.1
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#8000ff",
+                    "brightness": 0.16
+                }
+            }
+        },
+        "diagnostic": {
+            "label": "Hardware diagnostic",
+            "enabled": true,
+            "zones": {
+                "mouth": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.14
+                },
+                "left_eye": {
+                    "enabled": true,
+                    "colour": "#00aaff",
+                    "brightness": 0.24
+                },
+                "right_eye": {
+                    "enabled": true,
+                    "colour": "#00aaff",
+                    "brightness": 0.24
+                },
+                "chest": {
+                    "enabled": true,
+                    "colour": "#443300",
+                    "brightness": 0.1
+                },
+                "status": {
+                    "enabled": true,
+                    "colour": "#ff9900",
+                    "brightness": 0.18
+                }
+            }
+        }
+    },
+    "stt_capture_method": "alsa",
+    "stt_endpointing_enabled": true,
+    "stt_start_timeout_s": 8.0,
+    "stt_max_utterance_s": 20.0,
+    "stt_pre_roll_ms": 600,
+    "stt_end_silence_ms": 600,
+    "stt_post_roll_ms": 160,
+    "stt_start_trigger_ms": 80,
+    "stt_adaptive_threshold_enabled": true,
+    "stt_adaptive_margin_db": 5.0,
+    "stt_debug_keep_audio": true,
+    "brain_tts_use_brain_defaults": true,
+    "brain_controls_web_memory": true,
+    "brain_controls_thinking_cues": true,
+    "control_ownership_schema": "bx1.control_ownership.v1",
+    "brain_controls_idle_dialogue": true,
+    "auto_camera_on_vision_request": true,
+    "send_periodic_camera_frames": true,
+    "periodic_camera_frame_interval_s": 5.0,
+    "visual_awareness_enabled": true,
+    "visual_awareness_interval_s": 2.0,
+    "visual_motion_threshold": 0.035,
+    "visual_presence_hold_s": 4.0,
+    "visual_alone_timeout_s": 20.0,
+    "visual_wake_on_person": true,
+    "visual_wake_window_s": 20.0,
+    "visual_send_event_frames": true,
+    "visual_analysis_width": 320,
+    "voice_feedback_led_enabled": true,
+    "camera_live_preview_enabled": true,
+    "camera_live_preview_interval_s": 2.0,
+    "camera_preview_max_age_s": 4.0,
+    "idle_life_response_mode": "brain",
+    "idle_life_require_alone": true,
+    "idle_life_brain_prompt": "",
+    "thinking_feedback_enabled": true,
+    "thinking_feedback_delay_s": 0.35,
+    "thinking_feedback_repeat_s": 4.0,
+    "thinking_feedback_max_per_reply": 1,
+    "stt_transcription_backend": "brain_faster_whisper",
+    "brain_stt_enabled": true,
+    "brain_stt_timeout_s": 120,
+    "brain_stt_fallback_to_vosk": true,
+    "brain_stt_language": "en",
+    "brain_stt_hotwords": "",
+    "brain_stt_initial_prompt": "",
+    "stt_defer_local_vosk_when_brain_enabled": true,
+    "stt_speech_resume_trigger_ms": 140,
+    "stt_transient_guard_after_ms": 220,
+    "stt_endpoint_hysteresis_db": 3.0,
+    "hardware_control": {
+        "high_level_owner": "linux_python",
+        "high_level_language": "Python 3",
+        "mcu_transport": "arduino_router_rpc",
+        "mcu_runtime": "minimal_arduino_zephyr_bridge_shim",
+        "micropython_reference_bundle": "mcu_micropython",
+        "motor_armed": false
+    },
+    "shared_audio_stream_enabled": true,
+    "dynamic_wake_enabled": true,
+    "wake_engine": "dynamic_vosk",
+    "wake_sensitivity": 0.72,
+    "wake_stream_window_s": 2.0,
+    "wake_capture_pre_roll_ms": 1800,
+    "brain_profile_sync_enabled": true,
+    "brain_profile_sync_interval_s": 15.0,
+    "queued_speech_owner": "desktop_brain_app"
+}

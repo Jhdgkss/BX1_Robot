@@ -1,0 +1,27 @@
+{
+  "lcars_command": {
+    "bg0": "#000000",
+    "bg1": "#000000",
+    "bg2": "#000000",
+    "panel": "rgba(2, 2, 2, 250)",
+    "border": "#9999CC",
+    "text": "#F4ECF7",
+    "muted": "#C7B5CC",
+    "title": "#FF9966",
+    "input": "#030303",
+    "input2": "#080808",
+    "accent": "#FF9966",
+    "accent2": "#CC99CC",
+    "primary0": "#FF9966",
+    "primary1": "#CC6666",
+    "danger0": "#CC4455",
+    "danger1": "#7E2632",
+    "tab": "#9999CC",
+    "tab_selected": "#FF9966",
+    "hint_bg": "#080808",
+    "hint_border": "#6699CC",
+    "pill": "#CC99CC",
+    "pill_text": "#050505",
+    "warn": "#FFCC66"
+  }
+}

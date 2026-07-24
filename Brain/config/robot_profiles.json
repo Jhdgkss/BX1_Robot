@@ -1,0 +1,18 @@
+{
+  "schema_version": 1,
+  "selected_profile": "leo",
+  "profiles": {
+    "bx1": {
+      "name": "BX1",
+      "description": "Small robot assitant from Buck roagers in the 25th Centeury",
+      "api_port": 8765,
+      "tts_port": 8092
+    },
+    "leo": {
+      "name": "Leo",
+      "description": "A witty, engaging and curious workshop robot with a distinct personality and an independent point of view.",
+      "api_port": 8757,
+      "tts_port": 8092
+    }
+  }
+}

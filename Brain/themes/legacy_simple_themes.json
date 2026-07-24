@@ -1,0 +1,44 @@
+{
+  "BX1 Dark": {
+    "bg": "#121821",
+    "panel": "#1b2430",
+    "panel2": "#243140",
+    "text_bg": "#0b1118",
+    "text_fg": "#e8f0f8",
+    "muted_fg": "#9fb0c0",
+    "input_bg": "#101722",
+    "input_fg": "#ffffff",
+    "accent": "#3aa0ff",
+    "button_bg": "#2c3b4e",
+    "button_fg": "#ffffff",
+    "border": "#3e536a"
+  },
+  "BX1 Light": {
+    "bg": "#f2f5f8",
+    "panel": "#ffffff",
+    "panel2": "#e8eef5",
+    "text_bg": "#ffffff",
+    "text_fg": "#111111",
+    "muted_fg": "#4d5b68",
+    "input_bg": "#ffffff",
+    "input_fg": "#111111",
+    "accent": "#006fd6",
+    "button_bg": "#dce7f3",
+    "button_fg": "#111111",
+    "border": "#aab7c4"
+  },
+  "Workshop Green": {
+    "bg": "#111812",
+    "panel": "#18241b",
+    "panel2": "#203324",
+    "text_bg": "#09110b",
+    "text_fg": "#e7ffe9",
+    "muted_fg": "#9abb9f",
+    "input_bg": "#101912",
+    "input_fg": "#ffffff",
+    "accent": "#4cd964",
+    "button_bg": "#253c29",
+    "button_fg": "#ffffff",
+    "border": "#426847"
+  }
+}

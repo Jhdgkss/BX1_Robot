@@ -1,0 +1,13 @@
+Robot Brain V2.11.0 validation
+
+Automated checks completed in the build environment:
+- Python syntax compilation: PASS
+- Personality library unit tests: PASS
+- Full test suite: 31 PASS
+- Personality project export/import with embedded voice asset: PASS
+
+The build environment did not contain PyQt6, so the live Windows GUI could not be launched here. The existing project test suite statically validated the PyQt integration and all modified Python files compiled successfully.
+
+Installer hotfix:
+- Python executable paths are now quoted correctly when the Brain project is under a folder such as C:\Git WorkSpace\...
+- Pasted project paths may include surrounding quotation marks.

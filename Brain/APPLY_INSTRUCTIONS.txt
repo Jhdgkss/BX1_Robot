@@ -1,0 +1,13 @@
+BX1 V2.9.0 WEB RESEARCH PATCH
+=============================
+
+1. Close Robot Brain and Dot.TTS.
+2. Copy every file/folder in this patch into the existing Robot Brain project.
+3. Choose Replace when Windows asks about main_pyqt.py, VERSION.txt or CHANGELOG_V2.md.
+4. Do not delete the existing runtime, documents, memory or voice folders.
+5. Start BX1 normally with START_BX1_BRAIN.bat.
+
+The new settings default to:
+- General factual web research: ON
+- Display source footer: ON
+- Speak source lists/URLs: OFF

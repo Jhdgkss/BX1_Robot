@@ -1,0 +1,18 @@
+Robot Brain V2.10.0 validation
+==============================
+
+Passed in the build environment:
+- Python syntax compilation of main_pyqt.py.
+- Python syntax compilation of bx1_modules/body_voice_library.py.
+- Phrase-template expansion using the active robot name.
+- Generate-one/generate-many manifest lifecycle with temporary WAV files.
+- Generated/stale phrase detection after wording changes.
+- SHA-256 generation and atomic manifest writes.
+
+Not tested in this environment:
+- Physical Windows launch of the complete PyQt application.
+- Live Dot.TTS or Edge generation using the user's installed voice services.
+- Live UNO Q download over the user's network.
+
+The patch does not overwrite the active Brain configuration, personality library,
+voice references, documents, memory, runtime audio, secrets or virtual environment.

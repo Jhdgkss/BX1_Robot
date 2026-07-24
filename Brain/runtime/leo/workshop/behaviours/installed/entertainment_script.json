@@ -1,0 +1,80 @@
+{
+  "format": "bx1.behaviour.v1",
+  "name": "entertainment_script",
+  "display_name": "entertainment_script",
+  "description": "A series of playful movements and sounds to entertain the user.",
+  "permission_level": 2,
+  "permissions": [
+    "head.move",
+    "leds.mouth",
+    "speech.say"
+  ],
+  "trigger_phrases": [
+    "run entertainment script",
+    "play with me"
+  ],
+  "steps": [
+    {
+      "type": "led_range",
+      "start_led": 1,
+      "end_led": 3,
+      "colour_hex": "#FF0000",
+      "brightness": 0.25,
+      "duration_ms": 500
+    },
+    {
+      "type": "head_pose",
+      "yaw_deg": 10.0,
+      "pitch_deg": -2.0,
+      "roll_deg": 3.0,
+      "duration_ms": 700
+    },
+    {
+      "type": "wait",
+      "duration_ms": 500
+    },
+    {
+      "type": "speech",
+      "text": "Tickle tickle!",
+      "estimated_duration_ms": 720
+    },
+    {
+      "type": "head_pose",
+      "yaw_deg": -10.0,
+      "pitch_deg": 2.0,
+      "roll_deg": -3.0,
+      "duration_ms": 700
+    },
+    {
+      "type": "wait",
+      "duration_ms": 500
+    },
+    {
+      "type": "speech",
+      "text": "Mwahahaha!",
+      "estimated_duration_ms": 400
+    },
+    {
+      "type": "head_pose",
+      "yaw_deg": 0.0,
+      "pitch_deg": 0.0,
+      "roll_deg": 0.0,
+      "duration_ms": 700
+    },
+    {
+      "type": "led_range",
+      "start_led": 1,
+      "end_led": 3,
+      "colour_hex": "#000000",
+      "brightness": 0.0,
+      "duration_ms": 0
+    }
+  ],
+  "estimated_duration_ms": 4720,
+  "action_count": 5,
+  "installed_at": "2026-07-22T21:56:54+00:00",
+  "updated_at": "2026-07-22T21:56:54+00:00",
+  "source_model": "qwen2.5-coder:7b",
+  "source_task": "Create an run a script. THe script is a personality script to keep you entertained.",
+  "approved_by": "John"
+}

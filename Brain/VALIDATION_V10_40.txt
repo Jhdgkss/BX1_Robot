@@ -1,0 +1,21 @@
+BX1 Robot Body v10.40 validation
+================================
+
+Passed in the build environment:
+- Python compileall for the Body python package.
+- JavaScript syntax check of the embedded robot-control web application.
+- Synthetic shared-stream endpoint capture with speech start and end-silence close.
+- Synthetic constrained wake-grammar detection using the 600 ms overlap window.
+- Brain profile name/wake/timing mapping.
+- Queued-speech download, SHA-256 verification and stale-audio invalidation.
+- Brain phrase library contract compatibility.
+
+Not tested in this environment:
+- The user's USB microphone and ALSA device on the physical UNO Q.
+- Real Vosk wake accuracy in the robot's acoustic environment.
+- Real Brain Faster-Whisper round-trip over the user's network.
+- Physical speaker playback and mouth animation for the generated phrase files.
+
+This patch deliberately performs no Arduino App Lab compile, MCU upload or firmware
+change. Existing python/config.json, hardware mapping, servo calibration and MCU files
+are not included in the payload and are not overwritten.

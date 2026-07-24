@@ -1,0 +1,9 @@
+name: BX1 Robot Body
+version: 10.40
+icon: 🤖
+description: Arduino UNO Q body client for BX1. Includes UNO Q RouterBridge recovery, Modulino Movement on Wire1/Qwiic, single-owner shared microphone streaming, Brain-owned dynamic wake phrases, local queued speech, quiet-servo control, addressable LEDs and bounded hardware diagnostics.
+# App Lab may manage this file itself. Keep this as a starter manifest and import via App Lab if required.
+python:
+  entrypoint: python/main.py
+sketch:
+  path: sketch/sketch.ino
