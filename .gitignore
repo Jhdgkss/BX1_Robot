@@ -13,9 +13,11 @@
 *.py[cod]
 *.pyo
 *.pyd
+**/.pytest_cache/
+**/.mypy_cache/
 
-# Downloaded AI/STT models
-**/models/
+# Downloaded AI/STT models and caches
+Robot/models/
 **/model_cache/
 **/huggingface/
 **/.cache/
@@ -68,3 +70,11 @@
 .DS_Store
 Thumbs.db
 desktop.ini
+
+# Brain generated/private runtime data
+Brain/backups/
+Brain/runtime/*
+!Brain/runtime/README_RUNTIME.md
+
+# Machine-specific robot configuration
+Robot/runtime/touchscreen.env
