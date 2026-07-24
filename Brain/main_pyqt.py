@@ -213,6 +213,22 @@ from bx1_modules.behaviour_workshop import (
     limits_from_config,
     validate_behaviour,
 )
+from bx1_services.robot_update_service import (
+    DEFAULT_SSH_PORT,
+    DEFAULT_SSH_USERNAME,
+    DEFAULT_TARGET_DIRECTORY,
+    PackageInspectionResult,
+    RobotConnectionSettings,
+    RobotUpdateError,
+    RobotUpdateService,
+    UpdateRequest,
+)
+from bx1_services.robot_release_builder import (
+    ReleaseBuildOptions,
+    ReleaseBuildResult,
+    RobotReleaseBuilder,
+    SourceInspection,
+)
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -4401,6 +4417,12 @@ class MainWindow(QMainWindow):
         self.cfg = self.personality_store.apply_selected(self.cfg)
         self.signals = GuiSignals()
         self.core = BX1BrainCore(self.signals, self.cfg)
+        self.robot_update_service = RobotUpdateService()
+        self.robot_release_builder = RobotReleaseBuilder()
+        self.robot_update_inspection: Optional[PackageInspectionResult] = None
+        self.robot_release_source_info: Optional[SourceInspection] = None
+        self.robot_release_last_result: Optional[ReleaseBuildResult] = None
+        self.robot_update_connection_ok = False
         self.api_server = BX1RobotAPIServer(self.core)
         self.current_image_b64: Optional[str] = None
         self.chat_worker: Optional[ChatWorker] = None
@@ -5033,6 +5055,7 @@ class MainWindow(QMainWindow):
         self.system_tabs = self._section_tabs([
             ("Diagnostics", self._build_diagnostics_tab()),
             ("Maintenance", self._build_maintenance_tab()),
+            ("Robot Updates", self._build_robot_updates_tab()),
             ("Voice Service", self._build_voice_service_settings_tab()),
             ("Models / API / Theme", self._build_settings_tab()),
             ("Robot Profile", self._build_identity_summary_panel()),
@@ -6556,6 +6579,475 @@ class MainWindow(QMainWindow):
         self.manage_profiles_button.clicked.connect(self.open_profile_manager)
         self.open_docs_button.clicked.connect(lambda: open_path_in_os(DOCS_DIR))
         return w
+
+    def _build_robot_updates_tab(self) -> QWidget:
+        """Build the guarded Robot Linux software update panel."""
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        panel = QWidget()
+        panel.setObjectName("CardPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(12)
+
+        intro = QLabel(
+            "Prepare and validate BX1 Robot Linux release packages. Dry-run is enabled by default; MCU firmware updates are separate and disabled in this phase."
+        )
+        intro.setObjectName("HintLabel")
+        intro.setWordWrap(True)
+        layout.addWidget(intro)
+
+        connection_box = QGroupBox("Robot connection")
+        connection_form = QFormLayout(connection_box)
+        connection_form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        self.robot_update_host_edit = QLineEdit()
+        self.robot_update_host_edit.setPlaceholderText("Hostname or IP")
+        self.robot_update_port_spin = QSpinBox()
+        self.robot_update_port_spin.setRange(1, 65535)
+        self.robot_update_port_spin.setValue(DEFAULT_SSH_PORT)
+        self.robot_update_user_edit = QLineEdit(DEFAULT_SSH_USERNAME)
+        self.robot_update_password_edit = QLineEdit()
+        self.robot_update_password_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.robot_update_password_edit.setPlaceholderText("Session only")
+        self.robot_update_key_path_edit = QLineEdit()
+        self.robot_update_key_path_edit.setPlaceholderText("Optional private-key path")
+        key_row = QWidget()
+        key_layout = QHBoxLayout(key_row)
+        key_layout.setContentsMargins(0, 0, 0, 0)
+        self.robot_update_key_browse_button = QPushButton("Browse")
+        key_layout.addWidget(self.robot_update_key_path_edit, 1)
+        key_layout.addWidget(self.robot_update_key_browse_button)
+        self.robot_update_test_button = QPushButton("Test Connection")
+        self.robot_update_connection_status = QLabel("Not tested.")
+        self.robot_update_connection_status.setObjectName("HintLabel")
+        connection_form.addRow("Host", self.robot_update_host_edit)
+        connection_form.addRow("SSH port", self.robot_update_port_spin)
+        connection_form.addRow("Username", self.robot_update_user_edit)
+        connection_form.addRow("Password", self.robot_update_password_edit)
+        connection_form.addRow("Private key", key_row)
+        connection_form.addRow("Connection", self.robot_update_test_button)
+        connection_form.addRow("Status", self.robot_update_connection_status)
+        layout.addWidget(connection_box)
+
+        package_box = QGroupBox("Offline release-package inspection")
+        package_layout = QVBoxLayout(package_box)
+        package_row = QWidget()
+        package_row_layout = QHBoxLayout(package_row)
+        package_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.robot_update_archive_edit = QLineEdit()
+        self.robot_update_archive_edit.setPlaceholderText("bx1-robot-<version>.tar.gz")
+        self.robot_update_browse_button = QPushButton("Select Archive")
+        self.robot_update_inspect_button = QPushButton("Inspect Package")
+        package_row_layout.addWidget(self.robot_update_archive_edit, 1)
+        package_row_layout.addWidget(self.robot_update_browse_button)
+        package_row_layout.addWidget(self.robot_update_inspect_button)
+        package_layout.addWidget(package_row)
+        self.robot_update_package_summary = QPlainTextEdit()
+        self.robot_update_package_summary.setReadOnly(True)
+        self.robot_update_package_summary.setMaximumHeight(170)
+        self.robot_update_package_summary.setPlainText("No release package selected.")
+        package_layout.addWidget(self.robot_update_package_summary)
+        layout.addWidget(package_box)
+
+        build_box = QGroupBox("Build Robot Release")
+        build_layout = QVBoxLayout(build_box)
+        source_row = QWidget()
+        source_row_layout = QHBoxLayout(source_row)
+        source_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.robot_release_source_edit = QLineEdit()
+        self.robot_release_source_edit.setPlaceholderText("Explicit Robot Linux source directory")
+        self.robot_release_source_button = QPushButton("Select Source")
+        self.robot_release_detect_button = QPushButton("Detect Version")
+        source_row_layout.addWidget(self.robot_release_source_edit, 1)
+        source_row_layout.addWidget(self.robot_release_source_button)
+        source_row_layout.addWidget(self.robot_release_detect_button)
+        build_layout.addWidget(source_row)
+
+        output_row = QWidget()
+        output_row_layout = QHBoxLayout(output_row)
+        output_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.robot_release_output_edit = QLineEdit()
+        self.robot_release_output_edit.setPlaceholderText("Output folder for bx1-robot-<version>.tar.gz")
+        self.robot_release_output_button = QPushButton("Select Output")
+        self.robot_release_open_output_button = QPushButton("Open Output Folder")
+        output_row_layout.addWidget(self.robot_release_output_edit, 1)
+        output_row_layout.addWidget(self.robot_release_output_button)
+        output_row_layout.addWidget(self.robot_release_open_output_button)
+        build_layout.addWidget(output_row)
+
+        version_row = QWidget()
+        version_row_layout = QHBoxLayout(version_row)
+        version_row_layout.setContentsMargins(0, 0, 0, 0)
+        self.robot_release_version_label = QLabel("Detected version: not inspected.")
+        self.robot_release_version_label.setWordWrap(True)
+        self.robot_release_override_edit = QLineEdit()
+        self.robot_release_override_edit.setPlaceholderText("Optional version override")
+        self.robot_release_ack_conflict_check = QCheckBox("Acknowledge version conflict")
+        self.robot_release_overwrite_check = QCheckBox("Allow overwrite")
+        version_row_layout.addWidget(self.robot_release_version_label, 2)
+        version_row_layout.addWidget(self.robot_release_override_edit, 1)
+        version_row_layout.addWidget(self.robot_release_ack_conflict_check)
+        version_row_layout.addWidget(self.robot_release_overwrite_check)
+        build_layout.addWidget(version_row)
+
+        self.robot_release_warning_text = QPlainTextEdit()
+        self.robot_release_warning_text.setReadOnly(True)
+        self.robot_release_warning_text.setMaximumHeight(130)
+        self.robot_release_warning_text.setPlainText("Select a source folder and detect its version before building.")
+        build_layout.addWidget(self.robot_release_warning_text)
+
+        build_buttons = QHBoxLayout()
+        self.robot_release_build_button = QPushButton("Build Release")
+        self.robot_release_build_button.setObjectName("PrimaryButton")
+        self.robot_release_inspect_built_button = QPushButton("Inspect Built Package")
+        build_buttons.addWidget(self.robot_release_build_button)
+        build_buttons.addWidget(self.robot_release_inspect_built_button)
+        build_buttons.addStretch(1)
+        build_layout.addLayout(build_buttons)
+        self.robot_release_log = QPlainTextEdit()
+        self.robot_release_log.setReadOnly(True)
+        self.robot_release_log.setMaximumHeight(150)
+        self.robot_release_log.setPlainText("Build log ready. Release packages are built into a temporary directory and validated before final move.")
+        build_layout.addWidget(self.robot_release_log)
+        layout.addWidget(build_box)
+
+        software_box = QGroupBox("Robot Linux Software Update")
+        software_layout = QVBoxLayout(software_box)
+        self.robot_update_versions_label = QLabel("Installed version: unknown until connected. Package version: none selected.")
+        self.robot_update_versions_label.setWordWrap(True)
+        software_layout.addWidget(self.robot_update_versions_label)
+        self.robot_update_dry_run_check = QCheckBox("Dry-run mode")
+        self.robot_update_dry_run_check.setChecked(True)
+        software_layout.addWidget(self.robot_update_dry_run_check)
+        normal_buttons = QHBoxLayout()
+        self.robot_update_plan_button = QPushButton("Run Dry-run Plan")
+        self.robot_update_plan_button.setObjectName("PrimaryButton")
+        self.robot_update_apply_button = QPushButton("Confirmed Update")
+        self.robot_update_apply_button.setObjectName("DangerButton")
+        self.robot_update_apply_button.setToolTip("Disabled until package validation and connection testing pass. Phase 1 still blocks live deployment.")
+        normal_buttons.addWidget(self.robot_update_plan_button)
+        normal_buttons.addWidget(self.robot_update_apply_button)
+        normal_buttons.addStretch(1)
+        software_layout.addLayout(normal_buttons)
+        self.robot_update_progress = QProgressBar()
+        self.robot_update_progress.setRange(0, 100)
+        self.robot_update_progress.setValue(0)
+        software_layout.addWidget(self.robot_update_progress)
+        self.robot_update_activity_log = QPlainTextEdit()
+        self.robot_update_activity_log.setReadOnly(True)
+        self.robot_update_activity_log.setPlainText(
+            "Activity log ready. Passwords are never written here. Normal Robot Linux updates preserve python/config.json, runtime/touchscreen.env, runtime/audio and calibration data."
+        )
+        software_layout.addWidget(self.robot_update_activity_log, 1)
+        layout.addWidget(software_box, 1)
+
+        mcu_box = QGroupBox("Advanced MCU Firmware Update")
+        mcu_box.setEnabled(False)
+        mcu_layout = QVBoxLayout(mcu_box)
+        mcu_label = QLabel(
+            "Not implemented in Phase 1. MCU firmware is intentionally separate from Robot Linux software updates and will not run from this workflow."
+        )
+        mcu_label.setWordWrap(True)
+        mcu_layout.addWidget(mcu_label)
+        mcu_button = QPushButton("MCU Update Not Available")
+        mcu_button.setEnabled(False)
+        mcu_layout.addWidget(mcu_button)
+        layout.addWidget(mcu_box)
+
+        self.robot_update_browse_button.clicked.connect(self.browse_robot_update_archive_ui)
+        self.robot_update_inspect_button.clicked.connect(self.inspect_robot_update_package_ui)
+        self.robot_release_source_button.clicked.connect(self.browse_robot_release_source_ui)
+        self.robot_release_output_button.clicked.connect(self.browse_robot_release_output_ui)
+        self.robot_release_detect_button.clicked.connect(self.inspect_robot_release_source_ui)
+        self.robot_release_build_button.clicked.connect(self.build_robot_release_ui)
+        self.robot_release_open_output_button.clicked.connect(self.open_robot_release_output_ui)
+        self.robot_release_inspect_built_button.clicked.connect(self.inspect_built_robot_release_ui)
+        self.robot_update_key_browse_button.clicked.connect(self.browse_robot_update_key_ui)
+        self.robot_update_test_button.clicked.connect(self.test_robot_update_connection_ui)
+        self.robot_update_plan_button.clicked.connect(self.run_robot_update_dry_run_ui)
+        self.robot_update_apply_button.clicked.connect(self.run_robot_update_confirmed_ui)
+        self.robot_update_host_edit.textChanged.connect(self.robot_update_connection_changed)
+        self.robot_update_port_spin.valueChanged.connect(self.robot_update_connection_changed)
+        self.robot_update_user_edit.textChanged.connect(self.robot_update_connection_changed)
+        self.robot_update_key_path_edit.textChanged.connect(self.robot_update_connection_changed)
+        self.robot_update_dry_run_check.stateChanged.connect(self.refresh_robot_update_controls)
+        self.refresh_robot_update_controls()
+        scroll.setWidget(panel)
+        return scroll
+
+    def browse_robot_release_source_ui(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Robot Linux source folder", str(APP_DIR.parent))
+        if path:
+            self.robot_release_source_edit.setText(path)
+            self.robot_release_source_info = None
+            self.robot_release_last_result = None
+            self.robot_release_version_label.setText("Detected version: not inspected.")
+            self.robot_release_warning_text.setPlainText("Source selected. Detect the version before building.")
+
+    def browse_robot_release_output_ui(self) -> None:
+        path = QFileDialog.getExistingDirectory(self, "Select Robot release output folder", str(APP_DIR))
+        if path:
+            self.robot_release_output_edit.setText(path)
+
+    def inspect_robot_release_source_ui(self) -> None:
+        source = Path(self.robot_release_source_edit.text().strip())
+        try:
+            info = self.robot_release_builder.inspect_source(source)
+            self.robot_release_source_info = info
+            declarations = "\n".join(f"{item.path}: {item.version}" for item in info.declarations) or "No declarations found."
+            warnings = "\n".join(f"Warning: {item}" for item in info.warnings + info.conflicts) or "No warnings."
+            self.robot_release_version_label.setText(f"Detected version: {info.detected_version or 'not found'}. Source: {info.source_dir}")
+            self.robot_release_warning_text.setPlainText(f"Version declarations:\n{declarations}\n\n{warnings}")
+            self.append_robot_release_log(f"Inspected source {info.source_dir}. Detected version: {info.detected_version or 'not found'}.")
+        except Exception as exc:
+            self.robot_release_source_info = None
+            self.robot_release_version_label.setText("Detected version: inspection failed.")
+            self.robot_release_warning_text.setPlainText(f"Source inspection failed:\n{exc}")
+            self.append_robot_release_log(f"Source inspection failed: {exc}")
+
+    def append_robot_release_log(self, message: str) -> None:
+        safe = str(message or "")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if hasattr(self, "robot_release_log"):
+            self.robot_release_log.appendPlainText(f"[{timestamp}] {safe}")
+
+    def build_robot_release_ui(self) -> None:
+        if self.robot_release_source_info is None:
+            QMessageBox.warning(self, "Build Robot release", "Inspect the Robot source folder before building.")
+            return
+        output_text = self.robot_release_output_edit.text().strip()
+        if not output_text:
+            QMessageBox.warning(self, "Build Robot release", "Choose an output folder first.")
+            return
+        override = self.robot_release_override_edit.text().strip()
+        effective_version = override or self.robot_release_source_info.detected_version or "unknown"
+        answer = QMessageBox.question(
+            self,
+            "Build Robot release",
+            f"Create bx1-robot-{effective_version}.tar.gz from this explicit source?\n\n"
+            f"{self.robot_release_source_info.source_dir}",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            result = self.robot_release_builder.build(
+                ReleaseBuildOptions(
+                    source_dir=self.robot_release_source_info.source_dir,
+                    output_dir=Path(output_text),
+                    version_override=override,
+                    acknowledge_version_conflict=bool(self.robot_release_ack_conflict_check.isChecked()),
+                    overwrite=bool(self.robot_release_overwrite_check.isChecked()),
+                ),
+                progress=self.append_robot_release_log,
+            )
+            self.robot_release_last_result = result
+            self.robot_update_archive_edit.setText(str(result.package_path))
+            self.robot_update_inspection = None
+            self.append_robot_release_log(
+                f"Built {result.package_path.name}: {result.file_count} files, archive SHA256 {result.archive_sha256}."
+            )
+            if result.warnings:
+                self.robot_release_warning_text.setPlainText("\n".join(f"Warning: {warning}" for warning in result.warnings))
+            QMessageBox.information(self, "Build Robot release", f"Release package built and validated.\n\n{result.package_path}")
+        except Exception as exc:
+            self.robot_release_last_result = None
+            self.append_robot_release_log(f"Build failed: {exc}")
+            QMessageBox.warning(self, "Build Robot release", f"Build failed.\n\n{exc}")
+
+    def open_robot_release_output_ui(self) -> None:
+        target = Path(self.robot_release_output_edit.text().strip()) if self.robot_release_output_edit.text().strip() else None
+        if target is not None:
+            open_path_in_os(target)
+
+    def inspect_built_robot_release_ui(self) -> None:
+        if self.robot_release_last_result is not None:
+            self.robot_update_archive_edit.setText(str(self.robot_release_last_result.package_path))
+        self.inspect_robot_update_package_ui()
+
+    def browse_robot_update_archive_ui(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Robot release archive",
+            str(APP_DIR),
+            "Robot releases (bx1-robot-*.tar.gz);;Tar archives (*.tar.gz);;All files (*.*)",
+        )
+        if path:
+            self.robot_update_archive_edit.setText(path)
+            self.robot_update_inspection = None
+            self.robot_update_progress.setValue(0)
+            self.robot_update_package_summary.setPlainText("Package selected. Run inspection before any update workflow.")
+            self.refresh_robot_update_controls()
+
+    def browse_robot_update_key_ui(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select SSH private key",
+            str(Path.home()),
+            "Private keys (*);;All files (*.*)",
+        )
+        if path:
+            self.robot_update_key_path_edit.setText(path)
+
+    def inspect_robot_update_package_ui(self) -> None:
+        archive = Path(self.robot_update_archive_edit.text().strip())
+        self.robot_update_progress.setValue(0)
+        try:
+            inspection = self.robot_update_service.inspect_package(archive)
+            self.robot_update_inspection = inspection
+            manifest = inspection.manifest
+            warning_text = "\n".join(f"Warning: {warning}" for warning in inspection.warnings)
+            summary = [
+                f"Package: {inspection.archive_path.name}",
+                f"Product: {manifest.product}",
+                f"Package version: {manifest.version}",
+                f"Release type: {manifest.release_type}",
+                f"Created: {manifest.created}",
+                f"Service: {manifest.service_name}",
+                f"Target: {manifest.target_directory}",
+                f"Minimum Brain version: {manifest.minimum_compatible_brain_version}",
+                f"Files: {inspection.file_count}",
+                f"Checksums: {inspection.checksum_count}",
+                f"Preserved paths: {', '.join(manifest.preserved_paths)}",
+            ]
+            if warning_text:
+                summary.append(warning_text)
+            self.robot_update_package_summary.setPlainText("\n".join(summary))
+            self.robot_update_versions_label.setText(
+                f"Installed version: unknown until connected. Package version: {manifest.version}."
+            )
+            self.append_robot_update_log(f"Validated package {inspection.archive_path.name} for Robot {manifest.version}.")
+            self.robot_update_progress.setValue(20)
+        except Exception as exc:
+            self.robot_update_inspection = None
+            self.robot_update_package_summary.setPlainText(f"Package validation failed:\n{exc}")
+            self.append_robot_update_log(f"Package validation failed: {exc}")
+        self.refresh_robot_update_controls()
+
+    def robot_update_connection_changed(self, *_args: Any) -> None:
+        self.robot_update_connection_ok = False
+        self.robot_update_connection_status.setText("Not tested.")
+        self.refresh_robot_update_controls()
+
+    def robot_update_connection_settings(self) -> RobotConnectionSettings:
+        return RobotConnectionSettings(
+            hostname=self.robot_update_host_edit.text().strip(),
+            port=int(self.robot_update_port_spin.value()),
+            username=self.robot_update_user_edit.text().strip() or DEFAULT_SSH_USERNAME,
+            password=self.robot_update_password_edit.text(),
+            private_key_path=self.robot_update_key_path_edit.text().strip(),
+        )
+
+    def test_robot_update_connection_ui(self) -> None:
+        settings = self.robot_update_connection_settings()
+        self.robot_update_connection_ok = False
+        try:
+            result = self.robot_update_service.test_connection(settings)
+            self.robot_update_connection_ok = True
+            self.robot_update_connection_status.setText("Connection OK.")
+            self.append_robot_update_log(f"Connection test succeeded for {settings.username}@{settings.hostname}:{settings.port}.")
+            if result:
+                self.append_robot_update_log(result)
+            try:
+                installed_version = self.robot_update_service.read_installed_version(settings)
+                package_version = self.robot_update_inspection.manifest.version if self.robot_update_inspection is not None else "none selected"
+                self.robot_update_versions_label.setText(
+                    f"Installed version: {installed_version}. Package version: {package_version}."
+                )
+                self.append_robot_update_log(f"Installed Robot version: {installed_version}.")
+            except Exception as version_exc:
+                package_version = self.robot_update_inspection.manifest.version if self.robot_update_inspection is not None else "none selected"
+                self.robot_update_versions_label.setText(
+                    f"Installed version: unavailable. Package version: {package_version}."
+                )
+                self.append_robot_update_log(f"Installed version unavailable: {version_exc}")
+            self.robot_update_progress.setValue(max(self.robot_update_progress.value(), 35))
+        except Exception as exc:
+            self.robot_update_connection_status.setText("Connection failed.")
+            self.append_robot_update_log(f"Connection test failed: {exc}")
+        self.refresh_robot_update_controls()
+
+    def refresh_robot_update_controls(self, *_args: Any) -> None:
+        package_ok = self.robot_update_inspection is not None
+        dry_run = bool(self.robot_update_dry_run_check.isChecked()) if hasattr(self, "robot_update_dry_run_check") else True
+        if hasattr(self, "robot_update_plan_button"):
+            self.robot_update_plan_button.setEnabled(package_ok)
+        if hasattr(self, "robot_update_apply_button"):
+            self.robot_update_apply_button.setEnabled(package_ok and self.robot_update_connection_ok and not dry_run)
+        if hasattr(self, "robot_update_apply_button"):
+            self.robot_update_apply_button.setToolTip(
+                "Requires a validated package, a successful connection test, dry-run disabled, and explicit confirmation. Phase 1 blocks live deployment."
+            )
+
+    def append_robot_update_log(self, message: str) -> None:
+        safe = str(message or "")
+        if hasattr(self, "robot_update_password_edit"):
+            password = self.robot_update_password_edit.text()
+            if password:
+                safe = safe.replace(password, "****")
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        if hasattr(self, "robot_update_activity_log"):
+            self.robot_update_activity_log.appendPlainText(f"[{timestamp}] {safe}")
+
+    def run_robot_update_dry_run_ui(self) -> None:
+        if self.robot_update_inspection is None:
+            QMessageBox.warning(self, "Robot update", "Inspect and validate a release package first.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Run dry-run plan",
+            "Generate a dry-run Robot Linux update plan for this package?",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.Yes,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        events: List[str] = []
+        request = UpdateRequest(
+            package_path=self.robot_update_inspection.archive_path,
+            connection=self.robot_update_connection_settings(),
+            dry_run=True,
+            explicit_confirmation=True,
+        )
+        try:
+            plan = self.robot_update_service.run_update(
+                request,
+                progress=lambda event: events.append(event.message),
+            )
+            for event in events:
+                self.append_robot_update_log(event)
+            self.robot_update_progress.setValue(100)
+            self.append_robot_update_log(f"Dry-run plan complete: {len(plan)} steps. No files were uploaded or changed.")
+        except Exception as exc:
+            self.append_robot_update_log(f"Dry-run planning failed: {exc}")
+            QMessageBox.warning(self, "Robot update", f"Dry-run planning failed.\n\n{exc}")
+        self.refresh_robot_update_controls()
+
+    def run_robot_update_confirmed_ui(self) -> None:
+        if self.robot_update_inspection is None or not self.robot_update_connection_ok:
+            QMessageBox.warning(self, "Robot update", "Validate a package and test the connection first.")
+            return
+        answer = QMessageBox.question(
+            self,
+            "Confirm Robot Linux update",
+            "Run a confirmed Robot Linux software update?\n\nThis is separate from MCU firmware and will preserve local robot configuration.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        request = UpdateRequest(
+            package_path=self.robot_update_inspection.archive_path,
+            connection=self.robot_update_connection_settings(),
+            dry_run=False,
+            explicit_confirmation=True,
+        )
+        try:
+            self.robot_update_service.run_update(request, progress=lambda event: self.append_robot_update_log(event.message))
+        except RobotUpdateError as exc:
+            self.append_robot_update_log(f"Confirmed update blocked: {exc}")
+            QMessageBox.information(self, "Robot update", str(exc))
 
     @staticmethod
     def _format_file_size(value: Any) -> str:
