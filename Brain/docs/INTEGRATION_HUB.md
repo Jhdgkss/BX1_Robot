@@ -112,11 +112,11 @@ Planned control commands:
 
 Until command routing is added, use the Integrations page buttons.
 
-## Support Mention Responder
+## Support Mention Responder Capability
 
-Available from **Integrations / Support Assistant**.
+Available from **Integrations / Capability Forge** as the **Import Support Demo** capability package.
 
-This is the safe first version of the workgroup support idea. It is messaging-platform neutral and runs in mock/demo mode until a legitimate connector, such as an official business messaging API, is added.
+This is the safe first version of the workgroup support idea. It is messaging-platform neutral and runs as an installable capability package until a legitimate connector, such as an official business messaging API, is added.
 
 Settings:
 
@@ -130,7 +130,7 @@ Actions:
 - draft a technical support reply
 - send an approved reply
 
-Only approved groups are scanned. Messages from unapproved groups are ignored even if they contain the trigger mention. Sending is a CONTROL action and requires confirmation through the integration permission layer. Draft-only mode blocks sending entirely.
+Only approved groups are scanned. Messages from unapproved groups are ignored even if they contain the trigger mention. Sending is a NETWORK_CONTROL capability action and requires explicit confirmation. Draft-only mode blocks sending entirely.
 
 The intended operator flow is:
 
@@ -139,3 +139,5 @@ The intended operator flow is:
 3. BX1 drafts a reply with notes and confidence.
 4. The user reviews or edits the reply.
 5. The user explicitly approves sending, or leaves draft-only mode enabled.
+
+The old hard-coded Support Assistant integration has been superseded by this package workflow so it can be validated, tested, installed, disabled, removed and rolled back like other user-added capabilities.

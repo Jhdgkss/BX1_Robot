@@ -236,7 +236,8 @@ from bx1_integrations.events import IntegrationEventLog, mask_secret_text
 from bx1_integrations.octoprint_connector import OctoPrintConnector
 from bx1_integrations.registry import IntegrationRegistry
 from bx1_integrations.spotify_connector import SpotifyConnector
-from bx1_integrations.support_assistant import SupportAssistantConnector
+from bx1_capabilities.manager import CapabilityManager
+from bx1_capabilities.models import CapabilityRunResult
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -1545,6 +1546,7 @@ class BX1BrainCore:
             overlap_chars=int(cfg.get("rag_chunk_overlap_chars", 180) or 180),
         )
         self.behaviour_store = BehaviourStore(RUNTIME_DIR / "workshop" / "behaviours")
+        self.capability_manager = CapabilityManager(RUNTIME_DIR / "capabilities")
         self.body_voice_library = BodyVoiceLibrary(RUNTIME_DIR / "body_voice")
         self.stt_service = FasterWhisperSTTService(cfg, self.log)
         self.last_document_sources: List[Dict[str, Any]] = []
@@ -3306,6 +3308,38 @@ class BX1BrainCore:
         if body_state:
             body_state = self.remember_body_state(body_state, source="api_request")
         behaviour_run_request = self.behaviour_store.match_explicit_request(message)
+        capability_match = self.capability_manager.match_trigger(message)
+        if capability_match is not None:
+            action = capability_match.manifest.actions[0].action_id
+            run = self.capability_manager.execute_installed(capability_match.manifest.capability_id, action, confirmed=False)
+            reply = (
+                f"Capability matched: {capability_match.manifest.display_name}. "
+                f"Action {action} returned {'OK' if run.ok else 'a blocked/error result'}."
+            )
+            if run.requires_confirmation:
+                reply += " This action requires confirmation before it can run."
+            elif run.message:
+                reply += " " + run.message
+            speech_text = self.remember_last_reply(reply)
+            self.signals.chat_received.emit(self._response_speaker(self.cfg, provenance), reply)
+            return {
+                "ok": True,
+                "robot_id": robot_id,
+                "reply": reply,
+                "speech": speech_text,
+                "actions": [],
+                "capability_run": {
+                    "capability_id": run.capability_id,
+                    "action": run.action,
+                    "ok": run.ok,
+                    "message": run.message,
+                    "error": run.error,
+                    "requires_confirmation": run.requires_confirmation,
+                    "data": run.data,
+                },
+                "stats": {"live_tool_route": "capability", "model": "capability-router", "timestamp": datetime.now().strftime("%H:%M:%S")},
+                "provenance": provenance,
+            }
 
         image_b64 = data.get("image_base64") or data.get("image")
         if isinstance(image_b64, str) and image_b64.startswith("data:") and "," in image_b64:
@@ -4444,6 +4478,8 @@ class MainWindow(QMainWindow):
         self.robot_update_connection_ok = False
         self.integration_event_log = IntegrationEventLog()
         self.integration_registry = self._create_integration_registry(mock_mode=True)
+        self.capability_manager = CapabilityManager(RUNTIME_DIR / "capabilities")
+        self.capability_workshop_path: Optional[Path] = None
         self.api_server = BX1RobotAPIServer(self.core)
         self.current_image_b64: Optional[str] = None
         self.chat_worker: Optional[ChatWorker] = None
@@ -5081,14 +5117,13 @@ class MainWindow(QMainWindow):
             OctoPrintConnector(IntegrationSettings(mock_mode=mock_mode)),
             SpotifyConnector(IntegrationSettings(mock_mode=mock_mode)),
             DanceService(IntegrationSettings(mock_mode=mock_mode)),
-            SupportAssistantConnector(IntegrationSettings(mock_mode=mock_mode)),
         ])
 
     def _build_integrations_workspace(self) -> QWidget:
         self.integrations_tabs = self._section_tabs([
             ("OctoPrint", self._build_octoprint_tab()),
             ("Spotify", self._build_spotify_tab()),
-            ("Support Assistant", self._build_support_assistant_tab()),
+            ("Capability Forge", self._build_capability_forge_tab()),
             ("Robot Behaviours", self._build_robot_behaviours_tab()),
             ("Activity Log", self._build_integration_activity_tab()),
         ])
@@ -5186,49 +5221,91 @@ class MainWindow(QMainWindow):
         self.spotify_volume_button.clicked.connect(lambda: self.integration_action_ui("spotify", "volume", self.spotify_status_text, {"volume": self.spotify_volume_slider.value()}, confirm=True))
         return w
 
-    def _build_support_assistant_tab(self) -> QWidget:
+    def _build_capability_forge_tab(self) -> QWidget:
         w = QWidget()
         w.setObjectName("CardPanel")
         layout = QVBoxLayout(w)
         layout.setContentsMargins(14, 14, 14, 14)
-        form_box = QGroupBox("Support Mention Responder")
+        form_box = QGroupBox("Capability Workshop")
         form = QFormLayout(form_box)
-        self.support_trigger_edit = QLineEdit("@John_Support")
-        self.support_groups_edit = QPlainTextEdit()
-        self.support_groups_edit.setMaximumHeight(90)
-        self.support_groups_edit.setPlainText("Field Tech Support")
-        self.support_draft_only_check = QCheckBox("Draft-only mode")
-        self.support_draft_only_check.setChecked(True)
-        form.addRow("Trigger mention", self.support_trigger_edit)
-        form.addRow("Approved groups", self.support_groups_edit)
-        form.addRow("Sending", self.support_draft_only_check)
+        self.capability_description_edit = QPlainTextEdit()
+        self.capability_description_edit.setMaximumHeight(76)
+        self.capability_description_edit.setPlaceholderText("Describe a capability, or import/create a package below.")
+        self.capability_type_combo = QComboBox()
+        for capability_type in ("integration", "tool", "behaviour", "hardware"):
+            self.capability_type_combo.addItem(capability_type)
+        self.capability_permissions_label = QLabel("Default permissions: NONE")
+        form.addRow("Capability description", self.capability_description_edit)
+        form.addRow("Capability type", self.capability_type_combo)
+        form.addRow("Requested permissions", self.capability_permissions_label)
         layout.addWidget(form_box)
 
         buttons = QHBoxLayout()
-        self.support_scan_button = QPushButton("Scan Mentions")
-        self.support_draft_button = QPushButton("Draft Reply")
-        self.support_send_button = QPushButton("Approve Send")
-        self.support_send_button.setObjectName("DangerButton")
-        buttons.addWidget(self.support_scan_button)
-        buttons.addWidget(self.support_draft_button)
-        buttons.addWidget(self.support_send_button)
+        self.capability_suggest_button = QPushButton("Suggest Capability")
+        self.capability_template_button = QPushButton("Create Addon Template")
+        self.capability_support_demo_button = QPushButton("Import Support Demo")
+        self.capability_import_button = QPushButton("Import User Addon")
+        self.capability_validate_button = QPushButton("Validate Addon")
+        self.capability_tests_button = QPushButton("Run Addon Tests")
+        self.capability_install_button = QPushButton("Approve and Install")
+        self.capability_quarantine_button = QPushButton("Reject and Quarantine")
+        self.capability_install_button.setObjectName("PrimaryButton")
+        self.capability_quarantine_button.setObjectName("DangerButton")
+        for button in (self.capability_suggest_button, self.capability_template_button, self.capability_support_demo_button, self.capability_import_button, self.capability_validate_button, self.capability_tests_button, self.capability_install_button, self.capability_quarantine_button):
+            buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
 
-        self.support_mentions_text = QPlainTextEdit()
-        self.support_mentions_text.setReadOnly(True)
-        self.support_mentions_text.setPlainText("Approved support mentions will appear here. Mock mode supplies one technical example.")
-        self.support_draft_text = QPlainTextEdit()
-        self.support_draft_text.setPlaceholderText("Drafted support reply will appear here for review/edit before sending.")
-        layout.addWidget(QLabel("Detected mentions"))
-        layout.addWidget(self.support_mentions_text, 1)
-        layout.addWidget(QLabel("Draft reply"))
-        layout.addWidget(self.support_draft_text, 1)
-        self.support_last_message: Dict[str, Any] = {}
-        self.support_last_draft_id = ""
-        self.support_scan_button.clicked.connect(self.scan_support_mentions_ui)
-        self.support_draft_button.clicked.connect(self.draft_support_reply_ui)
-        self.support_send_button.clicked.connect(self.send_support_reply_ui)
+        viewer_row = QSplitter(Qt.Orientation.Horizontal)
+        self.capability_manifest_view = QPlainTextEdit()
+        self.capability_manifest_view.setReadOnly(True)
+        self.capability_manifest_view.setPlainText("Manifest viewer")
+        self.capability_file_view = QPlainTextEdit()
+        self.capability_file_view.setReadOnly(True)
+        self.capability_file_view.setPlainText("Generated file viewer")
+        viewer_row.addWidget(self.capability_manifest_view)
+        viewer_row.addWidget(self.capability_file_view)
+        layout.addWidget(viewer_row, 1)
+
+        self.capability_result_text = QPlainTextEdit()
+        self.capability_result_text.setReadOnly(True)
+        self.capability_result_text.setPlainText("Safety scan, test result and mock execution output will appear here.")
+        layout.addWidget(self.capability_result_text, 1)
+
+        library_box = QGroupBox("Capability Library")
+        library_layout = QVBoxLayout(library_box)
+        self.capability_library_list = QListWidget()
+        library_layout.addWidget(self.capability_library_list, 1)
+        library_buttons = QHBoxLayout()
+        self.capability_refresh_button = QPushButton("Refresh")
+        self.capability_test_button = QPushButton("Test")
+        self.capability_enable_button = QPushButton("Enable")
+        self.capability_disable_button = QPushButton("Disable")
+        self.capability_rollback_button = QPushButton("Roll Back")
+        self.capability_export_button = QPushButton("Export")
+        self.capability_remove_button = QPushButton("Remove")
+        for button in (self.capability_refresh_button, self.capability_test_button, self.capability_enable_button, self.capability_disable_button, self.capability_rollback_button, self.capability_export_button, self.capability_remove_button):
+            library_buttons.addWidget(button)
+        library_buttons.addStretch(1)
+        library_layout.addLayout(library_buttons)
+        layout.addWidget(library_box, 1)
+
+        self.capability_suggest_button.clicked.connect(self.suggest_capability_package_ui)
+        self.capability_template_button.clicked.connect(self.create_capability_template_ui)
+        self.capability_support_demo_button.clicked.connect(self.create_support_capability_demo_ui)
+        self.capability_import_button.clicked.connect(self.import_user_capability_ui)
+        self.capability_validate_button.clicked.connect(self.validate_capability_workshop_ui)
+        self.capability_tests_button.clicked.connect(self.test_capability_workshop_ui)
+        self.capability_install_button.clicked.connect(self.install_capability_workshop_ui)
+        self.capability_quarantine_button.clicked.connect(self.quarantine_capability_workshop_ui)
+        self.capability_refresh_button.clicked.connect(self.refresh_capability_library_ui)
+        self.capability_test_button.clicked.connect(self.test_selected_capability_ui)
+        self.capability_enable_button.clicked.connect(self.enable_selected_capability_ui)
+        self.capability_disable_button.clicked.connect(self.disable_selected_capability_ui)
+        self.capability_rollback_button.clicked.connect(self.rollback_selected_capability_ui)
+        self.capability_export_button.clicked.connect(self.export_selected_capability_ui)
+        self.capability_remove_button.clicked.connect(self.remove_selected_capability_ui)
+        QTimer.singleShot(0, self.refresh_capability_library_ui)
         return w
 
     def _build_robot_behaviours_tab(self) -> QWidget:
@@ -5280,13 +5357,171 @@ class MainWindow(QMainWindow):
             connector.settings.session_secrets["api_key"] = self.octoprint_key_edit.text()
         return connector  # type: ignore[return-value]
 
-    def configure_support_assistant_from_ui(self) -> SupportAssistantConnector:
-        connector = self.integration_registry.get("support_mentions")
-        if isinstance(connector, SupportAssistantConnector):
-            connector.settings.values["trigger"] = self.support_trigger_edit.text().strip() or "@John_Support"
-            connector.settings.values["approved_groups"] = self.support_groups_edit.toPlainText()
-            connector.settings.values["draft_only"] = bool(self.support_draft_only_check.isChecked())
-        return connector  # type: ignore[return-value]
+    def show_capability_package_ui(self, package_path: Path) -> None:
+        self.capability_workshop_path = Path(package_path)
+        try:
+            manifest_text = (self.capability_workshop_path / "manifest.json").read_text(encoding="utf-8")
+            self.capability_manifest_view.setPlainText(manifest_text)
+        except Exception as exc:
+            self.capability_manifest_view.setPlainText(f"Could not load manifest: {exc}")
+        try:
+            self.capability_file_view.setPlainText((self.capability_workshop_path / "capability.py").read_text(encoding="utf-8"))
+        except Exception as exc:
+            self.capability_file_view.setPlainText(f"Could not load capability.py: {exc}")
+        self.capability_result_text.setPlainText(f"Workshop package selected:\n{self.capability_workshop_path}")
+
+    def suggest_capability_package_ui(self) -> None:
+        self.capability_description_edit.setPlainText(
+            "Suggested capability: Support Mention Responder\n\n"
+            "Scans approved support groups for @John_Support, drafts a technical reply, and keeps sending behind explicit approval."
+        )
+        self.capability_type_combo.setCurrentText("integration")
+        self.capability_permissions_label.setText("Requested permissions: NETWORK_CONTROL for approved sends only")
+        self.capability_result_text.setPlainText("Suggestion prepared. Press Import Support Demo to create the package in the workshop.")
+
+    def create_capability_template_ui(self) -> None:
+        path = self.capability_manager.create_addon_template("workshop_greeting")
+        self.show_capability_package_ui(path)
+        self.capability_result_text.appendPlainText("\nStarter addon template created. You can edit the files manually, then validate and install.")
+
+    def create_support_capability_demo_ui(self) -> None:
+        path = self.capability_manager.create_support_demo_package()
+        self.show_capability_package_ui(path)
+        self.capability_result_text.appendPlainText("\nSupport Mention Responder capability package imported into workshop.")
+
+    def import_user_capability_ui(self) -> None:
+        path, _ = QFileDialog.getOpenFileName(self, "Import capability ZIP", str(APP_DIR), "BX1 capabilities (*.zip);;All files (*.*)")
+        if path:
+            imported = self.capability_manager.import_addon(Path(path))
+            self.show_capability_package_ui(imported)
+
+    def validate_capability_workshop_ui(self) -> None:
+        if not self.capability_workshop_path:
+            QMessageBox.information(self, "Capability Forge", "Create or import a capability first.")
+            return
+        try:
+            result = self.capability_manager.validate_package(self.capability_workshop_path)
+            manifest = result["manifest"]
+            self.capability_result_text.setPlainText(
+                f"VALID\n\n{manifest.display_name} {manifest.version}\n"
+                f"Type: {manifest.capability_type}\nPermissions: {', '.join(manifest.permissions)}\n"
+                f"Triggers: {', '.join(manifest.trigger_phrases)}\nLimitations: {'; '.join(manifest.limitations)}\nCannot do: {'; '.join(manifest.cannot_do)}"
+            )
+        except Exception as exc:
+            self.capability_result_text.setPlainText(f"VALIDATION FAILED\n\n{exc}")
+
+    def test_capability_workshop_ui(self) -> None:
+        if not self.capability_workshop_path:
+            return
+        try:
+            result = self.capability_manager.run_tests(self.capability_workshop_path)
+            manifest = self.capability_manager.validate_package(self.capability_workshop_path)["manifest"]
+            first_action = manifest.actions[0].action_id
+            run = self.capability_manager.mock_execute(self.capability_workshop_path, first_action, confirmed=True)
+            self.capability_result_text.setPlainText(f"TESTS PASSED\n\n{result.get('stdout')}\n\nMOCK EXECUTION\n{self.format_capability_result(run)}")
+        except Exception as exc:
+            self.capability_result_text.setPlainText(f"TESTS FAILED\n\n{exc}")
+
+    def install_capability_workshop_ui(self) -> None:
+        if not self.capability_workshop_path:
+            return
+        answer = QMessageBox.question(
+            self,
+            "Install capability",
+            "Install this validated capability package?\n\nIt will appear in the Capability Library and can be disabled, removed or rolled back.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if answer != QMessageBox.StandardButton.Yes:
+            return
+        try:
+            record = self.capability_manager.install(self.capability_workshop_path, approved=True)
+            self.refresh_capability_library_ui()
+            QMessageBox.information(
+                self,
+                "CAPABILITY UNLOCKED",
+                f"{record.manifest.display_name}\n\nBX1 can now:\n- " + "\n- ".join(action.description or action.action_id for action in record.manifest.actions) + "\n\nSafety:\n- " + "\n- ".join(record.manifest.limitations),
+            )
+        except Exception as exc:
+            QMessageBox.warning(self, "Capability Forge", f"Install failed.\n\n{exc}")
+
+    def quarantine_capability_workshop_ui(self) -> None:
+        if not self.capability_workshop_path:
+            return
+        target = self.capability_manager.quarantine(self.capability_workshop_path, self.capability_result_text.toPlainText())
+        self.capability_result_text.setPlainText(f"Capability quarantined:\n{target}")
+        self.refresh_capability_library_ui()
+
+    def refresh_capability_library_ui(self) -> None:
+        if not hasattr(self, "capability_library_list"):
+            return
+        self.capability_library_list.clear()
+        for record in self.capability_manager.list_records():
+            item = QListWidgetItem(f"{record.manifest.display_name} {record.manifest.version} · {record.manifest.capability_type} · {record.state} · {', '.join(record.manifest.permissions)}")
+            item.setData(Qt.ItemDataRole.UserRole, record.manifest.capability_id)
+            item.setToolTip("Triggers: " + ", ".join(record.manifest.trigger_phrases) + "\nCannot do: " + "; ".join(record.manifest.cannot_do))
+            self.capability_library_list.addItem(item)
+
+    def selected_capability_id(self) -> str:
+        item = self.capability_library_list.currentItem() if hasattr(self, "capability_library_list") else None
+        return str(item.data(Qt.ItemDataRole.UserRole) or "") if item else ""
+
+    def format_capability_result(self, result: CapabilityRunResult) -> str:
+        return json.dumps({
+            "ok": result.ok,
+            "capability_id": result.capability_id,
+            "action": result.action,
+            "message": result.message,
+            "error": result.error,
+            "duration_s": round(result.duration_s, 3),
+            "requires_confirmation": result.requires_confirmation,
+            "data": result.data,
+        }, ensure_ascii=False, indent=2)
+
+    def test_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if not capability_id:
+            return
+        record = self.capability_manager.get_record(capability_id)
+        action = record.manifest.actions[0].action_id
+        result = self.capability_manager.execute_installed(capability_id, action, confirmed=True)
+        self.capability_result_text.setPlainText(self.format_capability_result(result))
+
+    def enable_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if capability_id:
+            self.capability_manager.enable(capability_id)
+            self.refresh_capability_library_ui()
+
+    def disable_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if capability_id:
+            self.capability_manager.disable(capability_id)
+            self.refresh_capability_library_ui()
+
+    def rollback_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if capability_id:
+            try:
+                self.capability_manager.rollback(capability_id)
+                self.refresh_capability_library_ui()
+            except Exception as exc:
+                QMessageBox.warning(self, "Capability rollback", str(exc))
+
+    def export_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if not capability_id:
+            return
+        folder = QFileDialog.getExistingDirectory(self, "Export capability package", str(APP_DIR))
+        if folder:
+            path = self.capability_manager.export(capability_id, Path(folder))
+            self.capability_result_text.setPlainText(f"Exported capability:\n{path}")
+
+    def remove_selected_capability_ui(self) -> None:
+        capability_id = self.selected_capability_id()
+        if capability_id:
+            self.capability_manager.remove(capability_id)
+            self.refresh_capability_library_ui()
 
     def log_integration_event(self, integration_id: str, level: str, message: str) -> None:
         secrets: List[str] = []
@@ -5342,50 +5577,6 @@ class MainWindow(QMainWindow):
 
     def run_octoprint_control_ui(self, action_id: str) -> None:
         self.integration_action_ui("octoprint", action_id, self.octoprint_info_text, confirm=True)
-
-    def scan_support_mentions_ui(self) -> None:
-        self.configure_support_assistant_from_ui()
-        result = self.integration_registry.execute("support_mentions", "scan_mentions")
-        matches = list((result.data or {}).get("matches") or [])
-        self.support_last_message = matches[0] if matches else {}
-        self.support_mentions_text.setPlainText(self.format_integration_result(result))
-        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
-
-    def draft_support_reply_ui(self) -> None:
-        self.configure_support_assistant_from_ui()
-        params = {"message": self.support_last_message} if self.support_last_message else {}
-        result = self.integration_registry.execute("support_mentions", "draft_reply", params)
-        draft = ((result.data or {}).get("draft") or {}) if result.ok else {}
-        self.support_last_draft_id = str(draft.get("draft_id") or "")
-        self.support_mentions_text.setPlainText(self.format_integration_result(result))
-        if draft:
-            notes = "\n".join(f"- {note}" for note in draft.get("notes") or [])
-            self.support_draft_text.setPlainText(f"{draft.get('reply_text')}\n\nNotes:\n{notes}")
-        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
-
-    def send_support_reply_ui(self) -> None:
-        self.configure_support_assistant_from_ui()
-        if not self.support_last_draft_id:
-            QMessageBox.information(self, "Support Assistant", "Draft a reply before sending.")
-            return
-        answer = QMessageBox.question(
-            self,
-            "Send support reply",
-            "Send this approved support reply to the approved group?\n\nDraft-only mode will still block sending if enabled.",
-            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
-            QMessageBox.StandardButton.No,
-        )
-        if answer != QMessageBox.StandardButton.Yes:
-            return
-        reply_text = self.support_draft_text.toPlainText().split("\n\nNotes:", 1)[0].strip()
-        result = self.integration_registry.execute(
-            "support_mentions",
-            "send_approved_reply",
-            {"draft_id": self.support_last_draft_id, "reply_text": reply_text},
-            confirmed=True,
-        )
-        self.support_mentions_text.setPlainText(self.format_integration_result(result))
-        self.log_integration_event("support_mentions", "info" if result.ok else "error", result.message or result.error_code)
 
     def connect_spotify_ui(self) -> None:
         connector = self.integration_registry.get("spotify")

@@ -598,16 +598,21 @@ class BehaviourStore:
 
     def match_explicit_request(self, message: str) -> Optional[str]:
         text = re.sub(r"\s+", " ", str(message or "").strip())
+        if not text:
+            return None
         patterns = (
-            r"^/behaviou?r\s+(.+)$",
-            r"^(?:please\s+)?(?:run|perform|start|play|execute)\s+(?:the\s+)?behaviou?r\s+(.+?)[.!?]*$",
-            r"^(?:please\s+)?show\s+(?:me\s+)?(?:the\s+)?behaviou?r\s+(.+?)[.!?]*$",
+            (r"^/behaviou?r\s+(.+)$", False),
+            (r"^(?:please\s+)?(?:run|perform|start|play|execute)\s+(?:the\s+)?behaviou?r\s+(.+?)[.!?]*$", False),
+            (r"^(?:please\s+)?show\s+(?:me\s+)?(?:the\s+)?behaviou?r\s+(.+?)[.!?]*$", False),
+            (r"^(?:please\s+)?(?:run|perform|start|play|execute|do|show\s+me)\s+(?:the\s+)?(.+?)(?:\s+(?:behaviou?r|routine|cue))?[.!?]*$", True),
         )
         requested = ""
-        for pattern in patterns:
+        broad_request = False
+        for pattern, is_broad in patterns:
             match = re.match(pattern, text, flags=re.IGNORECASE)
             if match:
                 requested = match.group(1).strip(" .!?\t\r\n")
+                broad_request = is_broad
                 break
         if not requested:
             return None
@@ -620,4 +625,9 @@ class BehaviourStore:
                 continue
             if str(item.get("display_name") or "").strip().lower() == requested.lower():
                 return str(item["name"])
-        return request_slug
+            for phrase in item.get("trigger_phrases") or []:
+                if str(phrase or "").strip().lower() == text.lower():
+                    return str(item["name"])
+                if requested and str(phrase or "").strip().lower() == requested.lower():
+                    return str(item["name"])
+        return None if broad_request else request_slug
