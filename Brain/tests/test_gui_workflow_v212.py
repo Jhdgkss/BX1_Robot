@@ -3,14 +3,19 @@ from __future__ import annotations
 import ast
 import unittest
 from pathlib import Path
+import sys
 
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
 SOURCE_PATH = ROOT / "main_pyqt.py"
 SOURCE = SOURCE_PATH.read_text(encoding="utf-8")
 TREE = ast.parse(SOURCE, str(SOURCE_PATH))
 MAIN = next(node for node in TREE.body if isinstance(node, ast.ClassDef) and node.name == "MainWindow")
 METHODS = {node.name: node for node in MAIN.body if isinstance(node, ast.FunctionDef)}
+
+from bx1_ui.app_shell import build_default_page_registry
 
 
 def method_source(name: str) -> str:
@@ -21,15 +26,25 @@ def method_source(name: str) -> str:
 class GuiWorkflowV212Tests(unittest.TestCase):
     def test_runtime_first_navigation_is_present(self) -> None:
         build_ui = method_source("_build_ui")
-        for label in ("Home", "Runtime", "Knowledge", "Skills", "Body", "System", "Studios", "Help"):
-            self.assertIn(f'("{label}",', build_ui)
+        registry = build_default_page_registry()
+        self.assertEqual(registry.page_ids(), ["home", "conversation", "knowledge", "capabilities", "integrations", "robot", "settings"])
+        for builder in (
+            "_build_home_workspace",
+            "_build_conversation_workspace",
+            "_build_knowledge_workspace",
+            "_build_capabilities_workspace",
+            "_build_integrations_workspace",
+            "_build_robot_workspace",
+            "_build_settings_workspace",
+        ):
+            self.assertIn(builder, build_ui)
         self.assertIn("_build_studios_workspace", SOURCE)
 
     def test_main_runtime_does_not_embed_duplicate_character_editors(self) -> None:
-        brain = method_source("_build_brain_workspace")
-        self.assertIn("_build_runtime_identity_voice_tab", brain)
-        self.assertNotIn("_build_identity_tab()", brain)
-        self.assertNotIn("_build_voice_memory_tab()", brain)
+        settings = method_source("_build_settings_workspace")
+        self.assertIn("_build_runtime_identity_voice_tab", settings)
+        self.assertNotIn("_build_identity_tab()", settings)
+        self.assertNotIn("_build_voice_memory_tab()", settings)
         self.assertIn("open_personality_studio_ui", method_source("open_identity_editor"))
         self.assertIn("open_dottts_lab_ui", method_source("open_voice_setup"))
 

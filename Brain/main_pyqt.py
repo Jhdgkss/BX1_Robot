@@ -238,6 +238,10 @@ from bx1_integrations.registry import IntegrationRegistry
 from bx1_integrations.spotify_connector import SpotifyConnector
 from bx1_capabilities.manager import CapabilityManager
 from bx1_capabilities.models import CapabilityRunResult
+from bx1_ui.app_shell import build_default_page_registry
+from bx1_ui.command_palette import CommandPaletteIndex
+from bx1_ui.common_widgets import make_status_card
+from bx1_ui.navigation import NavigationState
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -4575,60 +4579,52 @@ class MainWindow(QMainWindow):
         self.status_label = QLabel("●  Robot API offline")
         self.status_label.setObjectName("ApiStatusPill")
         self.status_label.setMinimumWidth(200)
-        self.profile_manager_button = QPushButton("Robot Profiles")
-        self.profile_manager_button.setObjectName("SecondaryButton")
-        self.profile_manager_button.setToolTip("Create, select or launch an independent robot profile")
-        self.open_studios_header_button = QPushButton("Studios")
-        self.open_studios_header_button.setObjectName("PrimaryButton")
+        self.command_palette_button = QPushButton("Search")
+        self.command_palette_button.setObjectName("PrimaryButton")
+        self.command_palette_button.setToolTip("Find a page or action")
         self.api_help_button = QPushButton("Connections")
         self.api_help_button.setObjectName("SecondaryButton")
         self.save_header_button = QPushButton("Save Runtime")
         self.save_header_button.setObjectName("SecondaryButton")
         self.save_header_button.setToolTip("Save runtime, service and connection settings")
-        self.clear_button = QPushButton("Clear Chat")
-        self.clear_button.setObjectName("SecondaryButton")
 
         header_layout.addLayout(title_box, 1)
         header_layout.addWidget(self.header_runtime_identity_label)
         header_layout.addWidget(self.status_label)
-        header_layout.addWidget(self.open_studios_header_button)
-        header_layout.addWidget(self.profile_manager_button)
+        header_layout.addWidget(self.command_palette_button)
         header_layout.addWidget(self.api_help_button)
         header_layout.addWidget(self.save_header_button)
-        header_layout.addWidget(self.clear_button)
         outer.addWidget(header)
 
         body = QHBoxLayout()
         body.setSpacing(8)
         outer.addLayout(body, 1)
 
-        sidebar = QWidget()
-        sidebar.setObjectName("SidebarPanel")
-        sidebar.setFixedWidth(224)
-        side = QVBoxLayout(sidebar)
+        self.page_registry = build_default_page_registry()
+        self.command_palette_index = CommandPaletteIndex(self.page_registry)
+        self.navigation_state = NavigationState(self.page_registry)
+
+        self.sidebar = QWidget()
+        self.sidebar.setObjectName("SidebarPanel")
+        self.sidebar.setFixedWidth(232)
+        side = QVBoxLayout(self.sidebar)
         side.setContentsMargins(8, 10, 8, 10)
         side.setSpacing(5)
-        self.sidebar_identity_label = QLabel(f"ROBOT BRAIN\n{robot_name_from_cfg(self.cfg)}")
+        self.sidebar_collapse_button = QPushButton("Collapse")
+        self.sidebar_collapse_button.setObjectName("SecondaryButton")
+        side.addWidget(self.sidebar_collapse_button)
+        self.sidebar_identity_label = QLabel(f"BX1 BRAIN\n{robot_name_from_cfg(self.cfg)}")
         self.sidebar_identity_label.setObjectName("SidebarIdentity")
         self.sidebar_identity_label.setWordWrap(True)
         side.addWidget(self.sidebar_identity_label)
         self.nav_buttons: List[QPushButton] = []
-        nav_items = [
-            ("Home", "Conversation and live status"),
-            ("Runtime", "Identity, voice and live tools"),
-            ("Knowledge", "Documents and memory"),
-            ("Skills", "Design bounded capabilities"),
-            ("Body", "Telemetry, camera and actions"),
-            ("Integrations", "External services and behaviours"),
-            ("System", "Health, services and settings"),
-            ("Studios", "Create and manage the robot"),
-            ("Help", "Setup and troubleshooting"),
-        ]
-        for index, (name, description) in enumerate(nav_items):
-            btn = QPushButton(f"{name}\n{description}")
+        self.page_order = self.page_registry.page_ids()
+        for index, page_def in enumerate(self.page_registry.pages()):
+            btn = QPushButton(f"{page_def.icon}  {page_def.display_name}")
             btn.setObjectName("WorkspaceNavButton")
             btn.setCheckable(True)
-            btn.setMinimumHeight(54)
+            btn.setMinimumHeight(42)
+            btn.setToolTip(", ".join(page_def.keywords))
             btn.clicked.connect(lambda checked=False, i=index: self.switch_workspace(i))
             self.nav_buttons.append(btn)
             side.addWidget(btn)
@@ -4639,33 +4635,41 @@ class MainWindow(QMainWindow):
         self.sidebar_profile_label.setObjectName("SidebarFooter")
         self.sidebar_profile_label.setWordWrap(True)
         side.addWidget(self.sidebar_profile_label)
-        body.addWidget(sidebar)
+        body.addWidget(self.sidebar)
+
+        content = QWidget()
+        content_layout = QVBoxLayout(content)
+        content_layout.setContentsMargins(0, 0, 0, 0)
+        content_layout.setSpacing(8)
+        self.page_title_label = QLabel("Home")
+        self.page_title_label.setObjectName("PageTitle")
+        content_layout.addWidget(self.page_title_label)
 
         self.workspace_stack = QStackedWidget()
         self.workspace_stack.setObjectName("WorkspaceStack")
         self.right_tabs = self.workspace_stack
-        body.addWidget(self.workspace_stack, 1)
+        content_layout.addWidget(self.workspace_stack, 1)
+        body.addWidget(content, 1)
 
         self.workspace_stack.addWidget(self._build_home_workspace())
-        self.workspace_stack.addWidget(self._build_brain_workspace())
-        self.workspace_stack.addWidget(self._build_library_workspace())
-        self.workspace_stack.addWidget(self._build_workshop_workspace())
-        self.workspace_stack.addWidget(self._build_body_workspace())
+        self.workspace_stack.addWidget(self._build_conversation_workspace())
+        self.workspace_stack.addWidget(self._build_knowledge_workspace())
+        self.workspace_stack.addWidget(self._build_capabilities_workspace())
         self.workspace_stack.addWidget(self._build_integrations_workspace())
-        self.workspace_stack.addWidget(self._build_diagnostics_workspace())
-        self.workspace_stack.addWidget(self._build_control_workspace())
-        self.help_tab_index = self.workspace_stack.addWidget(self._build_help_tab())
+        self.workspace_stack.addWidget(self._build_robot_workspace())
+        self.workspace_stack.addWidget(self._build_settings_workspace())
+        self.help_tab_index = 6
         self.switch_workspace(0)
 
+        self.command_palette_button.clicked.connect(self.open_command_palette_ui)
+        self.sidebar_collapse_button.clicked.connect(self.toggle_sidebar_ui)
         self.api_help_button.clicked.connect(self.show_api_urls)
-        self.profile_manager_button.clicked.connect(self.open_profile_manager)
-        self.open_studios_header_button.clicked.connect(lambda: self.switch_workspace(7))
         self.save_header_button.clicked.connect(self.save_settings)
-        self.clear_button.clicked.connect(self.chat_view.clear)
         self.send_button.clicked.connect(self.send_chat)
         self.repeat_button.clicked.connect(self.repeat_last_response)
         self.attach_button.clicked.connect(self.attach_image)
         self.analyse_camera_button.clicked.connect(self.ask_about_camera_frame)
+        self.clear_button.clicked.connect(self.chat_view.clear)
 
         menu = self.menuBar()
         file_menu = menu.addMenu("File")
@@ -4680,11 +4684,15 @@ class MainWindow(QMainWindow):
         voice_lab_action.triggered.connect(self.open_dottts_lab_ui)
         file_menu.addAction(voice_lab_action)
 
-        view_menu = menu.addMenu("Workspaces")
-        for index, button in enumerate(self.nav_buttons):
-            action = QAction(button.text().split("\n", 1)[0], self)
+        view_menu = menu.addMenu("Pages")
+        for index, page_def in enumerate(self.page_registry.pages()):
+            action = QAction(page_def.display_name, self)
             action.triggered.connect(lambda checked=False, i=index: self.switch_workspace(i))
             view_menu.addAction(action)
+        search_action = QAction("Search Pages", self)
+        search_action.triggered.connect(self.open_command_palette_ui)
+        view_menu.addSeparator()
+        view_menu.addAction(search_action)
         help_menu = menu.addMenu("Help")
         guide_action = QAction("Open Built-in Guide", self)
         guide_action.triggered.connect(self.show_help_tab)
@@ -4741,11 +4749,48 @@ class MainWindow(QMainWindow):
         """Open the active personality's Voice Lab."""
         self.open_dottts_lab_ui()
 
-    def switch_workspace(self, index: int) -> None:
-        index = max(0, min(index, self.workspace_stack.count() - 1))
+    def switch_workspace(self, index: Any) -> None:
+        if isinstance(index, str):
+            page_id = self.page_registry.canonical_id(index)
+            index = self.page_order.index(page_id) if page_id in self.page_order else 0
+        index = max(0, min(int(index), self.workspace_stack.count() - 1))
+        page_id = self.page_order[index] if index < len(getattr(self, "page_order", [])) else "home"
+        try:
+            self.navigation_state.select(page_id)
+        except Exception as exc:
+            QMessageBox.information(self, "Page unavailable", str(exc))
+            return
         self.workspace_stack.setCurrentIndex(index)
         for i, button in enumerate(getattr(self, "nav_buttons", [])):
             button.setChecked(i == index)
+        if hasattr(self, "page_title_label"):
+            page = self.page_registry.get(page_id)
+            self.page_title_label.setText(f"{page.icon}  {page.display_name}")
+
+    def toggle_sidebar_ui(self) -> None:
+        collapsed = self.navigation_state.toggle_collapsed()
+        self.sidebar.setFixedWidth(74 if collapsed else 232)
+        self.sidebar_identity_label.setVisible(not collapsed)
+        self.sidebar_profile_label.setVisible(not collapsed)
+        self.sidebar_collapse_button.setText("Open" if collapsed else "Collapse")
+        for button, page in zip(self.nav_buttons, self.page_registry.pages()):
+            button.setText(page.icon if collapsed else f"{page.icon}  {page.display_name}")
+            button.setToolTip(page.display_name + "\n" + ", ".join(page.keywords))
+
+    def open_command_palette_ui(self) -> None:
+        query, ok = QInputDialog.getText(self, "Search BX1", "Find a page or action")
+        if not ok:
+            return
+        matches = self.command_palette_index.search(query)
+        if not matches:
+            QMessageBox.information(self, "Search BX1", "No matching page or action found.")
+            return
+        labels = [f"{match.page.icon} {match.page.display_name}  -  {', '.join(match.page.keywords[:3])}" for match in matches]
+        selected, ok = QInputDialog.getItem(self, "Search BX1", "Open", labels, 0, False)
+        if not ok:
+            return
+        selected_index = labels.index(selected)
+        self.switch_workspace(matches[selected_index].page.page_id)
 
     def _section_tabs(self, pages: List[tuple[str, QWidget]]) -> QTabWidget:
         tabs = QTabWidget()
@@ -4810,15 +4855,18 @@ class MainWindow(QMainWindow):
         self.attach_button.setObjectName("SecondaryButton")
         self.analyse_camera_button = QPushButton("Use Last Camera Frame")
         self.analyse_camera_button.setObjectName("SecondaryButton")
+        self.clear_button = QPushButton("Clear Chat")
+        self.clear_button.setObjectName("SecondaryButton")
         buttons.addWidget(self.send_button)
         buttons.addWidget(self.repeat_button)
         buttons.addWidget(self.attach_button)
         buttons.addWidget(self.analyse_camera_button)
+        buttons.addWidget(self.clear_button)
         buttons.addStretch(1)
         chat_layout.addLayout(buttons)
         return chat_panel
 
-    def _build_home_workspace(self) -> QWidget:
+    def _build_legacy_home_workspace(self) -> QWidget:
         page = QWidget()
         layout = QHBoxLayout(page)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -4864,9 +4912,9 @@ class MainWindow(QMainWindow):
         voice_button = QPushButton("Voice Lab")
         voice_button.clicked.connect(self.open_dottts_lab_ui)
         studios_button = QPushButton("All Studios")
-        studios_button.clicked.connect(lambda: self.switch_workspace(6))
+        studios_button.clicked.connect(lambda: self.switch_workspace("settings"))
         diagnostic_button = QPushButton("System Health")
-        diagnostic_button.clicked.connect(lambda: self.switch_workspace(5))
+        diagnostic_button.clicked.connect(lambda: self.switch_workspace("robot"))
         quick_row.addWidget(personality_button, 0, 0)
         quick_row.addWidget(voice_button, 0, 1)
         quick_row.addWidget(studios_button, 1, 0)
@@ -4882,6 +4930,81 @@ class MainWindow(QMainWindow):
         grid.setRowStretch(7, 1)
         layout.addWidget(summary, 2)
         return page
+
+    def _build_home_workspace(self) -> QWidget:
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(10)
+        welcome = QLabel(f"{robot_name_from_cfg(self.cfg)} Brain Dashboard")
+        welcome.setObjectName("MissionWelcome")
+        layout.addWidget(welcome)
+
+        self.home_identity_summary_label = QLabel("Loading active identity...")
+        self.home_identity_summary_label.setObjectName("RuntimeIdentityPanel")
+        self.home_identity_summary_label.setWordWrap(True)
+        layout.addWidget(self.home_identity_summary_label)
+
+        cards = [
+            ("BRAIN", "Brain Online", "Model and runtime readiness"),
+            ("BODY", "Robot", "Connection and telemetry"),
+            ("VOICE", "Voice Ready", "TTS and selected voice"),
+            ("MODEL", "Model", str(self.cfg.get("model") or DEFAULT_CONFIG["model"])),
+            ("PERSONALITY", "Personality", "Active profile"),
+            ("LIBRARY", "Knowledge", "Documents and memory"),
+            ("SKILLS", "Capabilities", "Behaviours and addons"),
+            ("INTEGRATIONS", "Integrations", "OctoPrint, Spotify and services"),
+        ]
+        self.mission_cards: Dict[str, QPushButton] = {}
+        card_grid = QGridLayout()
+        card_grid.setSpacing(10)
+        for i, (key, title, description) in enumerate(cards):
+            card = QPushButton(f"{title}\n{description}")
+            card.setObjectName("MissionCard")
+            card.setMinimumHeight(78)
+            card.clicked.connect(lambda checked=False, k=key: self.open_mission_card(k))
+            self.mission_cards[key] = card
+            card_grid.addWidget(card, i // 4, i % 4)
+        layout.addLayout(card_grid)
+
+        lower = QHBoxLayout()
+        quick = QGroupBox("Quick actions")
+        quick_row = QGridLayout(quick)
+        continue_button = QPushButton("Continue Conversation")
+        continue_button.setObjectName("PrimaryButton")
+        continue_button.clicked.connect(lambda: self.switch_workspace("conversation"))
+        test_voice_button = QPushButton("Test Voice")
+        test_voice_button.clicked.connect(self.test_voice_ui)
+        robot_status_button = QPushButton("Open Robot Status")
+        robot_status_button.clicked.connect(lambda: self.switch_workspace("robot"))
+        capability_button = QPushButton("Open Capability Forge")
+        capability_button.clicked.connect(lambda: self.switch_workspace("capabilities"))
+        quick_row.addWidget(continue_button, 0, 0)
+        quick_row.addWidget(test_voice_button, 0, 1)
+        quick_row.addWidget(robot_status_button, 1, 0)
+        quick_row.addWidget(capability_button, 1, 1)
+        lower.addWidget(quick, 1)
+
+        activity = QGroupBox("Recent activity and warnings")
+        activity_layout = QVBoxLayout(activity)
+        self.home_warning_label = QLabel("No warnings requiring attention.")
+        self.home_warning_label.setObjectName("HintLabel")
+        self.home_warning_label.setWordWrap(True)
+        self.home_recent_activity = QPlainTextEdit()
+        self.home_recent_activity.setReadOnly(True)
+        self.home_recent_activity.setMaximumHeight(160)
+        self.home_recent_activity.setPlainText("No recent activity yet.")
+        activity_layout.addWidget(self.home_warning_label)
+        activity_layout.addWidget(self.home_recent_activity)
+        lower.addWidget(activity, 2)
+        layout.addLayout(lower, 1)
+        return page
+
+    def _build_conversation_workspace(self) -> QWidget:
+        return self._build_chat_panel()
+
+    def _build_knowledge_workspace(self) -> QWidget:
+        return self._build_library_workspace()
 
     def _build_brain_workspace(self) -> QWidget:
         self.brain_tabs = self._section_tabs([
@@ -5112,6 +5235,55 @@ class MainWindow(QMainWindow):
         ])
         return self.body_tabs
 
+    def _build_capabilities_workspace(self) -> QWidget:
+        self.capabilities_tabs = self._section_tabs([
+            ("Behaviour Forge", self._build_workshop_workspace()),
+            ("Capability Workshop", self._build_capability_forge_tab()),
+            ("Installed Behaviours", self._build_robot_behaviours_tab()),
+            ("Capability Activity", self._build_capability_activity_tab()),
+        ])
+        return self.capabilities_tabs
+
+    def _build_capability_activity_tab(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("CardPanel")
+        layout = QVBoxLayout(panel)
+        layout.setContentsMargins(14, 14, 14, 14)
+        title = QLabel("Capability activity")
+        title.setObjectName("SectionTitle")
+        hint = QLabel("Capability validation, install and mock execution results appear in the Capability Workshop and Library panels. A consolidated activity feed can be added here without mixing it into integration logs.")
+        hint.setObjectName("HintLabel")
+        hint.setWordWrap(True)
+        self.capability_activity_text = QPlainTextEdit()
+        self.capability_activity_text.setReadOnly(True)
+        self.capability_activity_text.setPlainText("No capability activity has been recorded in this session.")
+        layout.addWidget(title)
+        layout.addWidget(hint)
+        layout.addWidget(self.capability_activity_text, 1)
+        return panel
+
+    def _build_robot_workspace(self) -> QWidget:
+        self.robot_tabs = self._section_tabs([
+            ("Robot Status", self._build_telemetry_tab()),
+            ("Camera", self._build_camera_tab()),
+            ("Hardware Controls", self._build_actions_tab()),
+            ("Diagnostics", self._build_diagnostics_tab()),
+            ("Robot Updates", self._build_robot_updates_tab()),
+        ])
+        return self.robot_tabs
+
+    def _build_settings_workspace(self) -> QWidget:
+        self.settings_tabs = self._section_tabs([
+            ("Personalities", self._build_runtime_identity_voice_tab()),
+            ("Voice and TTS", self._build_voice_service_settings_tab()),
+            ("Models / API / Theme", self._build_settings_tab()),
+            ("Maintenance", self._build_maintenance_tab()),
+            ("Robot Profile", self._build_identity_summary_panel()),
+            ("Studios", self._build_studios_workspace()),
+            ("Help", self._build_help_tab()),
+        ])
+        return self.settings_tabs
+
     def _create_integration_registry(self, *, mock_mode: bool = True) -> IntegrationRegistry:
         return IntegrationRegistry.load_defaults([
             OctoPrintConnector(IntegrationSettings(mock_mode=mock_mode)),
@@ -5123,8 +5295,6 @@ class MainWindow(QMainWindow):
         self.integrations_tabs = self._section_tabs([
             ("OctoPrint", self._build_octoprint_tab()),
             ("Spotify", self._build_spotify_tab()),
-            ("Capability Forge", self._build_capability_forge_tab()),
-            ("Robot Behaviours", self._build_robot_behaviours_tab()),
             ("Activity Log", self._build_integration_activity_tab()),
         ])
         return self.integrations_tabs
@@ -6254,25 +6424,25 @@ class MainWindow(QMainWindow):
             (
                 "Knowledge Manager",
                 "Add, index, search and maintain local documents and the active robot profile's memory.",
-                lambda: self.switch_workspace(2),
+                lambda: self.switch_workspace("knowledge"),
                 False,
             ),
             (
                 "Capability Forge",
                 "Design and approve bounded robot behaviours. This becomes the foundation for the forthcoming permission-controlled skill system.",
-                lambda: self.switch_workspace(3),
+                lambda: self.switch_workspace("capabilities"),
                 False,
             ),
             (
                 "Body Wake & Queued Speech",
                 "Configure wake identity and generate local acknowledgement or waiting phrases for the robot body.",
-                lambda: (self.switch_workspace(1), self.brain_tabs.setCurrentIndex(2)),
+                lambda: (self.switch_workspace("settings"), self.settings_tabs.setCurrentIndex(1)),
                 False,
             ),
             (
                 "Theme & System Settings",
                 "Manage models, API connections, appearance and shared service settings without editing the personality prompt.",
-                lambda: self.switch_workspace(5),
+                lambda: self.switch_workspace("settings"),
                 False,
             ),
             (
@@ -7795,10 +7965,9 @@ class MainWindow(QMainWindow):
             self.document_search_results.setPlainText(f"Document search failed: {exc}")
 
     def show_help_tab(self) -> None:
-        if hasattr(self, "workspace_stack") and hasattr(self, "help_tab_index"):
-            self.switch_workspace(int(self.help_tab_index))
-        elif hasattr(self, "right_tabs") and hasattr(self, "help_tab_index"):
-            self.right_tabs.setCurrentIndex(int(self.help_tab_index))
+        self.switch_workspace("settings")
+        if hasattr(self, "settings_tabs"):
+            self.settings_tabs.setCurrentIndex(self.settings_tabs.count() - 1)
 
     def _build_body_voice_tab(self) -> QWidget:
         """Brain-owned wake phrases and pre-generated speech stored on the body."""
@@ -8623,12 +8792,17 @@ class MainWindow(QMainWindow):
             QWidget#SidebarPanel {{ background: {theme['panel']}; border: 1px solid {theme['border']}; border-radius: 14px; }}
             QLabel#SidebarIdentity {{ color: {theme['title']}; font-size: 13pt; font-weight: 750; padding: 10px; border-bottom: 1px solid {theme['border']}; }}
             QLabel#SidebarFooter {{ color: {theme['muted']}; background: {theme['input']}; border: 1px solid {theme['border']}; border-radius: 10px; padding: 9px; }}
+            QLabel#PageTitle {{ color: {theme['title']}; font-size: 16pt; font-weight: 750; padding: 2px 4px 6px 4px; }}
             QPushButton#WorkspaceNavButton {{ text-align: left; padding: 8px 12px; border-radius: 9px; background: transparent; border: 1px solid transparent; color: {theme['text']}; font-weight: 600; }}
             QPushButton#WorkspaceNavButton:hover {{ background: {theme['tab']}; border-color: {theme['border']}; }}
             QPushButton#WorkspaceNavButton:checked {{ background: {theme['tab_selected']}; border-color: {theme['accent']}; color: {theme['title']}; }}
             QLabel#MissionWelcome {{ color: {theme['title']}; font-size: 18pt; font-weight: 750; padding: 8px; }}
             QLabel#MissionCard, QPushButton#MissionCard {{ background: {theme['input']}; color: {theme['text']}; border: 1px solid {theme['border']}; border-radius: 12px; padding: 14px; font-size: 10.5pt; text-align: left; }}
             QPushButton#MissionCard:hover {{ border: 1px solid {theme['accent']}; background: {theme['input2']}; }}
+            QFrame#StatusCard {{ background: {theme['input']}; border: 1px solid {theme['border']}; border-radius: 10px; }}
+            QLabel#StatusCardTitle {{ color: {theme['muted']}; font-size: 8.5pt; font-weight: 650; }}
+            QLabel#StatusCardValue {{ color: {theme['title']}; font-size: 14pt; font-weight: 750; }}
+            QLabel#StatusCardDetail {{ color: {theme['muted']}; font-size: 9pt; }}
             QLabel#MissionNote {{ color: {theme['muted']}; background: {theme['hint_bg']}; border: 1px solid {theme['hint_border']}; border-radius: 10px; padding: 12px; }}
             QLabel#AppTitle {{ color: {theme['title']}; font-size: 20pt; font-weight: 750; letter-spacing: 0.5px; }}
             QLabel#AppSubtitle {{ color: {theme['muted']}; font-size: 9.5pt; }}
@@ -9212,23 +9386,31 @@ class MainWindow(QMainWindow):
     def open_mission_card(self, key: str) -> None:
         key = str(key or "").upper()
         if key == "BRAIN":
-            self.switch_workspace(1)
-            self.brain_tabs.setCurrentIndex(1)
+            self.switch_workspace("settings")
+            self.settings_tabs.setCurrentIndex(2)
         elif key == "BODY":
-            self.switch_workspace(4)
-            self.body_tabs.setCurrentIndex(0)
+            self.switch_workspace("robot")
+            self.robot_tabs.setCurrentIndex(0)
         elif key == "LIBRARY":
-            self.switch_workspace(2)
+            self.switch_workspace("knowledge")
         elif key == "VOICE":
-            self.switch_workspace(1)
-            self.brain_tabs.setCurrentIndex(0)
+            self.switch_workspace("settings")
+            self.settings_tabs.setCurrentIndex(1)
         elif key == "CAMERA":
-            self.switch_workspace(4)
-            self.body_tabs.setCurrentIndex(1)
+            self.switch_workspace("robot")
+            self.robot_tabs.setCurrentIndex(1)
+        elif key == "MODEL":
+            self.switch_workspace("settings")
+            self.settings_tabs.setCurrentIndex(2)
+        elif key == "PERSONALITY":
+            self.switch_workspace("settings")
+            self.settings_tabs.setCurrentIndex(0)
         elif key in {"WORKSHOP", "SKILLS"}:
-            self.switch_workspace(3)
+            self.switch_workspace("capabilities")
+        elif key == "INTEGRATIONS":
+            self.switch_workspace("integrations")
 
-    def refresh_mission_cards(self) -> None:
+    def refresh_legacy_mission_cards(self) -> None:
         cards = getattr(self, "mission_cards", {})
         if not cards:
             return
@@ -9257,6 +9439,50 @@ class MainWindow(QMainWindow):
         skill_card = cards.get("SKILLS") or cards.get("WORKSHOP")
         if skill_card is not None:
             skill_card.setText(f"SKILLS\n{coding} · {behaviour_count} installed behaviours")
+        self.refresh_runtime_identity_panel()
+
+    def refresh_mission_cards(self) -> None:
+        cards = getattr(self, "mission_cards", {})
+        if not cards:
+            return
+        try:
+            health = self.core.ollama_health(timeout_s=0.45, max_cache_age_s=30)
+            model = str(self.cfg.get("model") or DEFAULT_CONFIG["model"])
+            if "BRAIN" in cards:
+                cards["BRAIN"].setText(f"Brain Online\nOllama {'online' if health.get('ok') else 'offline'} - {model}")
+        except Exception:
+            if "BRAIN" in cards:
+                cards["BRAIN"].setText("Brain Online\nOllama status unavailable")
+        state = self.core.latest_body_context()
+        if "BODY" in cards:
+            cards["BODY"].setText("Robot\nConnected - fresh telemetry" if state else "Robot\nDisconnected / telemetry stale")
+        try:
+            status = self.core.document_store.status()
+            documents = int(status.get("document_count") or 0)
+            sections = int(status.get("chunk_count") or 0)
+            if "LIBRARY" in cards:
+                cards["LIBRARY"].setText(f"Knowledge\n{documents} documents - {sections} indexed sections")
+        except Exception:
+            if "LIBRARY" in cards:
+                cards["LIBRARY"].setText("Knowledge\nStatus unavailable")
+        voice_name = str(self.cfg.get("selected_voice_profile") or "Configured voice")
+        stt = self.core.stt_service.status()
+        stt_label = "Whisper ready" if stt.get("loaded") else ("Whisper loading" if stt.get("loading") else ("Whisper install needed" if not stt.get("package_available") else "Whisper standby"))
+        if "VOICE" in cards:
+            cards["VOICE"].setText(f"Voice Ready\n{voice_name} - {stt_label}")
+        if "MODEL" in cards:
+            cards["MODEL"].setText(f"Model\n{str(self.cfg.get('model') or DEFAULT_CONFIG['model'])}")
+        if "PERSONALITY" in cards:
+            cards["PERSONALITY"].setText(f"Personality\n{str(self.cfg.get('selected_personality_profile') or 'Active profile')}")
+        coding = str(self.cfg.get("coding_model") or DEFAULT_CONFIG["coding_model"])
+        behaviour_count = int(self.core.behaviour_store.status().get("installed_count") or 0)
+        if "SKILLS" in cards:
+            cards["SKILLS"].setText(f"Capabilities\n{behaviour_count} behaviours - {coding}")
+        if "INTEGRATIONS" in cards:
+            active = len(self.integration_registry.all())
+            cards["INTEGRATIONS"].setText(f"Integrations\n{active} connectors available")
+        if hasattr(self, "home_recent_activity"):
+            self.home_recent_activity.setPlainText("Recent conversation and service events appear here during this session.")
         self.refresh_runtime_identity_panel()
 
     def workshop_mode(self) -> str:
