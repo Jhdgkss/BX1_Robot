@@ -48,6 +48,12 @@ from audio_io import (
     set_alsa_capture_volume,
     transcribe_wav_with_vosk,
 )
+from bx1 import bootstrap_bx1_runtime, bx1
+from bx1_core import (
+    BootstrapError,
+    BootstrapResult,
+    CompatibilityServiceAdapter,
+)
 from bx1_robot_client import BX1BrainClient, BrainClientConfig, now_iso
 from camera_io import CameraCapture, CameraConfig
 from hardware_bridge import BX1HardwareBridge
@@ -712,6 +718,65 @@ def load_config() -> Dict[str, Any]:
     return cfg
 
 
+def resolve_runtime_hardware(
+    config: Dict[str, Any],
+    bx1_os: Optional[Any] = None,
+    *,
+    fallback_factory=BX1HardwareBridge,  # type: ignore[no-untyped-def]
+) -> Any:
+    """Resolve the legacy bridge through BX1, retaining the old fallback."""
+
+    if bx1_os is not None:
+        services = getattr(bx1_os, "services", None)
+        if services is not None and services.has("runtime_hardware"):
+            return bx1_os.service("runtime_hardware")
+    return fallback_factory(config)
+
+
+def bootstrap_robot_runtime(
+    config: Optional[Dict[str, Any]] = None,
+    *,
+    hardware_factory=BX1HardwareBridge,  # type: ignore[no-untyped-def]
+) -> BootstrapResult:
+    """Build the validated BX1 OS Alpha graph without starting Robot loops."""
+
+    return bootstrap_bx1_runtime(
+        config,
+        config_loader=None if config is not None else load_config,
+        config_source=str(CONFIG_PATH),
+        service_factories={
+            "runtime_hardware": lambda _root, loaded: CompatibilityServiceAdapter(
+                "runtime_hardware",
+                hardware_factory(dict(loaded)),
+            )
+        },
+        service_dependencies={
+            "runtime_hardware": {"events", "logging"},
+        },
+        required_services={"runtime_hardware"},
+    )
+
+
+def create_robot_body_service(
+    config: Optional[Dict[str, Any]] = None,
+) -> "BX1RobotBodyService":
+    try:
+        bootstrap = bootstrap_robot_runtime(config)
+    except BootstrapError as exc:
+        print("[bx1-os] BX1 OS Alpha startup validation failed")
+        print(json.dumps(exc.report, indent=2, sort_keys=True, default=str))
+        raise
+    print(
+        "[bx1-os] BX1 OS Alpha ready: "
+        f"{len(bootstrap.report['registered_services'])} services, "
+        f"{bootstrap.report['duration_ms']:.1f} ms"
+    )
+    return BX1RobotBodyService(
+        bootstrap.configuration,
+        bx1_os=bx1,
+    )
+
+
 def clamp(value: float, lo: float, hi: float) -> float:
     return max(lo, min(hi, value))
 
@@ -821,8 +886,14 @@ def load_robot_profile_file(config: Dict[str, Any]) -> Dict[str, Any]:
 
 
 class BX1RobotBodyService:
-    def __init__(self, config: Dict[str, Any]) -> None:
+    def __init__(
+        self,
+        config: Dict[str, Any],
+        *,
+        bx1_os: Optional[Any] = None,
+    ) -> None:
         self.cfg = config
+        self.bx1 = bx1_os
         self.hardware_registry = normalise_hardware_registry(self.cfg.get("hardware_registry", self.cfg.get("hardware_map", {})))
         self.hardware_map = legacy_hardware_map_from_registry(self.hardware_registry)
         self.cfg["hardware_registry"] = self.hardware_registry
@@ -837,7 +908,7 @@ class BX1RobotBodyService:
         self.robot_name = "Robot Body"
         self.apply_robot_profile_to_config(save=False)
         self.stop_event = threading.Event()
-        self.hardware = BX1HardwareBridge()
+        self.hardware = resolve_runtime_hardware(config, self.bx1)
         self.brain = BX1BrainClient(BrainClientConfig(
             base_url=str(config.get("brain_base_url", "") or "").strip(),
             api_key=str(config.get("api_key", "")),
@@ -2349,6 +2420,18 @@ class BX1RobotBodyService:
             "imu_read_failures": int(state.get("imu_read_failures", 0) or 0),
             "imu_last_update_age_ms": state.get("imu_last_update_age_ms"),
             "mcu_ok": bool(state.get("mcu_ok", False)),
+            "mcu_transport_connected": bool(state.get("mcu_transport_connected", False)),
+            "mcu_heartbeat_fresh": bool(state.get("mcu_heartbeat_fresh", False)),
+            "mcu_last_update_age_ms": state.get("mcu_last_update_age_ms"),
+            "mcu_data_stale": bool(state.get("mcu_data_stale", True)),
+            "mcu_health_reason": str(state.get("mcu_health_reason") or ""),
+            "imu_present": bool(state.get("imu_present", False)),
+            "imu_initialised": bool(state.get("imu_initialised", False)),
+            "imu_sample_fresh": bool(state.get("imu_sample_fresh", False)),
+            "imu_sample_age_ms": state.get("imu_sample_age_ms"),
+            "imu_data_stale": bool(state.get("imu_data_stale", True)),
+            "imu_healthy": bool(state.get("imu_healthy", False)),
+            "imu_health_reason": str(state.get("imu_health_reason") or ""),
             "pitch_deg": pitch,
             "roll_deg": roll,
             "yaw_deg": state.get("yaw_deg", state.get("yaw")),
@@ -4994,9 +5077,10 @@ class BX1RobotBodyService:
         return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
     def web_snapshot(self) -> Dict[str, Any]:
-        state = self.latest_state or self.read_body_state()
+        state = self.hardware.validate_cached_status(self.latest_state) if self.latest_state else self.read_body_state()
         return {
             "ok": True,
+            "bx1_os": self.bx1_os_diagnostics(),
             "state": state,
             "events": list(self.web_events),
             "input_events": list(self.input_events),
@@ -5030,6 +5114,39 @@ class BX1RobotBodyService:
                 "port": int(self.cfg.get("web_port", 8088)),
             },
         }
+
+    def bx1_os_diagnostics(self) -> Dict[str, Any]:
+        if self.bx1 is None:
+            return {
+                "milestone": "legacy runtime fallback",
+                "integrated": False,
+                "startup_validated": False,
+            }
+        try:
+            startup = self.bx1.startup_report()
+            return {
+                "milestone": "BX1 OS Alpha",
+                "integrated": True,
+                "startup_validated": bool(startup.get("success", False)),
+                "startup": startup,
+                "status": self.bx1.status(),
+                "service_registry": self.bx1.services.status(),
+                "events": self.bx1.events.status(),
+                "communication": self.bx1.communication.status(),
+                "scheduler": self.bx1.scheduler.status(),
+                "diagnostics": self.bx1.diagnostics.status(),
+                "health": self.bx1.health.status(),
+                "runtime_hardware": self.bx1.service(
+                    "runtime_hardware"
+                ).status(),
+            }
+        except Exception as exc:
+            return {
+                "milestone": "BX1 OS Alpha",
+                "integrated": True,
+                "startup_validated": False,
+                "error": str(exc),
+            }
 
     def web_update_brain_settings(self, data: Dict[str, Any], client_ip: Optional[str] = None) -> Dict[str, Any]:
         """Update and save the Brain App connection from the web UI without restarting.
@@ -6017,6 +6134,14 @@ class BX1RobotBodyService:
         return {"ok": bool(handled), "handled": bool(handled), "command": command}
 
     def tick(self) -> None:
+        if self.bx1 is not None:
+            result = self.bx1.tick()
+            if result.get("failures"):
+                self.web_log(
+                    "error",
+                    "BX1 scheduler callback failure",
+                    {"failures": result["failures"]},
+                )
         time.sleep(0.25)
 
     def stop(self) -> None:
@@ -6026,6 +6151,11 @@ class BX1RobotBodyService:
                 self.web_server.stop()
             except Exception:
                 pass
+        if self.bx1 is not None:
+            try:
+                self.bx1.services.stop_all()
+            except Exception as exc:
+                self.web_log("error", f"BX1 service shutdown failed: {exc}")
 
 
 SERVICE: Optional[BX1RobotBodyService] = None
@@ -6033,14 +6163,13 @@ SERVICE: Optional[BX1RobotBodyService] = None
 
 def run_service_standalone() -> None:
     global SERVICE
-    cfg = load_config()
+    SERVICE = create_robot_body_service()
+    cfg = SERVICE.cfg
     print(f"[body] config: {CONFIG_PATH}")
     print(f"[body] web: {cfg.get('web_host', '0.0.0.0')}:{cfg.get('web_port', 8088)}")
     if cfg.get("brain_base_url"):
         print(f"[body] brain: {cfg.get('brain_base_url')}")
     print("[body] identity/personality: managed by Robot Brain, not Arduino body client")
-    SERVICE = BX1RobotBodyService(cfg)
-
     def handle_signal(signum, frame):  # type: ignore[no-untyped-def]
         print(f"[bx1] signal {signum}; stopping")
         if SERVICE:
@@ -6056,7 +6185,7 @@ def run_service_standalone() -> None:
 def app_lab_loop() -> None:
     global SERVICE
     if SERVICE is None:
-        SERVICE = BX1RobotBodyService(load_config())
+        SERVICE = create_robot_body_service()
         SERVICE.start()
     SERVICE.tick()
 

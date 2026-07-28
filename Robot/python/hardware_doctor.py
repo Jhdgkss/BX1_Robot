@@ -76,6 +76,8 @@ class BX1HardwareDoctor:
 
     def diagnose(self, body_state: Optional[dict[str, Any]] = None) -> dict[str, Any]:
         state = dict(body_state or self.hardware.get_status() or {})
+        if body_state is not None and hasattr(self.hardware, "validate_cached_status"):
+            state = dict(self.hardware.validate_cached_status(state))
         router_socket = str(getattr(self.hardware, "router_socket_path", "/var/run/arduino-router.sock"))
         socket_exists = os.path.exists(router_socket)
         socket_connectable = False
@@ -91,7 +93,13 @@ class BX1HardwareDoctor:
         router_service = self._service_state("arduino-router")
         compile_tool = self.project_root / "tools" / "compile_mcu_sketch.sh"
         upload_tool = self.project_root / "tools" / "upload_mcu_sketch.sh"
+        transport_connected = bool(state.get("mcu_transport_connected", state.get("bridge_available", False)))
+        mcu_fresh = bool(state.get("mcu_heartbeat_fresh", False))
         mcu_ok = bool(state.get("mcu_ok", False))
+        imu_present = bool(state.get("imu_present", False))
+        imu_initialised = bool(state.get("imu_initialised", False))
+        imu_sample_fresh = bool(state.get("imu_sample_fresh", False))
+        imu_healthy = bool(state.get("imu_healthy", state.get("imu_ok", False)))
         bridge_mode = str(state.get("bridge_mode", "unknown"))
         bridge_error = str(state.get("bridge_error") or state.get("mcu_error") or "")
         protocol = state.get("protocol_version")
@@ -108,7 +116,7 @@ class BX1HardwareDoctor:
             severity = "critical"
             summary = "The arduino-router socket exists but is not accepting connections."
             recommendations = ["Restart arduino-router.", "Check for a stale router process or socket permissions."]
-        elif not mcu_ok:
+        elif not transport_connected:
             severity = "fault"
             if "not registered" in bridge_error.lower() or "not available" in bridge_error.lower() or "method" in bridge_error.lower():
                 summary = "The router is reachable but the BX1 MCU RPC methods are missing. The MCU is probably running an old or failed sketch."
@@ -116,13 +124,17 @@ class BX1HardwareDoctor:
             else:
                 summary = "The router is reachable but the MCU status call failed."
                 recommendations = ["Run a fresh bridge diagnosis.", "Restart arduino-router once, then inspect the MCU sketch and power if the fault remains."]
+        elif not mcu_fresh:
+            severity = "fault"
+            summary = str(state.get("mcu_health_reason") or "MCU heartbeat is stale.")
+            recommendations = ["Inspect Router RPC polling and MCU heartbeat without restarting services."]
         elif protocol and str(protocol) not in {"bx1.mcu.v1", "1", "1.0"}:
             severity = "warning"
             summary = f"The MCU is responding, but protocol version {protocol!r} is not the expected BX1 protocol."
             recommendations = ["Compare the desktop/body protocol with the flashed MCU sketch before enabling motion."]
-        elif not bool(state.get("imu_ok", False)):
+        elif not imu_present or not imu_initialised or not imu_sample_fresh or not imu_healthy:
             severity = "warning"
-            summary = "The MCU bridge is online, but the Modulino Movement is not returning data on Wire1/Qwiic."
+            summary = str(state.get("imu_health_reason") or "The Modulino Movement is not healthy.")
             recommendations = [
                 "Reseat the Qwiic cable at the UNO Q and Modulino Movement.",
                 "Confirm the module is powered and address 0x6A is not duplicated.",
@@ -136,6 +148,11 @@ class BX1HardwareDoctor:
 
         evidence = {
             "mcu_ok": mcu_ok,
+            "mcu_transport_connected": transport_connected,
+            "mcu_heartbeat_fresh": mcu_fresh,
+            "mcu_last_update_age_ms": state.get("mcu_last_update_age_ms"),
+            "mcu_data_stale": bool(state.get("mcu_data_stale", True)),
+            "mcu_health_reason": state.get("mcu_health_reason"),
             "bridge_mode": bridge_mode,
             "bridge_error": bridge_error,
             "router_socket": router_socket,
@@ -147,7 +164,14 @@ class BX1HardwareDoctor:
             "protocol_version": protocol,
             "build_id": state.get("build_id"),
             "maintenance_mode": state.get("maintenance_mode"),
-            "imu_ok": bool(state.get("imu_ok", False)),
+            "imu_ok": imu_healthy,
+            "imu_present": imu_present,
+            "imu_initialised": imu_initialised,
+            "imu_sample_fresh": imu_sample_fresh,
+            "imu_sample_age_ms": state.get("imu_sample_age_ms"),
+            "imu_data_stale": bool(state.get("imu_data_stale", True)),
+            "imu_healthy": imu_healthy,
+            "imu_health_reason": state.get("imu_health_reason"),
             "imu_error": state.get("imu_error"),
             "imu_source": state.get("imu_source"),
             "imu_bus": state.get("imu_bus"),

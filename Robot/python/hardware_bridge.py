@@ -9,6 +9,8 @@ import time
 from dataclasses import dataclass
 from typing import Any, Dict, List, Optional
 
+from hardware_freshness import HardwareFreshnessTracker
+
 try:
     from arduino.app_utils import Bridge  # type: ignore
     ARDUINO_APP_LAB_AVAILABLE = True
@@ -123,7 +125,8 @@ class BX1HardwareBridge:
     checks can fail even when the MCU and arduino-router are correct.
     """
 
-    def __init__(self) -> None:
+    def __init__(self, config: Optional[Dict[str, Any]] = None, *, clock=time.monotonic) -> None:
+        config = config or {}
         self.app_lab_available = ARDUINO_APP_LAB_AVAILABLE
         self.router_socket_path = os.environ.get("BX1_ROUTER_SOCKET", "/var/run/arduino-router.sock")
         self.router = RouterRpcClient(self.router_socket_path, timeout_s=float(os.environ.get("BX1_ROUTER_TIMEOUT", "3.0")))
@@ -135,6 +138,11 @@ class BX1HardwareBridge:
         self._serial_lock = threading.Lock()
         self.last_error = ""
         self.available = bool(self.app_lab_available or self.router_available or self.serial_available)
+        self.freshness = HardwareFreshnessTracker(
+            warning_ms=float(config.get("hardware_freshness_warning_ms", 1500.0)),
+            stale_ms=float(config.get("hardware_freshness_stale_ms", 3000.0)),
+            clock=clock,
+        )
         self.last_state: Dict[str, Any] = {
             "mcu_ok": False,
             "bridge_available": self.available,
@@ -362,6 +370,7 @@ class BX1HardwareBridge:
                 "serial_port": self.serial_port,
                 "timestamp_linux": time.time(),
             })
+            state = self.freshness.evaluate(state, transport_connected=False)
             self.last_state = state
             return state
 
@@ -382,6 +391,7 @@ class BX1HardwareBridge:
             state.setdefault("router_socket", self.router_socket_path)
             state.setdefault("serial_port", self.serial_port)
             state["timestamp_linux"] = time.time()
+            state = self.freshness.evaluate(state, transport_connected=True)
             self.last_state = state
             return state
         except Exception as exc:
@@ -397,8 +407,18 @@ class BX1HardwareBridge:
                 "mcu_raw": str(raw)[:500],
                 "timestamp_linux": time.time(),
             }
+            state = self.freshness.evaluate(state, transport_connected=False)
             self.last_state = state
             return state
+
+    def validate_cached_status(self, state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Age an existing payload without treating the read itself as a new frame."""
+        current = dict(state or self.last_state)
+        connected = bool(current.get("mcu_transport_connected", current.get("bridge_available", False)))
+        validated = self.freshness.evaluate(current, transport_connected=connected)
+        if state is None or state is self.last_state:
+            self.last_state = validated
+        return validated
 
 
     def _send_hardware_config_small_rpc(self, action: Dict[str, Any]) -> BridgeCallResult:

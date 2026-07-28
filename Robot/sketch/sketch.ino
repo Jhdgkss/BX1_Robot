@@ -146,6 +146,7 @@ float pitchDeg = 0.0f;
 float rollDeg = 0.0f;
 unsigned long lastImuInitAttemptMs = 0;
 unsigned long imuReadFailures = 0;
+uint32_t imuSampleSequence = 0;
 
 // ---------------- Command state ----------------
 String pendingActionJson = "";
@@ -254,7 +255,10 @@ String bx1_i2c_scan() {
     json += "\"";
     first = false;
   }
-  json += "]}";
+  json += "],\"selected_imu_address\":\"" + jsonEscape(imuAddress) + "\",";
+  json += "\"imu_sample_sequence\":" + String(imuSampleSequence) + ",";
+  json += "\"mcu_uptime_ms\":" + String(millis()) + ",";
+  json += "\"heartbeat_sequence\":" + String(heartbeatSequence) + "}";
   return json;
 }
 
@@ -332,6 +336,7 @@ void updateImu() {
 
   if (gotAccel || gotGyro) {
     lastImuUpdateMs = millis();
+    imuSampleSequence++;
     imuReadFailures = 0;
     imuError = "";
   } else {
@@ -976,6 +981,7 @@ String bx1_get_status() {
   json += "\"protocol_version\":\"" + String(BX1_PROTOCOL_VERSION) + "\",";
   json += "\"build_id\":\"" + jsonEscape(String(BX1_BUILD_ID)) + "\",";
   json += "\"heartbeat_sequence\":" + String(heartbeatSequence) + ",";
+  json += "\"mcu_uptime_ms\":" + String(millis()) + ",";
   json += "\"maintenance_mode\":" + String(maintenanceMode ? "true" : "false") + ",";
   json += "\"drive_outputs_enabled\":" + String(BX1_ENABLE_DRIVE_OUTPUTS ? "true" : "false") + ",";
   json += "\"imu_ok\":" + String(imuOk ? "true" : "false") + ",";
@@ -984,6 +990,7 @@ String bx1_get_status() {
   json += "\"imu_bus\":\"" + jsonEscape(imuBus) + "\",";
   json += "\"imu_address\":\"" + jsonEscape(imuAddress) + "\",";
   json += "\"imu_read_failures\":" + String(imuReadFailures) + ",";
+  json += "\"imu_sample_sequence\":" + String(imuSampleSequence) + ",";
   json += "\"imu_last_update_age_ms\":" + String(lastImuUpdateMs == 0 ? 0 : millis() - lastImuUpdateMs) + ",";
   json += "\"control_owner\":\"linux_python\",";
   json += "\"mcu_runtime\":\"arduino_router_shim\",";

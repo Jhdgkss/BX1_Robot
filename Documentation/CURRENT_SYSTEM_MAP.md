@@ -87,3 +87,37 @@ The deployed firmware does not contain the new read-only `bx1_i2c_scan` RPC, and
 production deployment was prohibited. Consequently the only detected address
 evidence available in this phase is the firmware-selected IMU address `0x6A`,
 not a complete bus scan.
+
+## Phase 1A freshness model
+
+`Robot/python/hardware_bridge.py` performs each Router status RPC and passes the
+decoded frame to `HardwareFreshnessTracker` in
+`Robot/python/hardware_freshness.py`. A new MCU frame is proven by an advancing
+heartbeat, uptime or telemetry sequence; a changing legacy telemetry fingerprint
+is used only when counters are absent. Re-reading an identical cached payload
+does not refresh the local monotonic timestamp.
+
+IMU freshness prefers `imu_sample_sequence`. For older firmware it combines the
+MCU-reported sample age with changes to the legacy sample fields. The effective
+age is the more conservative of the MCU-reported age and time since a locally
+observed new sample. Missing, negative, non-numeric or infinite ages are unhealthy.
+
+The bridge exposes separate transport, MCU-heartbeat, IMU-presence,
+initialisation, sample-freshness and overall-health fields. Compatibility
+`mcu_ok` now means connected transport plus fresh MCU heartbeat. Compatibility
+`imu_ok` now maps to `imu_healthy`, not merely successful sensor initialisation.
+`balance_ready` remains explicitly false.
+
+Freshness thresholds are configured once and used by the tracker:
+
+- `hardware_freshness_warning_ms`: `1500`
+- `hardware_freshness_stale_ms`: `3000`
+
+These defaults account for the existing one-second Linux telemetry poll and
+modest scheduler/network delay. They remain far below the observed multi-hour
+staleness and can be tightened after deterministic MCU polling is separated from
+the Brain telemetry interval.
+
+`BX1RobotBodyService.read_body_state()` copies the validated fields into the
+sensor packet. Hardware Doctor and the Robot web interface consume those fields
+and no longer infer health from Router connectivity alone.

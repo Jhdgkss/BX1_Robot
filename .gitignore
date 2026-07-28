@@ -30,6 +30,9 @@ Robot/models/
 *.tar.gz
 *.tgz
 
+# Generated BX1 OS release packages and manifests
+/Deployment/
+
 # Logs and diagnostics
 **/logs/
 **/diagnostics/
