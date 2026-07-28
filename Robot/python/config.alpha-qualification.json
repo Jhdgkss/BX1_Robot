@@ -1,6 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS Alpha qualification",
+  "app_version": "BX1 OS Alpha v0.1.2 qualification",
+  "bx1_os_release_version": "0.1.2",
+  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.1.2",
   "qualification_mode": true,
   "observer_only": true,
   "observer_allow_camera": false,

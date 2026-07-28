@@ -5,6 +5,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -14,7 +15,7 @@ import urllib.request
 from urllib.parse import urlparse
 from dataclasses import dataclass, field
 from pathlib import Path, PurePosixPath
-from typing import Any, Dict, Iterable, Mapping, Optional
+from typing import Any, Dict, Iterable, Mapping, Optional, Sequence
 
 
 LIVE_ROOT = Path("/home/arduino/Arduino_Q_Client_V1")
@@ -23,6 +24,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
+RELEASE_VERSION = "0.1.2"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.1.2"
 SAMPLE_PATHS = (
     "main.py",
     "START_BX1_WEB.sh",
@@ -164,6 +167,9 @@ def qualify(
     allow_hardware_unavailable: bool = False,
     allow_brain_offline: bool = False,
     timeout_s: float = 10.0,
+    launcher_pid: Optional[int] = None,
+    launcher_path: Optional[Path] = None,
+    proc_root: Path = Path("/proc"),
 ) -> Dict[str, Any]:
     del allow_hardware_unavailable, allow_brain_offline
     started = time.time()
@@ -182,7 +188,25 @@ def qualify(
     _validate_local_status_url(old_status_url, LIVE_PORT)
     _validate_local_status_url(status_url, web_port)
 
-    config_report = observer_configuration(root, web_port)
+    checks.append(
+        Check(
+            "Alpha Installation Root",
+            root.is_dir(),
+            "The side-by-side BX1_OS installation exists during qualification",
+            {"path": str(root), "is_directory": root.is_dir()},
+        )
+    )
+    try:
+        config_report = observer_configuration(root, web_port)
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        config_report = {
+            "passed": False,
+            "failures": ["observer configuration unavailable: %s" % type(exc).__name__],
+            "observer_only": False,
+            "qualification_mode": False,
+            "web_port": None,
+            "enabled_hardware": [],
+        }
     checks.append(
         Check(
             "Observer Configuration",
@@ -204,6 +228,9 @@ def qualify(
         enabled = _run(["systemctl", "is-enabled", service_name])
         live = _run(["systemctl", "is-active", LIVE_SERVICE])
         old_definition = _run(["systemctl", "cat", LIVE_SERVICE])
+        load_state = _run(
+            ["systemctl", "show", service_name, "--property", "LoadState", "--value"]
+        )
         alpha_active = active["returncode"] == 0 and active["stdout"] == "active"
         alpha_enabled = enabled["returncode"] == 0 and enabled["stdout"] in {
             "enabled",
@@ -217,10 +244,24 @@ def qualify(
             if old_definition["returncode"] == 0
             else ""
         )
-        alpha_state = {"active": active, "enabled": enabled}
+        alpha_state = {"active": active, "enabled": enabled, "load_state": load_state}
         live_state = {"active": live}
 
     expected_alpha_active = mode == "canary"
+    alpha_loaded = (
+        True
+        if skip_systemd
+        else alpha_state["load_state"]["returncode"] == 0
+        and alpha_state["load_state"]["stdout"] == "loaded"
+    )
+    checks.append(
+        Check(
+            "Alpha Unit Installed",
+            alpha_loaded,
+            "The dedicated Alpha service unit is loaded",
+            {"loaded": alpha_loaded},
+        )
+    )
     checks.append(
         Check(
             "Alpha Service State",
@@ -300,17 +341,28 @@ def qualify(
         )
     )
 
-    matching_processes = _processes_using_root(root)
+    process_evidence = _processes_using_root(
+        root,
+        proc_root=proc_root,
+        qualifier_pid=os.getpid(),
+        qualifier_parent_pid=os.getppid(),
+        launcher_pid=launcher_pid,
+        launcher_path=launcher_path,
+    )
     checks.append(
         Check(
             "BX1_OS Process Isolation",
-            mode == "canary" or not matching_processes,
+            mode == "canary"
+            or (
+                process_evidence["proc_root_available"]
+                and not process_evidence["matching_processes"]
+            ),
             (
                 "Canary process is permitted"
                 if mode == "canary"
                 else "No process is running from BX1_OS after install-only"
             ),
-            {"matching_pids": matching_processes},
+            process_evidence,
         )
     )
 
@@ -326,8 +378,10 @@ def qualify(
 
     passed = all(check.passed for check in checks)
     return {
-        "schema": "bx1.deployment.qualification.v2",
+        "schema": "bx1.deployment.qualification.v3",
         "milestone": "BX1 OS Alpha",
+        "release_version": RELEASE_VERSION,
+        "release_tag": RELEASE_TAG,
         "qualification_mode": mode,
         "started_at": started,
         "completed_at": time.time(),
@@ -350,6 +404,20 @@ def _runtime_checks(
     status_url: str,
 ) -> list[Check]:
     checks = []
+    checks.append(
+        Check(
+            "Release Identity",
+            bx1_os.get("release_version") == RELEASE_VERSION
+            and bx1_os.get("release_tag") == RELEASE_TAG,
+            "Canary reports the expected BX1 OS Alpha release identity",
+            {
+                "expected_version": RELEASE_VERSION,
+                "actual_version": bx1_os.get("release_version"),
+                "expected_tag": RELEASE_TAG,
+                "actual_tag": bx1_os.get("release_tag"),
+            },
+        )
+    )
     checks.append(
         Check(
             "Bootstrap",
@@ -450,6 +518,8 @@ def main() -> int:
     parser.add_argument("--allow-hardware-unavailable", action="store_true")
     parser.add_argument("--allow-brain-offline", action="store_true")
     parser.add_argument("--timeout", type=float, default=10.0)
+    parser.add_argument("--launcher-pid", type=int)
+    parser.add_argument("--launcher-path", type=Path)
     parser.add_argument("--output", type=Path)
     args = parser.parse_args()
 
@@ -475,6 +545,8 @@ def main() -> int:
             snapshot=_load_json(args.snapshot_file) if args.snapshot_file else None,
             skip_systemd=args.skip_systemd,
             timeout_s=args.timeout,
+            launcher_pid=args.launcher_pid,
+            launcher_path=args.launcher_path,
         )
     text = json.dumps(report, indent=2, sort_keys=True)
     if args.output:
@@ -551,25 +623,284 @@ def _port_in_use(port: int) -> bool:
         return sock.connect_ex(("127.0.0.1", int(port))) == 0
 
 
-def _processes_using_root(root: Path) -> list[int]:
-    proc = Path("/proc")
-    if not proc.is_dir():
-        return []
-    matches = []
-    own_pid = os.getpid()
-    root_text = str(root)
-    for entry in proc.iterdir():
-        if not entry.name.isdigit() or int(entry.name) == own_pid:
+def _processes_using_root(
+    root: Path,
+    *,
+    proc_root: Path = Path("/proc"),
+    qualifier_pid: Optional[int] = None,
+    qualifier_parent_pid: Optional[int] = None,
+    launcher_pid: Optional[int] = None,
+    launcher_path: Optional[Path] = None,
+) -> Dict[str, Any]:
+    qualifier = int(os.getpid() if qualifier_pid is None else qualifier_pid)
+    qualifier_parent = int(
+        os.getppid() if qualifier_parent_pid is None else qualifier_parent_pid
+    )
+    install_root = root.resolve(strict=False)
+    evidence: Dict[str, Any] = {
+        "qualifier_pid": qualifier,
+        "qualifier_parent_pid": qualifier_parent,
+        "declared_launcher_pid": launcher_pid,
+        "declared_launcher_path": (
+            str(launcher_path.resolve(strict=False)) if launcher_path else ""
+        ),
+        "install_root": str(install_root),
+        "examined_process_count": 0,
+        "proc_root_available": proc_root.is_dir(),
+        "matching_pids": [],
+        "matching_processes": [],
+        "excluded_pids": [],
+        "excluded_processes": [],
+        "inspection_errors": [],
+    }
+    if not evidence["proc_root_available"]:
+        evidence["inspection_errors"].append(
+            {"pid": None, "field": "proc_root", "error": "procfs_unavailable"}
+        )
+        return evidence
+
+    records: Dict[int, Dict[str, Any]] = {}
+    try:
+        entries = list(proc_root.iterdir())
+    except OSError as exc:
+        evidence["inspection_errors"].append(
+            {"pid": None, "field": "proc_root", "error": type(exc).__name__}
+        )
+        return evidence
+    for entry in entries:
+        if not entry.name.isdigit():
             continue
+        pid = int(entry.name)
+        evidence["examined_process_count"] += 1
+        record, errors = _read_process_record(entry, pid)
+        evidence["inspection_errors"].extend(errors)
+        if record is not None:
+            records[pid] = record
+
+    ancestor_pids = _ancestor_pids(
+        records, qualifier_pid=qualifier, qualifier_parent_pid=qualifier_parent
+    )
+    for pid in sorted(records):
+        record = records[pid]
+        match_reasons = _process_match_reasons(record, install_root)
+        if not match_reasons:
+            continue
+        item = {
+            "pid": pid,
+            "ppid": record.get("ppid"),
+            "cmdline": _display_cmdline(record.get("argv", [])),
+            "exe": record.get("exe", ""),
+            "cwd": record.get("cwd", ""),
+            "match_reasons": match_reasons,
+            "is_ancestor": pid in ancestor_pids,
+        }
+        exclusion_reason = ""
+        if pid == qualifier:
+            exclusion_reason = "current_qualifier_process"
+        elif (
+            launcher_pid is not None
+            and pid == int(launcher_pid)
+            and pid in ancestor_pids
+            and launcher_path is not None
+            and _is_verified_qualification_launcher(record, launcher_path)
+        ):
+            exclusion_reason = "verified_current_deployment_launcher_ancestor"
+        if exclusion_reason:
+            item["reason"] = exclusion_reason
+            evidence["excluded_pids"].append(pid)
+            evidence["excluded_processes"].append(item)
+        else:
+            evidence["matching_pids"].append(pid)
+            evidence["matching_processes"].append(item)
+    return evidence
+
+
+def _read_process_record(
+    entry: Path, pid: int
+) -> tuple[Optional[Dict[str, Any]], list[Dict[str, Any]]]:
+    errors: list[Dict[str, Any]] = []
+    try:
+        first_stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        ppid, start_time = _parse_proc_stat(first_stat)
+    except (OSError, ValueError) as exc:
+        errors.append(
+            {"pid": pid, "field": "stat", "error": type(exc).__name__}
+        )
+        return None, errors
+
+    argv: list[str] = []
+    try:
+        raw = (entry / "cmdline").read_bytes()
+        argv = [
+            value.decode("utf-8", errors="replace")
+            for value in raw.split(b"\0")
+            if value
+        ]
+    except OSError as exc:
+        errors.append(
+            {"pid": pid, "field": "cmdline", "error": type(exc).__name__}
+        )
+
+    values: Dict[str, str] = {}
+    for field in ("exe", "cwd"):
         try:
-            raw = (entry / "cmdline").read_bytes().replace(b"\0", b" ").decode(
-                "utf-8", errors="replace"
+            target = os.readlink(entry / field)
+            if target.endswith(" (deleted)"):
+                target = target[: -len(" (deleted)")]
+            values[field] = str(Path(target).resolve(strict=False))
+        except (OSError, RuntimeError, ValueError) as exc:
+            values[field] = ""
+            errors.append(
+                {"pid": pid, "field": field, "error": type(exc).__name__}
             )
-        except Exception:
+    try:
+        second_stat = (entry / "stat").read_text(encoding="utf-8", errors="replace")
+        _, second_start_time = _parse_proc_stat(second_stat)
+        if second_start_time != start_time:
+            errors.append(
+                {"pid": pid, "field": "stat", "error": "pid_reused_during_inspection"}
+            )
+            return None, errors
+    except (OSError, ValueError) as exc:
+        errors.append(
+            {"pid": pid, "field": "stat_recheck", "error": type(exc).__name__}
+        )
+        return None, errors
+    return {
+        "pid": pid,
+        "ppid": ppid,
+        "start_time": start_time,
+        "argv": argv,
+        "exe": values["exe"],
+        "cwd": values["cwd"],
+    }, errors
+
+
+def _parse_proc_stat(text: str) -> tuple[int, str]:
+    close = text.rfind(")")
+    fields = text[close + 2 :].split() if close >= 0 else []
+    if len(fields) < 20:
+        raise ValueError("malformed proc stat")
+    return int(fields[1]), fields[19]
+
+
+def _ancestor_pids(
+    records: Mapping[int, Mapping[str, Any]],
+    *,
+    qualifier_pid: int,
+    qualifier_parent_pid: int,
+) -> set[int]:
+    ancestors: set[int] = set()
+    cursor = qualifier_parent_pid
+    while cursor > 0 and cursor not in ancestors and cursor != qualifier_pid:
+        ancestors.add(cursor)
+        record = records.get(cursor)
+        if record is None:
+            break
+        try:
+            cursor = int(record.get("ppid", 0))
+        except (TypeError, ValueError):
+            break
+    return ancestors
+
+
+def _process_match_reasons(
+    record: Mapping[str, Any], install_root: Path
+) -> list[str]:
+    reasons: list[str] = []
+    exe = str(record.get("exe", ""))
+    cwd = str(record.get("cwd", ""))
+    argv = [str(value) for value in record.get("argv", [])]
+    if exe and _inside_root(Path(exe), install_root):
+        reasons.append("executable_inside_install_root")
+
+    command_paths = _command_paths(argv, Path(cwd) if cwd else None)
+    paths_inside = [path for path in command_paths if _inside_root(path, install_root)]
+    if paths_inside:
+        reasons.append("command_path_inside_install_root")
+
+    executable_name = Path(exe or (argv[0] if argv else "")).name.lower()
+    shell_names = {"bash", "dash", "fish", "ksh", "sh", "zsh"}
+    if cwd and _inside_root(Path(cwd), install_root) and (
+        executable_name not in shell_names or bool(paths_inside)
+    ):
+        reasons.append("working_directory_inside_install_root")
+
+    inside_names = {path.name.lower() for path in paths_inside}
+    if inside_names & {"main.py", "run_bx1_os_alpha.sh"}:
+        reasons.append("alpha_web_runtime")
+    if inside_names & {
+        "hardware_bridge.py",
+        "run_robot_body.sh",
+        "mcu_router_bridge.py",
+        "mcu_serial_bridge.py",
+    }:
+        reasons.append("alpha_hardware_bridge")
+    return reasons
+
+
+def _command_paths(argv: Sequence[str], cwd: Optional[Path]) -> list[Path]:
+    paths: list[Path] = []
+    for value in argv:
+        candidate = (
+            value.split("=", 1)[1]
+            if value.startswith("-") and "=" in value
+            else value
+        )
+        if not candidate or candidate.startswith("-"):
             continue
-        if root_text in raw:
-            matches.append(int(entry.name))
-    return sorted(matches)
+        path = Path(candidate)
+        rooted_path = path.is_absolute() or candidate.startswith("/")
+        looks_like_path = rooted_path or "/" in candidate or "\\" in candidate
+        if not looks_like_path and path.suffix.lower() not in {".py", ".sh"}:
+            continue
+        if not rooted_path:
+            if cwd is None:
+                continue
+            path = cwd / path
+        paths.append(path.resolve(strict=False))
+    return paths
+
+
+def _inside_root(path: Path, root: Path) -> bool:
+    resolved = path.resolve(strict=False)
+    return resolved == root or root in resolved.parents
+
+
+def _is_verified_qualification_launcher(
+    record: Mapping[str, Any], expected_launcher: Path
+) -> bool:
+    trusted_names = {"deploy_bx1_os.py", "deploy_bx1_os.sh"}
+    expected = expected_launcher.resolve(strict=False)
+    if expected.name not in trusted_names:
+        return False
+    paths = _command_paths(
+        [str(value) for value in record.get("argv", [])],
+        Path(str(record.get("cwd"))) if record.get("cwd") else None,
+    )
+    return any(path.resolve(strict=False) == expected for path in paths)
+
+
+def _display_cmdline(argv: Sequence[str]) -> str:
+    secret_option = re.compile(
+        r"(?i)(password|passwd|secret|token|api[-_]?key|credential)"
+    )
+    displayed: list[str] = []
+    redact_next = False
+    for raw in argv:
+        value = str(raw)
+        if redact_next:
+            displayed.append("<redacted>")
+            redact_next = False
+            continue
+        if value.startswith("-") and "=" in value:
+            key, _ = value.split("=", 1)
+            displayed.append(key + "=<redacted>" if secret_option.search(key) else value)
+        else:
+            displayed.append(value)
+            redact_next = value.startswith("-") and bool(secret_option.search(value))
+    text = " ".join(displayed)
+    return text[:2000] + ("..." if len(text) > 2000 else "")
 
 
 def _validate_local_status_url(url: str, expected_port: int) -> None:

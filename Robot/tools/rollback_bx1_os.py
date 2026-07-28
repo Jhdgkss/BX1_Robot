@@ -17,6 +17,7 @@ from typing import Iterable, Optional
 LIVE_ROOT = Path("/home/arduino/Arduino_Q_Client_V1").resolve(strict=False)
 LIVE_SERVICE = "bx1-web.service"
 DEFAULT_SERVICE = "bx1-os-alpha.service"
+RELEASE_VERSION = "0.1.2"
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
     "main.py",
@@ -124,6 +125,16 @@ def rollback(
     *,
     runner: Optional[CommandRunner] = None,
 ) -> dict:
+    started_monotonic = time.monotonic()
+
+    def stage(message: str) -> None:
+        print(
+            "[BX1 ROLLBACK] %s (%.1fs elapsed)"
+            % (message, time.monotonic() - started_monotonic),
+            flush=True,
+        )
+
+    stage("validating rollback manifest")
     command_runner = runner or CommandRunner()
     backup = options.backup_dir.expanduser().resolve(strict=True)
     manifest_path = backup / "deployment_manifest.json"
@@ -183,6 +194,7 @@ def rollback(
             "changes_made": False,
         }
 
+    stage("restoring Alpha installation and service state")
     if _active(command_runner, service):
         _systemctl(
             command_runner,
@@ -206,9 +218,10 @@ def rollback(
 
     installed_unit = options.systemd_dir / service
     if manifest.get("service_existed"):
-        original_fragment = Path(str(manifest.get("service_fragment_path", "")))
-        if not str(original_fragment):
+        original_fragment_text = str(manifest.get("service_fragment_path", ""))
+        if not original_fragment_text:
             raise RollbackError("original service fragment path is missing")
+        original_fragment = Path(original_fragment_text)
         allowed_unit_dirs = {
             options.systemd_dir.resolve(strict=False),
             Path("/lib/systemd/system"),
@@ -282,6 +295,7 @@ def rollback(
 
     report = {
         "schema": "bx1.deployment.rollback.v2",
+        "release_version": RELEASE_VERSION,
         "status": "ROLLED_BACK",
         "automatic": options.automatic,
         "completed_at": time.time(),
@@ -302,6 +316,7 @@ def rollback(
         json.dumps(report, indent=2, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    stage("rollback completed")
     return report
 
 

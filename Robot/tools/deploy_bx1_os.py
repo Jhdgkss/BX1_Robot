@@ -26,6 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
+RELEASE_VERSION = "0.1.2"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.1.2"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -40,6 +42,12 @@ class DeploymentError(RuntimeError):
     pass
 
 
+def _subprocess_text(value: Any) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value or "")
+
+
 class CommandRunner:
     def run(
         self,
@@ -48,17 +56,66 @@ class CommandRunner:
         check: bool = False,
         privileged: bool = False,
         timeout: int = 120,
+        progress_label: str = "",
+        progress_interval: int = 10,
     ) -> subprocess.CompletedProcess[str]:
         cmd = list(command)
-        if privileged and os.geteuid() != 0:
+        if privileged and getattr(os, "geteuid", lambda: 1)() != 0:
             cmd.insert(0, "sudo")
-        result = subprocess.run(
-            cmd,
-            text=True,
-            capture_output=True,
-            check=False,
-            timeout=timeout,
-        )
+        if progress_label:
+            started = time.monotonic()
+            process = subprocess.Popen(
+                cmd,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+            timed_out = False
+            while True:
+                remaining = timeout - (time.monotonic() - started)
+                if remaining <= 0:
+                    timed_out = True
+                    process.kill()
+                    stdout, stderr = process.communicate()
+                    break
+                try:
+                    stdout, stderr = process.communicate(
+                        timeout=min(float(progress_interval), remaining)
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    print(
+                        "[BX1 DEPLOY] %s still running (%.0fs elapsed)"
+                        % (progress_label, time.monotonic() - started),
+                        flush=True,
+                    )
+            result = subprocess.CompletedProcess(
+                cmd,
+                124 if timed_out else process.returncode,
+                stdout,
+                (stderr or "")
+                + (
+                    "\nTimed out after %ss while %s" % (timeout, progress_label)
+                    if timed_out
+                    else ""
+                ),
+            )
+        else:
+            try:
+                result = subprocess.run(
+                    cmd,
+                    text=True,
+                    capture_output=True,
+                    check=False,
+                    timeout=timeout,
+                )
+            except subprocess.TimeoutExpired as exc:
+                result = subprocess.CompletedProcess(
+                    cmd,
+                    124,
+                    _subprocess_text(exc.stdout),
+                    _subprocess_text(exc.stderr) + "\nTimed out after %ss" % timeout,
+                )
         if check and result.returncode != 0:
             detail = (result.stderr or result.stdout).strip()[-1200:]
             raise DeploymentError("%s failed: %s" % (" ".join(cmd), detail))
@@ -224,6 +281,14 @@ class SideBySideDeployer:
         self.backup_dir: Optional[Path] = None
         self.staging_dir: Optional[Path] = None
         self.changes_started = False
+        self.started_monotonic = time.monotonic()
+
+    def _report_stage(self, message: str) -> None:
+        print(
+            "[BX1 DEPLOY] %s (%.1fs elapsed)"
+            % (message, time.monotonic() - self.started_monotonic),
+            flush=True,
+        )
 
     def preflight(self) -> Dict[str, Any]:
         verification = verify_release(self.release_root)
@@ -233,6 +298,11 @@ class SideBySideDeployer:
                 % "; ".join(verification.get("failures", []))
             )
         self.release = dict(verification["release"])
+        if (
+            self.release.get("release_version") != RELEASE_VERSION
+            or self.release.get("release_tag") != RELEASE_TAG
+        ):
+            raise DeploymentError("release manifest version/tag is not BX1 OS Alpha v0.1.2")
         if self.release.get("target_service") != DEFAULT_SERVICE:
             raise DeploymentError("release manifest does not target bx1-os-alpha.service")
         if canonical(Path(self.release.get("default_install_root", ""))) != canonical(
@@ -256,6 +326,8 @@ class SideBySideDeployer:
         target_state = service_state(self.runner, self.options.service_name)
         baseline = {
             "schema": "bx1.deployment.baseline.v2",
+            "release_version": RELEASE_VERSION,
+            "release_tag": RELEASE_TAG,
             "created_at": time.time(),
             "live_install_root": str(canonical(LIVE_ROOT)),
             "live_service": LIVE_SERVICE,
@@ -314,6 +386,8 @@ class SideBySideDeployer:
 
         manifest = {
             "schema": "bx1.deployment.backup.v2",
+            "release_version": RELEASE_VERSION,
+            "release_tag": RELEASE_TAG,
             "created_at": time.time(),
             "backup_complete": True,
             "install_root": str(self.root),
@@ -392,6 +466,8 @@ class SideBySideDeployer:
             ["python3", "-m", "venv", str(staging / ".venv")],
             check=True,
             timeout=300,
+            progress_label="virtual environment creation",
+            progress_interval=10,
         )
         python_bin = staging / ".venv" / "bin" / "python"
         self.runner.run(
@@ -407,6 +483,8 @@ class SideBySideDeployer:
             ],
             check=True,
             timeout=900,
+            progress_label="dependency installation",
+            progress_interval=15,
         )
 
     def _render_unit(self, staging: Path) -> Path:
@@ -455,11 +533,37 @@ class SideBySideDeployer:
             str(baseline_path),
             "--output",
             str(self.backup_dir / "qualification_report.json"),
+            "--launcher-pid",
+            str(os.getpid()),
+            "--launcher-path",
+            str(Path(__file__).resolve()),
         ]
-        self.runner.run(command, check=True, timeout=120)
+        self._report_stage("qualification started")
+        result = self.runner.run(
+            command,
+            check=False,
+            timeout=180,
+            progress_label="Alpha qualification",
+            progress_interval=10,
+        )
+        (self.backup_dir / "qualification_stdout.log").write_text(
+            result.stdout or "", encoding="utf-8"
+        )
+        (self.backup_dir / "qualification_stderr.log").write_text(
+            result.stderr or "", encoding="utf-8"
+        )
+        if result.returncode != 0:
+            detail = (result.stderr or result.stdout).strip()[-1200:]
+            raise DeploymentError(
+                "Alpha qualification failed (exit %s): %s"
+                % (result.returncode, detail or "see preserved qualification logs")
+            )
+        self._report_stage("qualification passed")
 
     def deploy(self) -> Dict[str, Any]:
+        self._report_stage("preflight checks started")
         baseline = self.preflight()
+        self._report_stage("preflight checks passed")
         if self.options.dry_run:
             return {
                 "status": "DRY_RUN_PASSED",
@@ -470,9 +574,12 @@ class SideBySideDeployer:
                 "changes_made": False,
             }
 
+        self._report_stage("creating rollback baseline")
         manifest = self._create_backup(baseline)
         try:
+            self._report_stage("staging release payload")
             staging = self._stage_payload()
+            self._report_stage("creating isolated virtual environment")
             self._create_venv(staging)
             unit_source = self._render_unit(staging)
 
@@ -491,6 +598,7 @@ class SideBySideDeployer:
             self.staging_dir = None
             self.changes_started = True
 
+            self._report_stage("validating and installing dedicated Alpha unit")
             installed_source = self.root / unit_source.relative_to(staging)
             verify = self.runner.run(
                 ["systemd-analyze", "verify", str(installed_source)],
@@ -506,6 +614,8 @@ class SideBySideDeployer:
                 check=True,
                 privileged=self.options.privileged,
                 timeout=120,
+                progress_label="Alpha installation ownership update",
+                progress_interval=10,
             )
             installed_unit = self.options.systemd_dir / self.options.service_name
             self.runner.run(
@@ -532,6 +642,8 @@ class SideBySideDeployer:
             self._qualify(baseline_path)
             report = {
                 "schema": "bx1.deployment.report.v2",
+                "release_version": RELEASE_VERSION,
+                "release_tag": RELEASE_TAG,
                 "status": "CANARY_RUNNING"
                 if self.options.mode == "start-canary"
                 else "INSTALLED_INACTIVE",
@@ -550,10 +662,11 @@ class SideBySideDeployer:
                 encoding="utf-8",
             )
             return report
-        except Exception:
+        except Exception as deployment_error:
             self._quarantine_staging()
             if self.changes_started and self.backup_dir is not None:
                 try:
+                    self._report_stage("deployment failed; automatic rollback started")
                     from rollback_bx1_os import RollbackOptions, rollback
 
                     rollback(
@@ -565,11 +678,31 @@ class SideBySideDeployer:
                         ),
                         runner=self.runner,
                     )
+                    self._report_stage("automatic rollback completed")
                 except Exception as rollback_error:
+                    (self.backup_dir / "rollback_report.json").write_text(
+                        json.dumps(
+                            {
+                                "schema": "bx1.deployment.rollback.v2",
+                                "release_version": RELEASE_VERSION,
+                                "status": "ROLLBACK_FAILED",
+                                "automatic": True,
+                                "completed_at": time.time(),
+                                "backup_location": str(self.backup_dir),
+                                "deployment_error": str(deployment_error),
+                                "rollback_error": str(rollback_error),
+                                "live_service_touched": False,
+                            },
+                            indent=2,
+                            sort_keys=True,
+                        )
+                        + "\n",
+                        encoding="utf-8",
+                    )
                     raise DeploymentError(
                         "deployment failed and automatic rollback also failed: %s"
                         % rollback_error
-                    )
+                    ) from deployment_error
             raise
 
     def _quarantine_staging(self) -> None:

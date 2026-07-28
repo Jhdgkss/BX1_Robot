@@ -5262,6 +5262,10 @@ class BX1RobotBodyService:
             startup = self.bx1.startup_report()
             return {
                 "milestone": "BX1 OS Alpha",
+                "release_version": str(
+                    self.cfg.get("bx1_os_release_version", "unversioned")
+                ),
+                "release_tag": str(self.cfg.get("bx1_os_release_tag", "")),
                 "integrated": True,
                 "qualification_mode": bool(self.cfg.get("qualification_mode", False)),
                 "observer_only": bool(self.cfg.get("observer_only", False)),
@@ -5282,6 +5286,10 @@ class BX1RobotBodyService:
         except Exception as exc:
             return {
                 "milestone": "BX1 OS Alpha",
+                "release_version": str(
+                    self.cfg.get("bx1_os_release_version", "unversioned")
+                ),
+                "release_tag": str(self.cfg.get("bx1_os_release_tag", "")),
                 "integrated": True,
                 "startup_validated": False,
                 "error": str(exc),

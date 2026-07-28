@@ -1,4 +1,4 @@
-# BX1 OS Alpha Side-by-Side Deployment Guide
+# BX1 OS Alpha v0.1.2 Side-by-Side Deployment Guide
 
 ## Scope and invariant
 
@@ -33,6 +33,10 @@ The default mode is `--install-only`.
 | `--start-canary` | Install/update BX1 OS and manually start `bx1-os-alpha.service` on port 8089. It remains disabled. |
 
 The mode flags are mutually exclusive.
+
+Do not manually start `bx1-os-alpha.service` during install-only deployment or
+qualification. Install-only intentionally leaves the unit loaded, disabled and
+inactive, with no process under `/home/arduino/BX1_OS` and no listener on 8089.
 
 ## Safety guards
 
@@ -92,21 +96,24 @@ Official staging packages should be built from a reviewed, clean commit.
 
 ## Transfer and verify
 
-Example:
+v0.1.2 uses the release basename
+`bx1-os-alpha-20260728_v0_1_2`. From the repository root:
 
 ```bash
-scp Deployment/bx1-os-alpha-<timestamp>.tar.gz \
-  Deployment/bx1-os-alpha-<timestamp>.tar.gz.sha256 \
-  arduino@BX1.local:/home/arduino/
+scp Deployment/bx1-os-alpha-20260728_v0_1_2.tar.gz \
+  Deployment/bx1-os-alpha-20260728_v0_1_2.tar.gz.sha256 \
+  arduino@100.72.130.12:/home/arduino/
 ```
 
 On the robot:
 
 ```bash
 cd /home/arduino
-sha256sum -c bx1-os-alpha-<timestamp>.tar.gz.sha256
-tar -xzf bx1-os-alpha-<timestamp>.tar.gz
-cd bx1-os-alpha-<timestamp>
+sha256sum -c bx1-os-alpha-20260728_v0_1_2.tar.gz.sha256
+BX1_STAGE="$(mktemp -d /home/arduino/bx1-os-alpha-v0.1.2-staging.XXXXXX)"
+tar -xzf bx1-os-alpha-20260728_v0_1_2.tar.gz \
+  -C "$BX1_STAGE"
+cd "$BX1_STAGE/bx1-os-alpha-20260728_v0_1_2"
 ```
 
 ## Read-only dry run
@@ -139,6 +146,13 @@ The installer:
 10. leaves that unit disabled and inactive; and
 11. qualifies that port 8089 is unused and no BX1_OS process is running.
 
+The v0.1.2 process check snapshots `/proc`, excludes the qualifier's exact PID,
+and records command path, executable, working directory and parent evidence.
+It does not exclude unrelated Python, shell, deployment, user or ancestor
+processes. A deployment launcher is excluded only when its exact PID is passed
+by the installer, it is an ancestor, and its command path is the packaged
+`deploy_bx1_os.py` or `deploy_bx1_os.sh`.
+
 Backups live outside the installation:
 
 ```text
@@ -152,6 +166,30 @@ Retain the printed backup path.
 ```bash
 ./deploy_bx1_os.sh --no-start
 ```
+
+Before the real install, authenticate sudo separately so an authentication
+prompt cannot be mistaken for deployment inactivity:
+
+```bash
+sudo -v
+./deploy_bx1_os.sh --install-only
+```
+
+Verify the expected install-only state:
+
+```bash
+test -d /home/arduino/BX1_OS
+systemctl show bx1-os-alpha.service -p LoadState -p ActiveState -p SubState
+systemctl is-enabled bx1-os-alpha.service
+systemctl is-active bx1-web.service
+curl --fail --silent http://127.0.0.1:8088/api/status >/dev/null
+sudo ss -ltnp | grep -E ':(8088|8089)[[:space:]]'
+pgrep -af /home/arduino/BX1_OS || true
+```
+
+Expected: Alpha is `loaded`, `inactive/dead`, and `disabled`; the live service
+is `active`; 8088 listens; 8089 does not; and `pgrep` prints no Alpha process.
+The last deployment output prints the exact backup/report directory.
 
 ## Canary workflow
 
@@ -226,6 +264,28 @@ Rollback:
 
 It contains a hard guard against `bx1-web.service`.
 
+Automatic rollback runs on any qualification failure. The backup evidence
+directory is retained, including:
+
+```text
+deployment_manifest.json
+qualification_report.json
+qualification_stdout.log
+qualification_stderr.log
+rollback_report.json
+```
+
+Inspect the reports with:
+
+```bash
+python3 -m json.tool /home/arduino/BX1_OS_backups/<backup>/qualification_report.json
+python3 -m json.tool /home/arduino/BX1_OS_backups/<backup>/rollback_report.json
+```
+
+If qualification fails, do not start the Alpha service. Confirm that the
+automatic rollback report says `ROLLED_BACK`, recheck the live service and
+ports, preserve the entire backup directory, and investigate before retrying.
+
 ## Qualification evidence
 
 Install-only qualification checks:
@@ -243,3 +303,35 @@ Canary qualification additionally checks BX1 bootstrap, service registry,
 scheduler, event bus, diagnostics, in-memory communication, health monitor,
 port 8089 status and reported observer-only hardware isolation. Hardware bridge
 ownership and actuator access are never required.
+
+## v0.1.2 qualification correction
+
+v0.1.1 recorded only PIDs whose raw command line contained the install-root
+text. Its evidence did not include the qualifier PID, parent, executable,
+working directory or reason, so a qualification-related PID could not be
+distinguished after the event. v0.1.2 retains strict runtime detection while
+excluding only the exact current qualifier and a packaged, explicitly
+identified current launcher ancestor. It also tolerates `/proc` entries
+disappearing or becoming unreadable and records those inspection errors
+without aborting the qualifier.
+
+## Troubleshooting
+
+- **Process-isolation match:** inspect `matching_processes`, `match_reasons`,
+  command line, executable, working directory and parent in the qualification
+  report. Stop only the unrelated Alpha process; never add a broad exclusion.
+- **Port 8089 already used:** identify the listener with
+  `sudo ss -ltnp 'sport = :8089'`; do not stop port 8088 or the live service.
+- **Alpha service active:** run `sudo systemctl stop bx1-os-alpha.service`,
+  confirm it is disabled, then repeat the reviewed install-only workflow.
+- **Live service unhealthy:** stop Alpha staging work and restore the live
+  robot's health through its separately approved operational procedure.
+- **Qualification timeout:** inspect the preserved qualification stdout and
+  stderr logs. The deployer emits ten-second progress messages and fails the
+  qualification after 180 seconds.
+- **Rollback failure:** do not delete or move the backup or quarantine
+  directories. Capture `systemctl show bx1-os-alpha.service`, both port states,
+  and the deployment logs for manual review.
+
+Never use `/home/arduino/Arduino_Q_Client_V1` as the Alpha install root and
+never use `bx1-web.service` as the Alpha service name.

@@ -2,10 +2,33 @@
 
 ## Status
 
-**SIDE-BY-SIDE IMPLEMENTATION COMPLETE — ROBOT STAGING PENDING**
+**v0.1.2 PROCESS-ISOLATION CORRECTION COMPLETE - RELEASE VALIDATION PENDING**
 
 No robot connection, file transfer, service operation or deployment was
 performed while implementing this revision.
+
+## v0.1.1 field finding and v0.1.2 correction
+
+The v0.1.1 qualifier searched only `/proc/<pid>/cmdline`, excluded the PID
+returned by `os.getpid()`, and classified any remaining command line containing
+the literal Alpha install-root text. The field report exposed only PID 88939,
+so its executable, working directory, parent and precise command line were not
+recoverable from that report. The classification itself proves that PID 88939
+was not equal to the qualifier PID seen by the code and that its command line
+contained `/home/arduino/BX1_OS`.
+
+v0.1.2 adds structured, PID-reuse-aware process inspection of `cmdline`, `exe`,
+`cwd` and `stat`/parent relationships. It excludes the exact current qualifier
+PID. A launcher can be excluded only when the installer passes its exact PID,
+the PID is a current ancestor, and its command path identifies the packaged
+Alpha deployment launcher. All exclusion and detection reasons are reported.
+No process environment or open file descriptor content is read.
+
+Qualification output is now retained in the backup directory and the deployer
+prints flushed stage messages plus ten-second qualification heartbeats. The
+qualification subprocess has a 180-second timeout with an explicit timeout
+failure, while existing systemd, virtual-environment and dependency operations
+retain bounded timeouts.
 
 ## Corrected architecture
 
@@ -30,7 +53,8 @@ performed while implementing this revision.
 - Baseline and post-install qualification protect the live unit definition,
   sampled live files, service health and port 8088.
 - Rollback understands absent/pre-existing directories and units, restores
-  active/enabled states exactly, and quarantines failed installations.
+  active/enabled states exactly, quarantines failed installations and retains
+  the backup evidence directory.
 
 ## Required robot-side approval gates
 
@@ -46,9 +70,11 @@ Alpha qualification scope and prohibited.
 
 ## Deployment outcome
 
-- Robot files installed: none
-- Robot services changed: none
-- Robot processes started: none
-- Existing service interrupted: no
-- Qualification on robot: pending
-- Rollback on robot: not used
+- v0.1.1 field qualification: failed on ambiguous process-isolation evidence
+- v0.1.1 automatic rollback: observed successful
+- v0.1.2 robot files installed: none
+- v0.1.2 robot services changed: none
+- v0.1.2 robot processes started: none
+- Existing service interrupted by this work: no
+- v0.1.2 qualification on robot: pending
+- v0.1.2 robot staging: prohibited until this release is reviewed

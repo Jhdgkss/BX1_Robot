@@ -13,6 +13,9 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
+RELEASE_VERSION = "0.1.2"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.1.2"
+
 PRESERVED_PATHS = [
     "python/config.json",
     "python/config.json.*",
@@ -30,9 +33,6 @@ PRESERVED_PATHS = [
 
 ROOT_STARTUP_FILES = [
     "main.py",
-    "START_BX1_WEB.sh",
-    "STOP_BX1_WEB.sh",
-    "REPAIR_BX1_STARTUP.sh",
 ]
 
 TOOL_FILES = [
@@ -63,6 +63,8 @@ DOCUMENTATION_FILES = [
     "COMMUNICATION_FRAMEWORK.md",
     "RUNTIME_INTEGRATION.md",
     "DEPLOYMENT_GUIDE.md",
+    "BX1_OS_ALPHA_DEPLOYMENT_REPORT.md",
+    "BX1_OS_ALPHA_V0_1_2_RELEASE_NOTES.md",
 ]
 
 
@@ -96,8 +98,13 @@ def build_release(
         "schema": "bx1.deployment.release.v1",
         "release_id": release_id,
         "milestone": "BX1 OS Alpha",
+        "release_version": RELEASE_VERSION,
+        "release_tag": RELEASE_TAG,
         "created_at": created_at,
         "source_git_commit": commit,
+        "source_git_tag": RELEASE_TAG
+        if RELEASE_TAG in _git(repo, ["tag", "--points-at", "HEAD"]).splitlines()
+        else "",
         "source_worktree_dirty": dirty,
         "target_service": "bx1-os-alpha.service",
         "default_install_root": "/home/arduino/BX1_OS",
