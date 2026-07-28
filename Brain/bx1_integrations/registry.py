@@ -12,6 +12,10 @@ class IntegrationRegistry:
         self._integrations: Dict[str, BaseIntegration] = {}
 
     def register(self, integration: BaseIntegration) -> None:
+        if not integration.integration_id or integration.integration_id == "base":
+            raise ValueError("Integration must have a stable integration_id")
+        if integration.integration_id in self._integrations:
+            raise ValueError(f"Duplicate integration ID: {integration.integration_id}")
         self._integrations[integration.integration_id] = integration
 
     def get(self, integration_id: str) -> BaseIntegration:

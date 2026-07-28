@@ -1,143 +1,79 @@
 # BX1 Integration Hub
 
-The Integration Hub is the Brain-side framework for external services and reusable robot behaviours. Open **Integrations** in the Brain app to use it.
+The Integration Hub keeps external services outside conversation generation. The desktop Brain calls an integration through the registry/manager, receives an `IntegrationResult`, and only the manager's sanitised `normalised()` representation may be supplied to an LLM. Raw API payloads, endpoints, credentials, headers, HTML and stack traces must not enter prompts or speech.
 
-Mock/demo mode is enabled by default. In mock mode, the GUI and action flow can be tested without contacting OctoPrint, Spotify or robot hardware.
+## Layout and lifecycle
 
-## Safety Levels
+- `base.py`: metadata, configuration contract, connection state, safety levels and normalised results.
+- `registry.py`: stable-ID registration and action permission enforcement. Duplicate IDs are rejected.
+- `manager.py`: controlled built-in discovery, enabled-only initialisation, fault isolation, invocation, health collection, result sanitising and shutdown.
+- `octoprint_connector.py`: multi-address printer integration.
+- `spotify_connector.py`: OAuth/Spotify Connect integration.
+- `permissions.py`: confirmation rules and optional OS credential storage.
+- `events.py`: sanitised integration activity.
+- `example_integration.py`: copyable developer template; it is deliberately not discovered.
 
-- `READ_ONLY`: status, progress and information lookups.
-- `CONTROL`: state-changing actions such as pause, resume, play, pause Spotify or run a behaviour. AI-initiated control actions require confirmation.
-- `SAFETY_CRITICAL`: actions such as starting or cancelling a print. These require explicit confirmation every time and must never run automatically.
+Startup creates known built-ins only; arbitrary Python files are never executed. An import or initialisation failure is recorded without preventing Brain startup. Disabled integrations are discovered for Workshop display but are not initialised. On shutdown, each enabled service is stopped independently.
 
-## Secrets
+## Configuration
 
-Do not store OctoPrint API keys, Spotify tokens or passwords in Git-tracked JSON.
+Non-secret values live below `integrations` in the active `config/app_config_<profile>.json`. Secrets live in the ignored profile-specific `secrets_<profile>.local.json` file (or may be moved through `SecretStore` to Windows Credential Manager). Workshop password fields are blank/masked after saving.
 
-The integration framework prefers Windows Credential Manager through Python `keyring` when available. If keyring is unavailable, secrets are session-only. Activity logs mask API keys, bearer tokens, access tokens and refresh tokens.
+```json
+{
+  "integrations": {
+    "mock_mode": false,
+    "octoprint": {
+      "enabled": true,
+      "base_urls": ["http://printer-one", "http://printer-two"],
+      "connect_timeout": 2.0,
+      "request_timeout": 8.0,
+      "last_successful_endpoint": "http://printer-two"
+    },
+    "spotify": {
+      "enabled": true,
+      "client_id": "...",
+      "redirect_uri": "http://127.0.0.1:8765/spotify/callback",
+      "preferred_device": "Workshop speaker",
+      "request_timeout": 8.0
+    }
+  }
+}
+```
 
-## OctoPrint
+Legacy `octoprint_url`, `octoprint_server_url`, or `server_url` values are copied into `base_urls`. Unknown keys remain intact. Before the first on-disk migration the Brain creates an adjacent `.pre-integrations.bak`.
 
-Available from **Integrations / OctoPrint**.
+## Adding an integration
 
-Fields:
+Copy `example_integration.py`, choose a unique stable ID, define metadata, `configuration_schema`, validation and capabilities, then implement bounded-timeout actions returning `IntegrationResult`. Mark state-changing capabilities `CONTROL` or `SAFETY_CRITICAL`. Add the module/class to the fixed built-in list in `IntegrationManager.builtins`; do not scan arbitrary folders. Add mocked registration, disabled, failure, redaction and action tests. Workshop should render/adapt the schema rather than contain service implementation.
 
-- server URL
-- session-only API key
-- mock/demo mode
+## OctoPrint troubleshooting
 
-Read-only actions:
+Enter addresses separated by semicolons in Workshop. Inputs may be bare IPs/hostnames, full HTTP(S) URLs or pasted Markdown links. A trailing `/api` is removed so API paths are not duplicated. The last successful address is tried first, followed by configured order, with finite connect/request timeouts. `X-Api-Key` is the only API authentication header used.
 
-- connection/version status
-- printer state
-- nozzle temperature
-- bed temperature
-- current job
-- progress
-- estimated time remaining
-- file list
+Connection test distinguishes timeout, refused connection, unreachable host, DNS/`.local` failure, rejected API key and unexpected responses. “Could not reach” does not imply the printer itself is offline. Once the server is reachable, printer state may separately show disconnected. Printer-changing operations remain behind existing Workshop confirmation/safety levels.
 
-Controlled actions:
+## Spotify reconnection
 
-- pause print
-- resume print
-- select file
-- start print
-- cancel print
+Create a Spotify developer application and register the redirect URI exactly as shown in Workshop. Save the client ID, optional client secret, redirect URI and preferred device. Connect/Reconnect generates PKCE authorization data; the returned authorization code must be exchanged and its refresh token saved. Playback control requires appropriate scopes, usually Spotify Premium, and an available Spotify Connect device. Open Spotify on the preferred device if the account is authenticated but no device appears. Authentication expiry, Premium/permission denial, no device and rate limiting are reported separately.
 
-Starting or cancelling a print must be explicitly confirmed. Arbitrary G-code is not exposed to the AI.
+Connect/Reconnect starts a one-use loopback callback listener, opens the browser, validates OAuth state, exchanges the PKCE code, persists the refresh token in the local secret store, tests the account, and then stops the listener. The redirect URI in Spotify Developer Dashboard must exactly match Workshop.
 
-## Spotify
+### Playing through the physical robot
 
-Available from **Integrations / Spotify**.
+Spotify audio is delivered by Spotify Connect, not by the Web API or BX1's TTS audio download path. The physical robot must therefore run a Spotify-capable client and appear in Spotify's device list. In Workshop, set **Robot playback device** to that device's exact Spotify Connect name (or set `robot_device_id` in configuration).
 
-The connector uses OAuth Authorization Code with PKCE. Live playback must happen through an existing Spotify client or Spotify Connect device. Robot Brain does not download, proxy, record or stream Spotify audio.
+Requests arriving from `robot_microphone` use this robot device strictly. Brain will transfer playback to it before playing. It will not fall back to a phone or Brain PC, because that would make a robot voice command play in the wrong place. If the configured robot device is missing, Brain asks the operator to start Spotify Connect on the robot and does not claim playback began.
 
-Capabilities:
+Typed desktop requests continue to use the ordinary preferred/active-device policy.
 
-- get playback state
-- list available devices
-- transfer playback
-- play
-- pause
-- next
-- previous
-- volume
-- queue a selected track
+## Tests
 
-Live OAuth callback completion is future work. Mock/demo mode lets the GUI and permission flow run without a Spotify login.
+From `Brain`:
 
-## Robot Behaviours
+```powershell
+python tests/test_integration_hub.py -v
+python tests/test_gui_workflow_v212.py
+```
 
-Available from **Integrations / Robot Behaviours**.
-
-Built-in routines:
-
-- `greeting`
-- `celebration`
-- `curious`
-- `listening`
-- `simple_dance`
-
-Choreography steps may contain head yaw, head pitch, head roll, mouth LED colour/intensity, an optional spoken phrase, an optional sound cue and a wheel command placeholder.
-
-Head and LED limits are enforced. Wheel movement is disabled by default. The global stop action clears the active routine. Hardware commands are not sent during mock/demo mode.
-
-## Voice Command Status
-
-The Integration Hub exposes structured actions for future conversation-engine routing, but natural-language voice commands are not enabled yet.
-
-Planned read-only commands:
-
-- "What is the printer status?"
-- "How is the print going?"
-- "What percentage is the print at?"
-- "How hot is the nozzle?"
-- "How hot is the bed?"
-- "What is playing on Spotify?"
-- "What Spotify device is active?"
-
-Planned control commands:
-
-- "Pause the print."
-- "Resume the print."
-- "Cancel the print."
-- "Pause Spotify."
-- "Resume Spotify."
-- "Skip this track."
-- "Set Spotify volume to 40 percent."
-- "Run greeting behaviour."
-- "Do the celebration routine."
-- "Stop behaviour."
-
-Until command routing is added, use the Integrations page buttons.
-
-## Support Mention Responder Capability
-
-Available from **Integrations / Capability Forge** as the **Import Support Demo** capability package.
-
-This is the safe first version of the workgroup support idea. It is messaging-platform neutral and runs as an installable capability package until a legitimate connector, such as an official business messaging API, is added.
-
-Settings:
-
-- trigger mention, default `@John_Support`
-- approved group IDs or names
-- draft-only mode, enabled by default
-
-Actions:
-
-- scan approved groups for support mentions
-- draft a technical support reply
-- send an approved reply
-
-Only approved groups are scanned. Messages from unapproved groups are ignored even if they contain the trigger mention. Sending is a NETWORK_CONTROL capability action and requires explicit confirmation. Draft-only mode blocks sending entirely.
-
-The intended operator flow is:
-
-1. A work support group message includes `@John_Support`.
-2. BX1 detects it only if the group is approved.
-3. BX1 drafts a reply with notes and confidence.
-4. The user reviews or edits the reply.
-5. The user explicitly approves sending, or leaves draft-only mode enabled.
-
-The old hard-coded Support Assistant integration has been superseded by this package workflow so it can be validated, tested, installed, disabled, removed and rolled back like other user-added capabilities.
+All service calls in tests use mocks; a printer and Spotify account are not required.

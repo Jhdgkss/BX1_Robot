@@ -533,6 +533,11 @@ class TextToSpeech:
             except Exception:
                 data = {"raw": raw.decode("utf-8", errors="replace")[:1000]}
             report["response"] = data
+            report["effective_engine"] = data.get("effective_engine") or data.get("engine")
+            report["effective_voice"] = data.get("effective_voice") or data.get("voice")
+            report["fallback_reason"] = data.get("fallback_reason", "")
+            report["audio_duration_sec"] = data.get("audio_duration_sec") or data.get("duration_sec")
+            report["audio_format"] = data.get("format") or payload.get("format")
             if not isinstance(data, dict) or not data.get("ok", False):
                 report["error"] = str((data or {}).get("error") or (data or {}).get("detail") or data)
                 return report
@@ -2892,6 +2897,11 @@ def _bx1_test_speech_blocking(self: TextToSpeech, text: str) -> dict:
             report["voice"] = getattr(self.cfg, "brain_tts_voice", "active_profile")
             tts_report = self._request_brain_tts_audio(text)
             report["brain_tts"] = tts_report
+            report["effective_engine"] = tts_report.get("effective_engine") or tts_report.get("backend")
+            report["effective_voice"] = tts_report.get("effective_voice") or report["voice"]
+            report["fallback_reason"] = tts_report.get("fallback_reason", "")
+            report["audio_format"] = tts_report.get("audio_format")
+            report["audio_duration_sec"] = tts_report.get("audio_duration_sec")
             if not tts_report.get("ok"):
                 report["message"] = "Brain voice service did not generate audio: " + str(tts_report.get("error") or tts_report)
                 return report

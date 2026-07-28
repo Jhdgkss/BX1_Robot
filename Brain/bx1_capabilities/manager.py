@@ -10,11 +10,13 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from bx1_capabilities.manifest import load_manifest, validate_manifest_dict
-from bx1_capabilities.models import CapabilityError, CapabilityRecord, CapabilityRunResult, CapabilityValidationError
+from bx1_capabilities.models import CapabilityAction, CapabilityError, CapabilityManifest, CapabilityRecord, CapabilityRunResult, CapabilityValidationError
+from bx1_capabilities.reminder_clock import ReminderClockService
 from bx1_capabilities.package_io import export_folder_to_zip, import_zip_to_folder, validate_package_folder
 from bx1_capabilities.runner import CapabilityRunner
 from bx1_capabilities.scanner import scan_capability_source
-from bx1_capabilities.templates import create_greeting_template, create_support_responder_package
+from bx1_capabilities.templates import create_greeting_template, create_proposal_package, create_support_responder_package
+from bx1_capabilities.design import CapabilityProposal
 
 
 FOLDER_README = """# BX1 Runtime Capabilities
@@ -34,7 +36,10 @@ JSON input/output and no MainWindow object.
 
 
 class CapabilityManager:
-    def __init__(self, root: Path) -> None:
+    def __init__(
+        self, root: Path, *, reminder_service: Optional[ReminderClockService] = None,
+        include_builtin_reminder: bool = False, reminder_unavailable_reason: str = "",
+    ) -> None:
         self.root = Path(root)
         self.workshop_dir = self.root / "workshop"
         self.installed_dir = self.root / "installed"
@@ -42,17 +47,83 @@ class CapabilityManager:
         self.archive_dir = self.root / "archive"
         self.quarantine_dir = self.root / "quarantine"
         self.runner = CapabilityRunner()
+        self.activity: List[Dict[str, Any]] = []
+        self.reminder_service = reminder_service
+        self.reminder_unavailable_reason = str(reminder_unavailable_reason or "")
+        self.include_builtin_reminder = bool(include_builtin_reminder or reminder_service is not None)
+        self._builtin_disabled: set[str] = set()
+        self._builtin_state_path = self.root / "builtin_state.json"
         for folder in (self.workshop_dir, self.installed_dir, self.disabled_dir, self.archive_dir, self.quarantine_dir):
             folder.mkdir(parents=True, exist_ok=True)
         readme = self.root / "README.md"
         if not readme.exists():
             readme.write_text(FOLDER_README, encoding="utf-8")
+        if self.include_builtin_reminder:
+            try:
+                state_data = json.loads(self._builtin_state_path.read_text(encoding="utf-8")) if self._builtin_state_path.exists() else {}
+                self._builtin_disabled = {str(item) for item in state_data.get("disabled", [])}
+            except Exception:
+                self._builtin_disabled = set()
+            if self.reminder_service is None and not self.reminder_unavailable_reason:
+                self.reminder_service = ReminderClockService(self.root / "builtin_data" / "reminder_clock")
+            if self.reminder_service is not None:
+                self.reminder_service.activity = lambda event, message: self._record_activity(event, "reminder_clock", message)
+            else:
+                self._builtin_disabled.add("reminder_clock")
+                self._record_activity("unavailable", "reminder_clock", self.reminder_unavailable_reason)
+            self._archive_mock_reminder_package()
+
+    def _archive_mock_reminder_package(self) -> None:
+        for folder in (self.installed_dir, self.disabled_dir):
+            source = folder / "reminder_clock"
+            if source.exists():
+                target = self.archive_dir / "reminder_clock" / f"replaced_by_builtin_{int(time.time())}"
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.move(str(source), str(target))
+                self._record_activity("updated", "reminder_clock", "Mock Reminder Clock archived and replaced by functional built-in v1.0.0.")
+
+    def _save_builtin_state(self) -> None:
+        self._builtin_state_path.write_text(json.dumps({"disabled": sorted(self._builtin_disabled)}, indent=2), encoding="utf-8")
+
+    def _reminder_manifest(self) -> CapabilityManifest:
+        actions = [
+            CapabilityAction(name, name.replace("_", " ").title(), ["WRITE_LOCAL_DATA"], name in {"cancel_reminder", "dismiss_reminder"})
+            for name in ("create_reminder", "create_alarm", "list_reminders", "cancel_reminder", "snooze_reminder", "dismiss_reminder", "get_reminder_status")
+        ]
+        runtime_status = "unavailable" if self.reminder_service is None else "functional"
+        last_test = self.reminder_unavailable_reason or "built-in validated"
+        raw = {"runtime_status": runtime_status, "last_test_result": last_test}
+        return CapabilityManifest(
+            "reminder_clock", "Reminder Clock", "1.0.0",
+            "Persistent profile-local reminders and alarms with a background scheduler.",
+            "tool", ["remind me to check something", "set an alarm for tomorrow", "list my pending reminders"],
+            actions, ["WRITE_LOCAL_DATA"], {"cancel_reminder": "explicit", "dismiss_reminder": "explicit"},
+            [], [], 5.0, [], {}, {"controls": [{"type": "status", "id": "scheduler", "label": "Scheduler"}]},
+            "BX1 Brain built-in", "", "2.12.0", "builtin", True,
+            ["Reminder text is stored as data and never executed."],
+            ["Cannot execute reminder text.", "Cannot access network services.", "Cannot run shell commands."], raw,
+        )
 
     def create_addon_template(self, capability_id: str = "workshop_greeting") -> Path:
         return create_greeting_template(self.workshop_dir / capability_id, capability_id)
 
     def create_support_demo_package(self) -> Path:
         return create_support_responder_package(self.workshop_dir / "support_mention_responder")
+
+    def design_proposal(self, proposal: CapabilityProposal) -> Path:
+        path = create_proposal_package(self.workshop_dir / proposal.capability_id, proposal)
+        self._record_activity("design_generated", proposal.capability_id, f"Design generated for {proposal.capability_name}.")
+        return path
+
+    def _record_activity(self, event: str, capability_id: str, message: str) -> None:
+        self.activity.append({"timestamp": time.time(), "event": event, "capability_id": capability_id, "message": message})
+        self.activity = self.activity[-500:]
+
+    def find_action(self, action_ids: set[str]) -> Optional[CapabilityRecord]:
+        for record in self.list_records():
+            if {action.action_id for action in record.manifest.actions} & set(action_ids):
+                return record
+        return None
 
     def import_addon(self, source: Path) -> Path:
         source = Path(source)
@@ -75,6 +146,7 @@ class CapabilityManager:
         if manifest.checksum and manifest.checksum != actual_checksum:
             raise CapabilityValidationError("capability.py checksum does not match manifest.")
         scan_capability_source(package_dir / "capability.py")
+        self._record_activity("validation_passed", manifest.capability_id, "Manifest and source safety validation passed.")
         return {"ok": True, "manifest": manifest, "checksum": actual_checksum}
 
     def run_tests(self, package_dir: Path) -> Dict[str, Any]:
@@ -89,6 +161,8 @@ class CapabilityManager:
         )
         if proc.returncode != 0:
             raise CapabilityValidationError("Capability tests failed:\n" + proc.stdout + proc.stderr)
+        manifest = load_manifest(Path(package_dir) / "manifest.json")
+        self._record_activity("tests_passed", manifest.capability_id, "Automated capability tests passed.")
         return {"ok": True, "stdout": proc.stdout, "stderr": proc.stderr}
 
     def mock_execute(self, package_dir: Path, action: str, parameters: Optional[Dict[str, Any]] = None, settings: Optional[Dict[str, Any]] = None, *, confirmed: bool = False) -> CapabilityRunResult:
@@ -101,18 +175,27 @@ class CapabilityManager:
         self.validate_package(package_dir)
         self.run_tests(package_dir)
         manifest = load_manifest(Path(package_dir) / "manifest.json")
+        if manifest.capability_id == "reminder_clock" and self.include_builtin_reminder:
+            raise CapabilityValidationError("Reminder Clock is a unique built-in capability; install a versioned Brain update instead.")
         target = self.installed_dir / manifest.capability_id
         if target.exists():
+            current_manifest = load_manifest(target / "manifest.json")
+            if current_manifest.version == manifest.version and current_manifest.checksum == manifest.checksum:
+                raise CapabilityValidationError(f"Capability {manifest.capability_id} {manifest.version} is already installed.")
             archive_target = self.archive_dir / manifest.capability_id / f"{int(time.time())}_{manifest.version}"
             archive_target.parent.mkdir(parents=True, exist_ok=True)
             shutil.move(str(target), str(archive_target))
         if (self.disabled_dir / manifest.capability_id).exists():
             shutil.rmtree(self.disabled_dir / manifest.capability_id)
         shutil.copytree(package_dir, target)
+        self._record_activity("installed", manifest.capability_id, "Capability installed after explicit approval.")
         return CapabilityRecord(manifest, str(target), "installed")
 
     def list_records(self) -> List[CapabilityRecord]:
         records: List[CapabilityRecord] = []
+        if self.include_builtin_reminder:
+            state = "disabled" if "reminder_clock" in self._builtin_disabled else "installed"
+            records.append(CapabilityRecord(self._reminder_manifest(), "builtin://reminder_clock", state))
         for state, folder in (("installed", self.installed_dir), ("disabled", self.disabled_dir), ("quarantine", self.quarantine_dir)):
             for child in sorted(folder.iterdir()) if folder.exists() else []:
                 if child.is_dir() and (child / "manifest.json").exists():
@@ -129,6 +212,13 @@ class CapabilityManager:
         raise FileNotFoundError(f"Capability not found: {capability_id}")
 
     def disable(self, capability_id: str) -> None:
+        if capability_id == "reminder_clock" and self.include_builtin_reminder:
+            self._builtin_disabled.add(capability_id)
+            self._save_builtin_state()
+            if self.reminder_service is not None:
+                self.reminder_service.shutdown()
+            self._record_activity("disabled", capability_id, "Capability disabled.")
+            return
         source = self.installed_dir / capability_id
         if not source.exists():
             return
@@ -136,8 +226,19 @@ class CapabilityManager:
         if target.exists():
             shutil.rmtree(target)
         shutil.move(str(source), str(target))
+        self._record_activity("disabled", capability_id, "Capability disabled.")
 
     def enable(self, capability_id: str) -> None:
+        if capability_id == "reminder_clock" and self.include_builtin_reminder:
+            if self.reminder_service is None:
+                self._record_activity("enable_failed", capability_id, self.reminder_unavailable_reason)
+                return
+            self._builtin_disabled.discard(capability_id)
+            self._save_builtin_state()
+            if self.reminder_service is not None:
+                self.reminder_service.start()
+            self._record_activity("enabled", capability_id, "Capability enabled.")
+            return
         source = self.disabled_dir / capability_id
         if not source.exists():
             return
@@ -145,14 +246,18 @@ class CapabilityManager:
         if target.exists():
             shutil.rmtree(target)
         shutil.move(str(source), str(target))
+        self._record_activity("enabled", capability_id, "Capability enabled.")
 
     def remove(self, capability_id: str) -> None:
+        if capability_id == "reminder_clock" and self.include_builtin_reminder:
+            raise CapabilityValidationError("The built-in Reminder Clock cannot be removed; it can be disabled.")
         for folder in (self.installed_dir, self.disabled_dir):
             source = folder / capability_id
             if source.exists():
                 target = self.archive_dir / capability_id / f"removed_{int(time.time())}"
                 target.parent.mkdir(parents=True, exist_ok=True)
                 shutil.move(str(source), str(target))
+                self._record_activity("removed", capability_id, "Capability moved to the archive.")
                 return
 
     def rollback(self, capability_id: str) -> CapabilityRecord:
@@ -179,6 +284,27 @@ class CapabilityManager:
         record = self.get_record(capability_id)
         if record.state != "installed":
             return CapabilityRunResult(False, capability_id, action, error="disabled", message="Capability is not enabled.")
+        if capability_id == "reminder_clock" and self.reminder_service is not None:
+            action_meta = next((item for item in record.manifest.actions if item.action_id == action), None)
+            if action_meta is None:
+                return CapabilityRunResult(False, capability_id, action, error="unknown_action", message=f"Unknown action: {action}")
+            if action_meta.confirmation_required and not confirmed:
+                return CapabilityRunResult(False, capability_id, action, error="confirmation_required", message="Action requires confirmation.", requires_confirmation=True)
+            self._record_activity("action_invoked", capability_id, f"Action {action} invoked.")
+            started = time.perf_counter()
+            try:
+                result = self.reminder_service.execute(action, parameters or {})
+            except Exception as exc:
+                self._record_activity("runtime_error", capability_id, f"Action {action} failed: {exc}")
+                return CapabilityRunResult(False, capability_id, action, error="runtime_error", message=str(exc), duration_s=time.perf_counter() - started)
+            ok = bool(result.get("ok"))
+            self._record_activity("action_result", capability_id, f"Action {action}: {'success' if ok else result.get('error', 'failed')}.")
+            return CapabilityRunResult(ok, capability_id, action, result, str(result.get("message") or ""), str(result.get("error") or ""), time.perf_counter() - started)
+        if capability_id == "reminder_clock" and self.include_builtin_reminder:
+            return CapabilityRunResult(
+                False, capability_id, action, error="unavailable",
+                message=self.reminder_unavailable_reason or "Reminder Clock is unavailable.",
+            )
         return self.mock_execute(Path(record.path), action, parameters or {}, record.manifest.settings_schema, confirmed=confirmed)
 
     def match_trigger(self, text: str) -> Optional[CapabilityRecord]:

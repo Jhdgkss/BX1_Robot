@@ -115,6 +115,15 @@ class GuiModernisationTests(unittest.TestCase):
         self.assertEqual(light["name"], "light")
         self.assertNotEqual(dark["background"], light["background"])
 
+    def test_sidebar_theme_token_minimums(self) -> None:
+        from bx1_ui.theme_manager import builtin_themes, theme_to_legacy_palette
+
+        legacy = theme_to_legacy_palette(builtin_themes()["engineering_blue"])
+        self.assertGreaterEqual(int(legacy["navigation_font_size"]), 13)
+        self.assertGreaterEqual(int(legacy["navigation_item_height"]), 40)
+        self.assertGreaterEqual(int(legacy["sidebar_expanded_width"]), 220)
+        self.assertLessEqual(int(legacy["sidebar_collapsed_width"]), 96)
+
     def test_existing_important_workspaces_still_reachable(self) -> None:
         registry = build_default_page_registry()
         checks = {
@@ -149,6 +158,12 @@ class GuiModernisationTests(unittest.TestCase):
         window.integration_registry = IntegrationRegistry.load_defaults([_Integration(IntegrationSettings(mock_mode=True))])
         MainWindow.refresh_mission_cards(window)
         self.assertIn("1 connectors", window.mission_cards["INTEGRATIONS"].text)
+
+    def test_dashboard_uses_two_column_chart_layout(self) -> None:
+        source = (ROOT / "main_pyqt.py").read_text(encoding="utf-8")
+        self.assertIn("MetricChartCard", source)
+        self.assertIn("offset // 2", source)
+        self.assertNotIn("offset // 3 + 1", source)
 
 
 if __name__ == "__main__":

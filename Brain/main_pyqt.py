@@ -32,6 +32,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 
 def _safe_profile_slug(value: str) -> str:
@@ -233,15 +234,30 @@ from bx1_services.robot_release_builder import (
 from bx1_integrations.base import IntegrationSettings
 from bx1_integrations.dance_service import DanceService
 from bx1_integrations.events import IntegrationEventLog, mask_secret_text
-from bx1_integrations.octoprint_connector import OctoPrintConnector
+from bx1_integrations.manager import IntegrationManager
+from bx1_integrations.octoprint_connector import OctoPrintConnector, migrate_octoprint_config
 from bx1_integrations.registry import IntegrationRegistry
+from bx1_integrations.router import route_integration_request
 from bx1_integrations.spotify_connector import SpotifyConnector
+from bx1_integrations.spotify_oauth import SpotifyOAuthCallback
 from bx1_capabilities.manager import CapabilityManager
-from bx1_capabilities.models import CapabilityRunResult
+from bx1_capabilities.models import CapabilityRunResult, CapabilityValidationError
+from bx1_capabilities.design import (
+    PendingProposalState, classify_capability, detect_capability_gap,
+    proposal_from_description, reminder_proposal,
+)
+from bx1_capabilities.awareness import (
+    PendingReminderState, capability_status_target, confirmed_reminder_result,
+    guard_capability_claims, parse_reminder_request, reminder_availability,
+    reminder_management_request, safe_capability_summary,
+)
+from bx1_capabilities.reminder_clock import ReminderClockService
 from bx1_ui.app_shell import build_default_page_registry
 from bx1_ui.command_palette import CommandPaletteIndex
 from bx1_ui.common_widgets import make_status_card
+from bx1_ui.chart_widgets import BoundedTelemetryHistory, MetricChartCard, format_metric
 from bx1_ui.navigation import NavigationState
+from bx1_ui.theme_manager import ThemeManager, theme_to_legacy_palette
 
 from bx1_modules.bx1_protocol import (
     ACTION_SCHEMA,
@@ -303,6 +319,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "api_show_response_source_labels": True,
     "api_request_event_history": 120,
     "app_version": "Robot Brain V2.12.0 - Runtime Workflow and Studios",
+    "timezone": "Europe/London",
     "robot_name": "BX1",
     "robot_profile": "small two-wheeled balancing robot assistant",
     "robot_subtitle": "Robot body API, live tools, voice, memory, telemetry and manual debugging.",
@@ -583,6 +600,13 @@ def load_config() -> Dict[str, Any]:
         # One-way migration from older BX1 builds. Saving will write to config/app_config.json.
         loaded = _read_json_dict(LEGACY_CONFIG_PATH)
     if loaded:
+        migrated, changed = migrate_octoprint_config(loaded)
+        if changed and CONFIG_PATH.exists():
+            backup = CONFIG_PATH.with_suffix(CONFIG_PATH.suffix + ".pre-integrations.bak")
+            if not backup.exists():
+                shutil.copy2(CONFIG_PATH, backup)
+            loaded = migrated
+            CONFIG_PATH.write_text(json.dumps(loaded, indent=2, ensure_ascii=False), encoding="utf-8")
         cfg = deep_merge_config(cfg, loaded)
     secrets = _read_json_dict(SECRETS_PATH)
     if secrets:
@@ -642,6 +666,21 @@ def save_config(cfg: Dict[str, Any]) -> None:
     CONFIG_PATH.write_text(json.dumps(current, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
+def build_integration_manager(cfg: Dict[str, Any], *, mock_mode: Optional[bool] = None) -> IntegrationManager:
+    configured = dict(cfg.get("integrations") or {})
+    stored_secrets = _read_json_dict(SECRETS_PATH).get("integrations") or {}
+    use_mock = bool(configured.get("mock_mode", True)) if mock_mode is None else bool(mock_mode)
+    octo_values = dict(configured.get("octoprint") or {})
+    spotify_values = dict(configured.get("spotify") or {})
+    octo_values.setdefault("enabled", False)
+    spotify_values.setdefault("enabled", False)
+    return IntegrationManager([
+        OctoPrintConnector(IntegrationSettings(octo_values, dict(stored_secrets.get("octoprint") or {}), mock_mode=use_mock)),
+        SpotifyConnector(IntegrationSettings(spotify_values, dict(stored_secrets.get("spotify") or {}), mock_mode=use_mock)),
+        DanceService(IntegrationSettings(mock_mode=use_mock)),
+    ])
+
+
 THEME_PRESETS: Dict[str, Dict[str, str]] = {
     "glass_blue": {"bg0": "rgba(24, 74, 112, 220)", "bg1": "rgba(7, 18, 31, 222)", "bg2": "rgba(3, 10, 18, 232)", "panel": "rgba(13, 28, 44, 198)", "border": "rgba(91, 160, 207, 105)", "text": "#e7f3fc", "muted": "#95adc1", "title": "#f5fbff", "input": "rgba(3, 13, 24, 190)", "input2": "rgba(5, 19, 33, 200)", "accent": "#279ddd", "accent2": "#35d8ac", "primary0": "#16845e", "primary1": "#0f503c", "danger0": "#8a3042", "danger1": "#451722", "tab": "rgba(14, 38, 59, 205)", "tab_selected": "rgba(27, 89, 128, 220)", "hint_bg": "rgba(7, 29, 46, 188)", "hint_border": "rgba(68, 151, 202, 100)", "pill": "rgba(5, 24, 39, 190)", "pill_text": "#8ee9ff", "warn": "#ffd05a"},
     "midnight_blue": {"bg0": "#183653", "bg1": "#0b1118", "bg2": "#05080c", "panel": "rgba(16, 27, 39, 235)", "border": "#26394d", "text": "#dce8f4", "muted": "#8fa5ba", "title": "#eef7ff", "input": "#07101a", "input2": "#09131e", "accent": "#1d75aa", "accent2": "#31d07d", "primary0": "#1e6947", "primary1": "#123727", "danger0": "#722735", "danger1": "#3b141d", "tab": "#101b27", "tab_selected": "#1d3c58", "hint_bg": "#07131e", "hint_border": "#24415a", "pill": "#09131e", "pill_text": "#8fe7ff", "warn": "#ffca3a"},
@@ -692,18 +731,11 @@ REQUIRED_THEME_KEYS = {
 def load_external_themes() -> None:
     """Load user-editable themes from themes/*.json without breaking built-in presets."""
     try:
-        if not THEMES_DIR.exists():
-            return
-        for path in sorted(THEMES_DIR.glob("*.json")):
-            try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except Exception:
-                continue
-            if not isinstance(data, dict):
-                continue
-            for name, theme in data.items():
-                if isinstance(name, str) and isinstance(theme, dict) and REQUIRED_THEME_KEYS.issubset(set(theme.keys())):
-                    THEME_PRESETS[name] = {k: str(v) for k, v in theme.items()}
+        manager = ThemeManager(THEMES_DIR)
+        for theme_id, theme in manager.load_all().items():
+            THEME_PRESETS[theme_id] = theme_to_legacy_palette(theme)
+            THEME_DISPLAY_NAMES[theme_id] = theme.display_name
+            THEME_DESCRIPTIONS[theme_id] = theme.description or "BX1 Theme Builder theme."
     except Exception:
         pass
 
@@ -1509,12 +1541,15 @@ class GuiSignals(QObject):
     voice_status = pyqtSignal(str)
     performance_updated = pyqtSignal(dict)
     body_voice_updated = pyqtSignal(dict)
+    capability_proposal_ready = pyqtSignal(dict)
 
 
 class BX1BrainCore:
     def __init__(self, signals: GuiSignals, cfg: Dict[str, Any]) -> None:
         self.signals = signals
         self.cfg = cfg
+        self.startup_messages: List[str] = []
+        self.configuration_errors: List[str] = []
         self.latest_body_state: Dict[str, Any] = {}
         self.latest_body_state_at = 0.0
         self.latest_frame: Dict[str, Any] = {}
@@ -1550,7 +1585,64 @@ class BX1BrainCore:
             overlap_chars=int(cfg.get("rag_chunk_overlap_chars", 180) or 180),
         )
         self.behaviour_store = BehaviourStore(RUNTIME_DIR / "workshop" / "behaviours")
-        self.capability_manager = CapabilityManager(RUNTIME_DIR / "capabilities")
+        configured_timezone = str(cfg.get("timezone") or "").strip()
+        default_timezone = str(DEFAULT_CONFIG.get("timezone") or "").strip()
+        reminder_timezone = configured_timezone or default_timezone
+        reminder_error = ""
+        if configured_timezone and configured_timezone != default_timezone:
+            try:
+                ZoneInfo(configured_timezone)
+            except (ZoneInfoNotFoundError, ValueError) as exc:
+                invalid_message = f"Invalid Reminder Clock timezone configuration: {configured_timezone!r}."
+                self.configuration_errors.append(invalid_message)
+                try:
+                    ZoneInfo(default_timezone)
+                    reminder_timezone = default_timezone
+                    self.startup_messages.append(
+                        f"{invalid_message} Using the application default {default_timezone!r}."
+                    )
+                except (ZoneInfoNotFoundError, ValueError):
+                    reminder_error = (
+                        f"{invalid_message} Reminder Clock is unavailable because timezone data is not installed. "
+                        "Install the tzdata Python package."
+                    )
+        if not reminder_error:
+            try:
+                ZoneInfo(reminder_timezone)
+                self.reminder_clock = ReminderClockService(
+                    RUNTIME_DIR / "reminder_clock",
+                    timezone_name=reminder_timezone,
+                    announce=self._announce_reminder,
+                )
+            except ZoneInfoNotFoundError:
+                reminder_error = (
+                    "Reminder Clock is unavailable because timezone data is not installed. "
+                    "Install the tzdata Python package."
+                )
+                self.reminder_clock = None
+            except (sqlite3.Error, OSError, ValueError) as exc:
+                reminder_error = f"Reminder Clock is unavailable: {exc}"
+                self.reminder_clock = None
+            except Exception as exc:
+                reminder_error = f"Reminder Clock is unavailable: {exc}"
+                self.reminder_clock = None
+        else:
+            self.reminder_clock = None
+        if reminder_error:
+            self.configuration_errors.append(reminder_error)
+            self.startup_messages.append(reminder_error)
+        self.capability_manager = CapabilityManager(
+            RUNTIME_DIR / "capabilities", reminder_service=self.reminder_clock,
+            include_builtin_reminder=True, reminder_unavailable_reason=reminder_error,
+        )
+        self.pending_capability_proposal = PendingProposalState(
+            float(cfg.get("capability_proposal_timeout_seconds", 300) or 300)
+        )
+        self.pending_capability_enable_id = ""
+        self.pending_reminder = PendingReminderState(
+            float(cfg.get("pending_reminder_timeout_seconds", 180) or 180)
+        )
+        self.integration_manager = build_integration_manager(cfg)
         self.body_voice_library = BodyVoiceLibrary(RUNTIME_DIR / "body_voice")
         self.stt_service = FasterWhisperSTTService(cfg, self.log)
         self.last_document_sources: List[Dict[str, Any]] = []
@@ -1560,11 +1652,18 @@ class BX1BrainCore:
         self._init_memory_db()
         if LEGACY_IMPORT_ERROR:
             self.log(f"Local voice import unavailable: {LEGACY_IMPORT_ERROR}")
+        if self.reminder_clock is not None and self.capability_manager.get_record("reminder_clock").state == "installed":
+            self.reminder_clock.start()
         # Dot.TTS runs in WSL, isolated from the Windows speech-recognition stack.
 
     def log(self, message: str) -> None:
         line = f"[{datetime.now().strftime('%Y-%m-%d %H:%M:%S')}] {message}"
         self.signals.log.emit(line)
+
+    def _announce_reminder(self, text: str, record: Dict[str, Any]) -> None:
+        announcement = f"Reminder: {text}"
+        self.signals.chat_received.emit(robot_name_from_cfg(self.cfg), announcement)
+        self.speak_text(announcement, delivery="clear")
 
     def ollama_url(self) -> str:
         return str(self.cfg.get("ollama_url", DEFAULT_CONFIG["ollama_url"])).rstrip("/")
@@ -2583,10 +2682,14 @@ class BX1BrainCore:
         }
 
 
-    def _selected_voice_reference_extra(self) -> Dict[str, str]:
+    def _selected_voice_reference_extra(self, voice_name: str = "") -> Dict[str, str]:
         try:
-            name = str(self.cfg.get("selected_voice_profile") or "BX1 Main Voice")
+            requested = str(voice_name or "").strip()
+            name = requested if requested and requested not in {"active_profile", "active_lab_voice", "brain_app"} else str(self.cfg.get("selected_voice_profile") or "BX1 Main Voice")
             profile = merged_voice_profiles(self.cfg).get(name, {})
+            if requested and not profile:
+                name = str(self.cfg.get("selected_voice_profile") or "BX1 Main Voice")
+                profile = merged_voice_profiles(self.cfg).get(name, {})
             return profile_reference_payload(name, profile)
         except Exception:
             return {}
@@ -2628,7 +2731,9 @@ class BX1BrainCore:
             return False
 
     def _dottts_extra(self, extra: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
-        selected = dict(self._selected_voice_reference_extra())
+        extra_data = dict(extra or {})
+        voice_override = str(extra_data.pop("voice_override", "") or "").strip()
+        selected = dict(self._selected_voice_reference_extra(voice_override))
         options: Dict[str, Any] = {
             **selected,
             "prompt_audio_path": selected.get("audio_prompt_path") or selected.get("reference_audio_path") or "",
@@ -2642,11 +2747,11 @@ class BX1BrainCore:
             "edge_fade_ms": int(self.cfg.get("dottts_edge_fade_ms", 4) or 0),
             "profile": str(self.cfg.get("personality_voice_namespace") or PROFILE_NAME or "bx1"),
         }
-        if extra:
-            options.update(extra)
+        if extra_data:
+            options.update(extra_data)
         return options
 
-    def tts_service_request(self, text: str, *, play: Optional[bool] = None, extra: Optional[Dict[str, Any]] = None, delivery: str = "") -> Dict[str, Any]:
+    def tts_service_request(self, text: str, *, play: Optional[bool] = None, extra: Optional[Dict[str, Any]] = None, delivery: str = "", voice_override: str = "") -> Dict[str, Any]:
         selected_delivery = normalise_delivery(delivery or extract_delivery(text, str(self.cfg.get("dottts_default_delivery") or "normal")).key)
         dialogue = normalise_speech_cues(strip_tts_emotion_tags(text))
         synthesis_text = build_dottts_text(
@@ -2663,11 +2768,11 @@ class BX1BrainCore:
         result = client.speak(
             synthesis_text,
             engine="dottts",
-            voice="active_lab_voice",
+            voice=str(voice_override or "active_lab_voice"),
             play=False,
             robot_id=robot_name_from_cfg(self.cfg),
             audio_format="wav",
-            extra=self._dottts_extra({**(extra or {}), "delivery": selected_delivery}),
+            extra=self._dottts_extra({**(extra or {}), "delivery": selected_delivery, "voice_override": voice_override}),
         )
         result.setdefault("delivery", selected_delivery)
         result.setdefault("delivery_instruction_used", synthesis_text != dialogue)
@@ -2776,15 +2881,31 @@ class BX1BrainCore:
             "fallback_used": True,
         }
 
-    def generate_tts_audio_for_robot(self, text: str, delivery: str = "") -> Dict[str, Any]:
+    def generate_tts_audio_for_robot(self, text: str, delivery: str = "", requested_engine: str = "", requested_voice: str = "", request_source: str = "") -> Dict[str, Any]:
         selected_delivery = normalise_delivery(delivery or extract_delivery(text, str(self.cfg.get("dottts_default_delivery") or "normal")).key)
         speech = self.prepare_text_for_speech(text)
         if not speech:
             return {"ok": False, "error": "No speech text to generate."}
         started = time.perf_counter()
         downloaded = ""
+        requested_engine = str(requested_engine or "").strip().lower()
+        requested_voice = str(requested_voice or "").strip()
+        fallback_reason = ""
         try:
-            result = self.tts_service_request(speech, play=False, delivery=selected_delivery)
+            if requested_engine in {"edge", "edge-tts", "edge_tts"}:
+                fallback_reason = "explicit engine override"
+                audio = self._edge_audio_for_robot(speech)
+                audio.update({
+                    "requested_engine": requested_engine,
+                    "requested_voice": requested_voice,
+                    "effective_engine": "edge",
+                    "effective_voice": audio.get("voice"),
+                    "fallback_reason": fallback_reason,
+                    "request_source": request_source,
+                })
+                self.log(f"Robot TTS request source={request_source or 'unknown'} endpoint=/api/tts requested_engine={requested_engine} requested_voice={requested_voice or '[default]'} effective_engine=edge effective_voice={audio.get('voice')}")
+                return audio
+            result = self.tts_service_request(speech, play=False, delivery=selected_delivery, voice_override=requested_voice)
             if not result.get("ok"):
                 raise RuntimeError(str(result.get("error") or "Dot.TTS returned an unsuccessful response."))
 
@@ -2805,26 +2926,44 @@ class BX1BrainCore:
             downloaded = ""
             published = {
                 key: result[key]
-                for key in ("elapsed_sec", "duration_sec", "sample_rate", "model", "voice", "seed")
+                for key in ("elapsed_sec", "duration_sec", "sample_rate", "model", "voice", "seed", "voice_clone", "reference_audio_path", "active_reference_used", "profile")
                 if key in result
             }
+            effective_voice = str(result.get("voice") or requested_voice or self.cfg.get("selected_voice_profile") or "active_lab_voice")
             published.update({
                 "ok": True,
                 "engine": "dottts",
+                "requested_engine": requested_engine or "brain_default",
+                "requested_voice": requested_voice or "brain_default",
+                "effective_engine": "dottts",
+                "effective_voice": effective_voice,
+                "fallback_reason": fallback_reason,
+                "request_source": request_source,
                 "audio_url": f"/api/audio/{filename}",
                 "relative_audio_url": f"/api/audio/{filename}",
                 "filename": filename,
                 "format": "wav",
+                "audio_duration_sec": result.get("duration_sec"),
                 "transport": "brain_api_proxy",
                 "delivery": selected_delivery,
                 "delivery_instruction_used": bool(result.get("delivery_instruction_used")),
             })
+            self.log(f"Robot TTS request source={request_source or 'unknown'} endpoint=/api/tts requested_engine={requested_engine or '[default]'} requested_voice={requested_voice or '[default]'} effective_engine=dottts effective_voice={effective_voice} fallback={fallback_reason or 'none'} format=wav duration={published.get('audio_duration_sec')}")
             return published
         except Exception as exc:
             self.log(f"Dot.TTS robot audio failed: {exc}")
             if bool(self.cfg.get("edge_fallback_enabled", True)):
                 try:
-                    return self._edge_audio_for_robot(speech)
+                    audio = self._edge_audio_for_robot(speech)
+                    audio.update({
+                        "requested_engine": requested_engine or "brain_default",
+                        "requested_voice": requested_voice or "brain_default",
+                        "effective_engine": "edge",
+                        "effective_voice": audio.get("voice"),
+                        "fallback_reason": str(exc),
+                        "request_source": request_source,
+                    })
+                    return audio
                 except Exception as edge_exc:
                     return {"ok": False, "error": f"Dot.TTS failed: {exc}; Edge failed: {edge_exc}"}
             return {"ok": False, "error": str(exc)}
@@ -2968,6 +3107,13 @@ class BX1BrainCore:
                 +
                 "Do not drift into generic assistant phrasing when live web, weather, memory, camera or API context is added."
             )
+        try:
+            parts.append(
+                "VERIFIED CAPABILITY STATUS (descriptive only; never overrides controlled routing):\n" +
+                json.dumps(safe_capability_summary(self.capability_manager, self.integration_manager, state), ensure_ascii=False)
+            )
+        except Exception:
+            pass
         return "\n\n".join([p for p in parts if p])
 
     def repair_reply_personality(
@@ -3311,6 +3457,168 @@ class BX1BrainCore:
         body_state = data.get("body_state") or data.get("state") or self.latest_body_context()
         if body_state:
             body_state = self.remember_body_state(body_state, source="api_request")
+
+        capability_summary = safe_capability_summary(self.capability_manager, self.integration_manager, body_state)
+        reminder_state = reminder_availability(self.capability_manager.list_records())
+
+        def controlled_capability_reply(reply_text: str, route: str, result_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+            guarded = guard_capability_claims(message, reply_text, capability_summary, verified_action=bool((result_data or {}).get("verified_action")))
+            speech = self.remember_last_reply(guarded)
+            self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), guarded)
+            self.log(f"Route: {route}; Capability: reminder_clock; State: {reminder_state.state}; Result: {str((result_data or {}).get('result') or 'controlled response')}")
+            return {"ok": True, "robot_id": robot_id, "reply": guarded, "speech": speech, "actions": [],
+                    "capability_route": route, "capability_state": reminder_state.state,
+                    "capability_result": result_data or {}, "provenance": provenance,
+                    "stats": {"live_tool_route": route.replace(" ", "_"), "model": "capability-aware-router"}}
+
+        pending_trigger = self.pending_reminder.get()
+        if pending_trigger:
+            status_target = capability_status_target(message)
+            new_request = parse_reminder_request(message)
+            if not status_target and new_request is None and len(message.split()) <= 40:
+                self.pending_reminder.clear()
+                if reminder_state.state != "enabled" or reminder_state.record is None:
+                    return controlled_capability_reply(
+                        "I can't set that reminder because the Reminder Clock capability is no longer enabled.",
+                        "reminder action", {"result": "capability unavailable"},
+                    )
+                action_ids = {action.action_id for action in reminder_state.record.manifest.actions}
+                action = "create_reminder" if "create_reminder" in action_ids else next(iter(action_ids & {"set_reminder", "create_alarm", "set_alarm"}), "")
+                result = self.capability_manager.execute_installed(
+                    reminder_state.record.manifest.capability_id, action,
+                    {"trigger_text": pending_trigger, "reminder_text": message.strip(), "text": message.strip()},
+                )
+                if confirmed_reminder_result(result):
+                    when = result.data.get("confirmed_trigger_datetime") or result.data.get("trigger_datetime") or result.data.get("scheduled_for")
+                    return controlled_capability_reply(
+                        f"Reminder set for {when}: {message.strip()}.", "reminder action",
+                        {"result": "success", "verified_action": True, "data": result.data},
+                    )
+                return controlled_capability_reply(
+                    "The Reminder Clock did not confirm a valid reminder ID and trigger time, so I have not claimed it was set.",
+                    "reminder action", {"result": "unconfirmed", "error": result.error or result.message},
+                )
+            self.pending_reminder.clear()
+
+        status_target = capability_status_target(message)
+        management_action, management_params = reminder_management_request(message)
+        if management_action:
+            if reminder_state.state != "enabled" or reminder_state.record is None:
+                return controlled_capability_reply(
+                    "I don't currently have an enabled Reminder Clock capability.",
+                    "reminder action", {"result": "capability unavailable"},
+                )
+            result = self.capability_manager.execute_installed(
+                reminder_state.record.manifest.capability_id, management_action, management_params,
+                confirmed=management_action in {"cancel_reminder", "dismiss_reminder"},
+            )
+            if not result.ok:
+                return controlled_capability_reply(
+                    result.message or "The reminder action failed.", "reminder action",
+                    {"result": "failed", "error": result.error},
+                )
+            if management_action == "list_reminders":
+                rows = list(result.data.get("reminders") or [])
+                if not rows:
+                    reply = "You have no pending reminders."
+                else:
+                    details = "; ".join(
+                        f"{row.get('message')} at {row.get('trigger_datetime')} (ID {row.get('reminder_id')})"
+                        for row in rows[:10]
+                    )
+                    reply = f"You have {len(rows)} pending reminder{'s' if len(rows) != 1 else ''}: {details}."
+                return controlled_capability_reply(reply, "reminder action", {"result": "success", "verified_action": True})
+            return controlled_capability_reply(
+                result.message or f"{management_action.replace('_', ' ').title()} completed.",
+                "reminder action", {"result": "success", "verified_action": True, "data": result.data},
+            )
+
+        if status_target:
+            if status_target == "reminder_clock":
+                if reminder_state.state == "enabled":
+                    return controlled_capability_reply(
+                        "Yes. I can create, list, cancel and snooze reminders.",
+                        "capability status", {"result": "enabled"},
+                    )
+                if reminder_state.state == "disabled":
+                    self.pending_capability_enable_id = reminder_state.capability_id
+                    return controlled_capability_reply(
+                        "I have a Reminder Clock capability, but it is disabled. Shall I enable it?",
+                        "capability status", {"result": "enable offered"},
+                    )
+                proposal = reminder_proposal(message)
+                self.pending_capability_proposal.set(proposal)
+                return controlled_capability_reply(
+                    "Not currently. I don't have an enabled reminder capability. I can design a Reminder Clock tool for you. Shall I prepare it?",
+                    "capability status", {"result": "design offered"},
+                )
+            if status_target in {"spotify", "octoprint"}:
+                item = self.integration_manager.get(status_target)
+                state_text = "enabled" if item.enabled else "disabled"
+                reply = f"{item.display_name} is {state_text}. Its current connection state is {item.status.value}."
+                speech = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                self.log(f"Route: capability status; Capability: {status_target}; State: {state_text}; Result: {item.status.value}")
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech, "actions": [],
+                        "capability_route": "capability status", "provenance": provenance}
+            if status_target == "all":
+                enabled_caps = [r.manifest.display_name for r in self.capability_manager.list_records() if r.state == "installed"]
+                enabled_integrations = [i.display_name for i in self.integration_manager.all() if i.enabled]
+                names = enabled_caps + enabled_integrations
+                reply = "My enabled optional capabilities are: " + (", ".join(names) if names else "none currently") + ". Built-in conversation, web, documents, voice, and bounded body actions remain available when their services or hardware are connected."
+                speech = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech, "actions": [], "capability_route": "capability status", "provenance": provenance}
+            connected = bool(body_state)
+            label = "head movement" if status_target == "head_movement" else "the temperature sensor"
+            reply = f"{'Yes' if connected else 'Not currently'}. I can use {label} only while the robot body is connected and reports that capability."
+            speech = self.remember_last_reply(reply)
+            self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+            return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech, "actions": [], "capability_route": "capability status", "provenance": provenance}
+
+        reminder_request = parse_reminder_request(message)
+        if reminder_request is not None:
+            if reminder_state.state == "missing":
+                proposal = reminder_proposal(message)
+                self.pending_capability_proposal.set(proposal)
+                return controlled_capability_reply(
+                    "I don't currently have a reminder capability. I can design one for you. Shall I prepare it?",
+                    "reminder action", {"result": "design offered"},
+                )
+            if reminder_state.state == "disabled":
+                self.pending_capability_enable_id = reminder_state.capability_id
+                return controlled_capability_reply(
+                    "I have a Reminder Clock capability, but it is disabled. Shall I enable it?",
+                    "reminder action", {"result": "enable offered"},
+                )
+            if not reminder_request.trigger_text:
+                return controlled_capability_reply(
+                    "When should I remind you?", "reminder action", {"result": "time clarification"},
+                )
+            if not reminder_request.reminder_text:
+                self.pending_reminder.set(reminder_request.trigger_text)
+                return controlled_capability_reply(
+                    f"What would you like me to remind you about at {reminder_request.trigger_text}?",
+                    "reminder action", {"result": "text clarification"},
+                )
+            action_ids = {action.action_id for action in reminder_state.record.manifest.actions}
+            action = "create_reminder" if "create_reminder" in action_ids else next(iter(action_ids & {"set_reminder", "create_alarm", "set_alarm"}), "")
+            result = self.capability_manager.execute_installed(
+                reminder_state.record.manifest.capability_id, action,
+                {"trigger_text": reminder_request.trigger_text, "reminder_text": reminder_request.reminder_text,
+                 "text": reminder_request.reminder_text},
+            )
+            if confirmed_reminder_result(result):
+                when = result.data.get("confirmed_trigger_datetime") or result.data.get("trigger_datetime") or result.data.get("scheduled_for")
+                return controlled_capability_reply(
+                    f"Reminder set for {when}: {reminder_request.reminder_text}.", "reminder action",
+                    {"result": "success", "verified_action": True, "data": result.data},
+                )
+            return controlled_capability_reply(
+                "The Reminder Clock did not confirm a valid reminder ID and trigger time, so I have not claimed it was set.",
+                "reminder action", {"result": "unconfirmed", "error": result.error or result.message},
+            )
+
         behaviour_run_request = self.behaviour_store.match_explicit_request(message)
         capability_match = self.capability_manager.match_trigger(message)
         if capability_match is not None:
@@ -3344,6 +3652,115 @@ class BX1BrainCore:
                 "stats": {"live_tool_route": "capability", "model": "capability-router", "timestamp": datetime.now().strftime("%H:%M:%S")},
                 "provenance": provenance,
             }
+
+        if self.pending_capability_enable_id:
+            low_followup = " ".join(message.lower().split())
+            if low_followup in {"yes", "yes please", "enable it", "go ahead"}:
+                capability_id = self.pending_capability_enable_id
+                self.capability_manager.enable(capability_id)
+                self.pending_capability_enable_id = ""
+                reply = f"I've enabled the {capability_id.replace('_', ' ')} capability."
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [], "provenance": provenance}
+            if low_followup in {"no", "no thanks", "cancel"}:
+                self.pending_capability_enable_id = ""
+            elif low_followup not in {"tell me more", "what does it do"}:
+                self.pending_capability_enable_id = ""
+
+        pending = self.pending_capability_proposal.get()
+        if pending is not None:
+            followup = self.pending_capability_proposal.interpret_followup(message)
+            if followup == "approve_design":
+                package = self.capability_manager.design_proposal(pending)
+                payload = {**pending.to_dict(), "package_path": str(package)}
+                self.signals.capability_proposal_ready.emit(payload)
+                self.pending_capability_proposal.clear()
+                reply = f"I've prepared a {pending.capability_name} {pending.capability_type} for review in the Capability Workshop. Nothing has been installed."
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text,
+                        "actions": [], "capability_proposal": payload, "provenance": provenance,
+                        "stats": {"live_tool_route": "capability_design", "model": "capability-gap-router"}}
+            if followup == "reject":
+                self.pending_capability_proposal.clear()
+                reply = "Understood. I won't prepare that capability."
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [], "provenance": provenance}
+            if followup == "explain":
+                reply = f"{pending.purpose} It would request {', '.join(pending.required_permissions)} and would still require your review before installation."
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [], "provenance": provenance}
+            if followup == "modify":
+                rename = re.search(r"\bcall it\s+(.+?)(?:\s+instead)?[.!]?$", message, re.I)
+                if rename:
+                    pending.capability_name = rename.group(1).strip()
+                if "repeat" in message.lower():
+                    pending.purpose += " Repeating alarms must be supported."
+                    pending.test_requirements.append("Repeating-alarm scheduling and cancellation tests.")
+                if "behaviour" in message.lower():
+                    pending.required_permissions.append("ROBOT_CONTROL")
+                    pending.safety_constraints.append("Robot behaviour remains optional and bounded by body safety limits.")
+                reply = f"I've updated the {pending.capability_name} proposal. Shall I prepare the design now?"
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [], "provenance": provenance}
+            if followup == "topic_changed":
+                self.pending_capability_proposal.clear()
+
+        gap_state, proposal = detect_capability_gap(message, self.capability_manager.list_records())
+        if gap_state in {"missing", "disabled"} and proposal is not None:
+            if gap_state == "disabled":
+                existing = self.capability_manager.find_action({"create_reminder", "create_alarm", "set_reminder", "set_alarm"})
+                self.pending_capability_enable_id = existing.manifest.capability_id if existing else ""
+                reply = f"I already have a {proposal.capability_name} capability, but it is disabled. Shall I enable it?"
+            else:
+                self.pending_capability_proposal.set(proposal)
+                reply = f"I don't currently have a reminder capability. I can design a {proposal.capability_name} tool that stores reminders and announces them at the requested time. Shall I create it?"
+            speech_text = self.remember_last_reply(reply)
+            self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+            return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [],
+                    "capability_gap": gap_state, "capability_proposal": proposal.to_dict(),
+                    "provenance": provenance, "stats": {"live_tool_route": "capability_gap", "model": "capability-gap-router"}}
+
+        enabled_integrations = {
+            item.integration_id for item in self.integration_manager.all() if item.enabled
+        }
+        integration_route = route_integration_request(
+            message, source=str(provenance.get("source") or ""), enabled=enabled_integrations
+        )
+        if integration_route is not None:
+            self.log(
+                f"Integration route: integration={integration_route.integration_id} "
+                f"action={integration_route.action_id} confidence={integration_route.confidence:.2f} "
+                f"reason={integration_route.reason}"
+            )
+            if integration_route.requires_confirmation and not integration_route.arguments.get("confirmed"):
+                reply = f"Please confirm that you want me to {integration_route.action_id.replace('_', ' ')}."
+                speech_text = self.remember_last_reply(reply)
+                self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+                return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [],
+                        "integration_confirmation_required": True, "provenance": provenance,
+                        "stats": {"live_tool_route": "integration_confirmation", "model": "integration-router"}}
+            arguments = dict(integration_route.arguments)
+            confirmed = bool(arguments.pop("confirmed", False))
+            result = self.integration_manager.execute(
+                integration_route.integration_id, integration_route.action_id, arguments,
+                initiated_by_ai=integration_route.integration_id == "octoprint", confirmed=confirmed,
+            )
+            safe_result = self.integration_manager.result_for_llm(result)
+            reply = str(safe_result.get("speakable") or safe_result.get("summary") or
+                        ("The integration confirmed the request." if result.ok else "The integration did not confirm the request."))
+            speech_text = self.remember_last_reply(reply)
+            self.conversation_history.extend(({"role": "user", "content": message}, {"role": "assistant", "content": reply}))
+            self.conversation_history = self.conversation_history[-16:]
+            self.signals.chat_received.emit(self._response_speaker(effective_cfg, provenance), reply)
+            self.log(f"Integration result: integration={result.integration} action={result.action_id} ok={result.ok} summary={safe_result.get('summary')}")
+            return {"ok": True, "robot_id": robot_id, "reply": reply, "speech": speech_text, "actions": [],
+                    "integration_result": safe_result, "provenance": provenance,
+                    "stats": {"live_tool_route": "integration", "model": "integration-router"}}
 
         image_b64 = data.get("image_base64") or data.get("image")
         if isinstance(image_b64, str) and image_b64.startswith("data:") and "," in image_b64:
@@ -3595,6 +4012,10 @@ class BX1BrainCore:
         if not body_state and not live_context_verified:
             reply = self._repair_unverified_robot_claim(message, reply, request_model)
         reply, repetition_limited = sanitise_repetitive_reply(reply)
+        guarded_reply = guard_capability_claims(message, reply, capability_summary, verified_action=False)
+        if guarded_reply != reply:
+            self.log("Capability claim guard replaced an unsupported success/capability claim.")
+            reply = guarded_reply
         voice_delivery = extract_delivery(reply, voice_delivery).key
         if repetition_limited:
             self.log("LLM output repetition guard replaced a pathological reply before TTS.")
@@ -4012,7 +4433,13 @@ class BX1RobotAPIServer:
                         if not text:
                             self._send_json(400, {"ok": False, "error": "Text is required."})
                             return
-                        result = core.generate_tts_audio_for_robot(text)
+                        result = core.generate_tts_audio_for_robot(
+                            text,
+                            delivery=str(body.get("delivery") or ""),
+                            requested_engine=str(body.get("engine") or ""),
+                            requested_voice=str(body.get("voice") or ""),
+                            request_source=str(body.get("robot_client") or body.get("source") or parsed.path),
+                        )
                         self._send_json(200 if result.get("ok") else 503, result)
                         return
                     if parsed.path == "/api/body_state":
@@ -4107,7 +4534,21 @@ class WorkshopDraftWorker(QThread):
         else:
             result = self.core.generate_workshop_draft(self.task, self.model)
             result["mode"] = "code"
-            self.result.emit(result)
+        self.result.emit(result)
+
+
+class IntegrationWorker(QThread):
+    result = pyqtSignal(object)
+
+    def __init__(self, operation: Any) -> None:
+        super().__init__()
+        self.operation = operation
+
+    def run(self) -> None:
+        try:
+            self.result.emit(self.operation())
+        except Exception as exc:
+            self.result.emit({"ok": False, "error": mask_secret_text(str(exc))})
 
 
 class PerformanceChartWidget(QWidget):
@@ -4482,11 +4923,13 @@ class MainWindow(QMainWindow):
         self.robot_update_connection_ok = False
         self.integration_event_log = IntegrationEventLog()
         self.integration_registry = self._create_integration_registry(mock_mode=True)
-        self.capability_manager = CapabilityManager(RUNTIME_DIR / "capabilities")
+        self.capability_manager = self.core.capability_manager
         self.capability_workshop_path: Optional[Path] = None
         self.api_server = BX1RobotAPIServer(self.core)
         self.current_image_b64: Optional[str] = None
         self.chat_worker: Optional[ChatWorker] = None
+        self.integration_workers: List[IntegrationWorker] = []
+        self.spotify_oauth_callback: Optional[SpotifyOAuthCallback] = None
         self.name_suggestion_worker: Optional[NameSuggestionWorker] = None
         self.workshop_worker: Optional[WorkshopDraftWorker] = None
         self._busy_count = 0
@@ -4497,6 +4940,8 @@ class MainWindow(QMainWindow):
         self._chat_request_started_at = 0.0
         self._last_filler_at = 0.0
         self.performance_rows: List[Dict[str, Any]] = []
+        retention = int(self.cfg.get("dashboard_history_limit", 120) or 120)
+        self.dashboard_history = BoundedTelemetryHistory(limit=max(20, min(500, retention)))
 
         self.dottts_process: Optional[subprocess.Popen[Any]] = None
         self.dottts_started_by_app = False
@@ -4514,6 +4959,8 @@ class MainWindow(QMainWindow):
         self.mission_timer.start(5000)
         self.apply_dark_palette()
         self.refresh_robot_branding()
+        if self.core.startup_messages:
+            QTimer.singleShot(250, self.show_startup_messages)
         QTimer.singleShot(1200, self.refresh_mission_cards)
         if bool(self.cfg.get("api_enabled", True)):
             self.start_api()
@@ -4522,6 +4969,12 @@ class MainWindow(QMainWindow):
             QTimer.singleShot(800, self.auto_start_dottts_on_launch)
         if bool(self.cfg.get("identity_name_pending", False)) and bool(self.cfg.get("auto_name_suggestion_on_first_launch", True)) and not bool(self.cfg.get("identity_name_suggestion_made", False)):
             QTimer.singleShot(2200, self.request_self_name_suggestion_ui)
+
+    def show_startup_messages(self) -> None:
+        message = "\n\n".join(dict.fromkeys(self.core.startup_messages))
+        if message:
+            self.signals.log.emit(f"Startup configuration: {message}")
+            QMessageBox.warning(self, "Robot Brain startup", message)
 
     def _selected_voice_reference_extra(self) -> Dict[str, str]:
         """Return the selected Dot.TTS reference payload for GUI-side actions.
@@ -4603,10 +5056,11 @@ class MainWindow(QMainWindow):
         self.page_registry = build_default_page_registry()
         self.command_palette_index = CommandPaletteIndex(self.page_registry)
         self.navigation_state = NavigationState(self.page_registry)
+        layout_theme = self.current_ui_theme_values()
 
         self.sidebar = QWidget()
         self.sidebar.setObjectName("SidebarPanel")
-        self.sidebar.setFixedWidth(232)
+        self.sidebar.setFixedWidth(layout_theme["sidebar_expanded_width"])
         side = QVBoxLayout(self.sidebar)
         side.setContentsMargins(8, 10, 8, 10)
         side.setSpacing(5)
@@ -4623,7 +5077,7 @@ class MainWindow(QMainWindow):
             btn = QPushButton(f"{page_def.icon}  {page_def.display_name}")
             btn.setObjectName("WorkspaceNavButton")
             btn.setCheckable(True)
-            btn.setMinimumHeight(42)
+            btn.setMinimumHeight(layout_theme["navigation_item_height"])
             btn.setToolTip(", ".join(page_def.keywords))
             btn.clicked.connect(lambda checked=False, i=index: self.switch_workspace(i))
             self.nav_buttons.append(btn)
@@ -4749,6 +5203,26 @@ class MainWindow(QMainWindow):
         """Open the active personality's Voice Lab."""
         self.open_dottts_lab_ui()
 
+    def current_ui_theme_values(self) -> Dict[str, int]:
+        preset_name = str(self.cfg.get("ui_style_preset") or "glass_blue")
+        theme = THEME_PRESETS.get(preset_name, {})
+        defaults = {
+            "navigation_font_size": 14,
+            "navigation_icon_size": 16,
+            "sidebar_expanded_width": 232,
+            "sidebar_collapsed_width": 74,
+            "navigation_item_height": 44,
+            "chart_label_font_size": 12,
+            "dashboard_card_spacing": 10,
+        }
+        values: Dict[str, int] = {}
+        for key, default in defaults.items():
+            try:
+                values[key] = int(theme.get(key, default)) if isinstance(theme, dict) else default
+            except Exception:
+                values[key] = default
+        return values
+
     def switch_workspace(self, index: Any) -> None:
         if isinstance(index, str):
             page_id = self.page_registry.canonical_id(index)
@@ -4768,8 +5242,9 @@ class MainWindow(QMainWindow):
             self.page_title_label.setText(f"{page.icon}  {page.display_name}")
 
     def toggle_sidebar_ui(self) -> None:
+        layout_theme = self.current_ui_theme_values()
         collapsed = self.navigation_state.toggle_collapsed()
-        self.sidebar.setFixedWidth(74 if collapsed else 232)
+        self.sidebar.setFixedWidth(layout_theme["sidebar_collapsed_width"] if collapsed else layout_theme["sidebar_expanded_width"])
         self.sidebar_identity_label.setVisible(not collapsed)
         self.sidebar_profile_label.setVisible(not collapsed)
         self.sidebar_collapse_button.setText("Open" if collapsed else "Collapse")
@@ -4966,6 +5441,30 @@ class MainWindow(QMainWindow):
             self.mission_cards[key] = card
             card_grid.addWidget(card, i // 4, i % 4)
         layout.addLayout(card_grid)
+
+        metrics = QGroupBox("Performance and system metrics")
+        metrics_grid = QGridLayout(metrics)
+        metrics_grid.setSpacing(self.current_ui_theme_values()["dashboard_card_spacing"])
+        self.home_latency_label = QLabel("Latency: n/a")
+        self.home_retrieval_label = QLabel("Retrieval: n/a")
+        self.home_llm_label = QLabel("LLM: n/a")
+        self.home_tts_label = QLabel("TTS: n/a")
+        self.home_tokens_label = QLabel("Tokens/sec: n/a")
+        self.home_system_label = QLabel("CPU/RAM/GPU: n/a")
+        for index, widget in enumerate((self.home_latency_label, self.home_retrieval_label, self.home_llm_label, self.home_tts_label, self.home_tokens_label, self.home_system_label)):
+            widget.setObjectName("RuntimeValue")
+            metrics_grid.addWidget(widget, index // 3, index % 3)
+        self.home_latency_chart = MetricChartCard("Response latency history", "Waiting for data")
+        self.home_breakdown_chart = MetricChartCard("STT / LLM / TTS breakdown", "Waiting for timing data")
+        self.home_system_chart = MetricChartCard("System resource history", "Waiting for system samples")
+        self.home_conversation_chart = MetricChartCard("Conversation activity", "Waiting for conversation")
+        self.home_capability_chart = MetricChartCard("Capability usage", "Waiting for capability activity")
+        self.home_integration_chart = MetricChartCard("Integration status", "Waiting for integration activity")
+        for offset, chart in enumerate((self.home_latency_chart, self.home_breakdown_chart, self.home_system_chart, self.home_conversation_chart, self.home_capability_chart, self.home_integration_chart), start=0):
+            metrics_grid.addWidget(chart, 3 + offset // 2, offset % 2)
+        metrics_grid.setColumnStretch(0, 1)
+        metrics_grid.setColumnStretch(1, 1)
+        layout.addWidget(metrics, 2)
 
         lower = QHBoxLayout()
         quick = QGroupBox("Quick actions")
@@ -5237,12 +5736,50 @@ class MainWindow(QMainWindow):
 
     def _build_capabilities_workspace(self) -> QWidget:
         self.capabilities_tabs = self._section_tabs([
-            ("Behaviour Forge", self._build_workshop_workspace()),
-            ("Capability Workshop", self._build_capability_forge_tab()),
-            ("Installed Behaviours", self._build_robot_behaviours_tab()),
+            ("Create Capability", self._build_create_capability_studio()),
+            ("Installed Capabilities", self._build_installed_capabilities_studio()),
             ("Capability Activity", self._build_capability_activity_tab()),
         ])
         return self.capabilities_tabs
+
+    def _build_create_capability_studio(self) -> QWidget:
+        tabs = QTabWidget()
+        tabs.addTab(self._build_capability_forge_tab(), "Create Capability")
+        tabs.addTab(self._build_workshop_workspace(), "Advanced Behaviour Tools")
+        return tabs
+
+    def _build_installed_capabilities_studio(self) -> QWidget:
+        panel = QWidget()
+        panel.setObjectName("CardPanel")
+        layout = QVBoxLayout(panel)
+        self.studio_capability_filter = QComboBox()
+        for label, value in (("All", "all"), ("Behaviours", "behaviour"), ("Tools", "tool"),
+                             ("Integrations", "integration"), ("Hardware", "hardware")):
+            self.studio_capability_filter.addItem(label, value)
+        self.studio_installed_list = QListWidget()
+        self.studio_installed_list.setAlternatingRowColors(True)
+        controls = QHBoxLayout()
+        self.studio_configure_button = QPushButton("Configure")
+        self.studio_test_button = QPushButton("Test")
+        self.studio_toggle_button = QPushButton("Enable / Disable")
+        self.studio_rollback_button = QPushButton("Roll Back")
+        self.studio_remove_button = QPushButton("Remove")
+        for button in (self.studio_configure_button, self.studio_test_button, self.studio_toggle_button,
+                       self.studio_rollback_button, self.studio_remove_button):
+            controls.addWidget(button)
+        controls.addStretch(1)
+        layout.addWidget(QLabel("Filter"))
+        layout.addWidget(self.studio_capability_filter)
+        layout.addWidget(self.studio_installed_list, 1)
+        layout.addLayout(controls)
+        self.studio_capability_filter.currentIndexChanged.connect(self.refresh_installed_capabilities_studio)
+        self.studio_test_button.clicked.connect(self.test_studio_capability_ui)
+        self.studio_toggle_button.clicked.connect(self.toggle_studio_capability_ui)
+        self.studio_rollback_button.clicked.connect(self.rollback_studio_capability_ui)
+        self.studio_remove_button.clicked.connect(self.remove_studio_capability_ui)
+        self.studio_configure_button.clicked.connect(lambda: self.capabilities_tabs.setCurrentIndex(0))
+        QTimer.singleShot(0, self.refresh_installed_capabilities_studio)
+        return panel
 
     def _build_capability_activity_tab(self) -> QWidget:
         panel = QWidget()
@@ -5251,7 +5788,7 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         title = QLabel("Capability activity")
         title.setObjectName("SectionTitle")
-        hint = QLabel("Capability validation, install and mock execution results appear in the Capability Workshop and Library panels. A consolidated activity feed can be added here without mixing it into integration logs.")
+        hint = QLabel("Live proposal, validation, installation, runtime, scheduler and reminder announcement events.")
         hint.setObjectName("HintLabel")
         hint.setWordWrap(True)
         self.capability_activity_text = QPlainTextEdit()
@@ -5260,6 +5797,9 @@ class MainWindow(QMainWindow):
         layout.addWidget(title)
         layout.addWidget(hint)
         layout.addWidget(self.capability_activity_text, 1)
+        self.capability_activity_timer = QTimer(self)
+        self.capability_activity_timer.timeout.connect(self.refresh_capability_activity_ui)
+        self.capability_activity_timer.start(1000)
         return panel
 
     def _build_robot_workspace(self) -> QWidget:
@@ -5284,12 +5824,10 @@ class MainWindow(QMainWindow):
         ])
         return self.settings_tabs
 
-    def _create_integration_registry(self, *, mock_mode: bool = True) -> IntegrationRegistry:
-        return IntegrationRegistry.load_defaults([
-            OctoPrintConnector(IntegrationSettings(mock_mode=mock_mode)),
-            SpotifyConnector(IntegrationSettings(mock_mode=mock_mode)),
-            DanceService(IntegrationSettings(mock_mode=mock_mode)),
-        ])
+    def _create_integration_registry(self, *, mock_mode: bool = True) -> IntegrationManager:
+        manager = build_integration_manager(self.cfg, mock_mode=mock_mode)
+        self.core.integration_manager = manager
+        return manager
 
     def _build_integrations_workspace(self) -> QWidget:
         self.integrations_tabs = self._section_tabs([
@@ -5306,16 +5844,21 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(14, 14, 14, 14)
         form_box = QGroupBox("OctoPrint connection")
         form = QFormLayout(form_box)
+        octo_cfg = dict((self.cfg.get("integrations") or {}).get("octoprint") or {})
         self.integration_mock_check = QCheckBox("Mock/demo mode")
-        self.integration_mock_check.setChecked(True)
+        self.integration_mock_check.setChecked(bool((self.cfg.get("integrations") or {}).get("mock_mode", True)))
+        self.octoprint_enabled_check = QCheckBox("Enabled")
+        self.octoprint_enabled_check.setChecked(bool(octo_cfg.get("enabled", False)))
         self.octoprint_url_edit = QLineEdit()
-        self.octoprint_url_edit.setPlaceholderText("http://octopi.local")
+        self.octoprint_url_edit.setPlaceholderText("One or more addresses separated by semicolons")
+        self.octoprint_url_edit.setText("; ".join(octo_cfg.get("base_urls") or []))
         self.octoprint_key_edit = QLineEdit()
         self.octoprint_key_edit.setEchoMode(QLineEdit.EchoMode.Password)
         self.octoprint_key_edit.setPlaceholderText("Session-only API key")
         self.octoprint_status_label = QLabel("Not connected.")
         self.octoprint_status_label.setWordWrap(True)
         form.addRow("Mode", self.integration_mock_check)
+        form.addRow("Integration", self.octoprint_enabled_check)
         form.addRow("Server URL", self.octoprint_url_edit)
         form.addRow("API key", self.octoprint_key_edit)
         form.addRow("Status", self.octoprint_status_label)
@@ -5350,15 +5893,39 @@ class MainWindow(QMainWindow):
         w.setObjectName("CardPanel")
         layout = QVBoxLayout(w)
         layout.setContentsMargins(14, 14, 14, 14)
+        spotify_cfg = dict((self.cfg.get("integrations") or {}).get("spotify") or {})
+        form_box = QGroupBox("Spotify account configuration")
+        form = QFormLayout(form_box)
+        self.spotify_client_id_edit = QLineEdit(str(spotify_cfg.get("client_id") or ""))
+        self.spotify_enabled_check = QCheckBox("Enabled")
+        self.spotify_enabled_check.setChecked(bool(spotify_cfg.get("enabled", False)))
+        self.spotify_client_secret_edit = QLineEdit()
+        self.spotify_client_secret_edit.setEchoMode(QLineEdit.EchoMode.Password)
+        self.spotify_client_secret_edit.setPlaceholderText("Leave blank to keep the saved secret")
+        self.spotify_redirect_edit = QLineEdit(str(spotify_cfg.get("redirect_uri") or "http://127.0.0.1:8765/spotify/callback"))
+        self.spotify_device_edit = QLineEdit(str(spotify_cfg.get("preferred_device") or ""))
+        self.spotify_robot_device_edit = QLineEdit(str(spotify_cfg.get("robot_device_name") or ""))
+        self.spotify_robot_device_edit.setPlaceholderText("Exact Spotify Connect name shown for the robot")
+        form.addRow("Integration", self.spotify_enabled_check)
+        form.addRow("Client ID", self.spotify_client_id_edit)
+        form.addRow("Client secret", self.spotify_client_secret_edit)
+        form.addRow("Redirect URI", self.spotify_redirect_edit)
+        form.addRow("Preferred device", self.spotify_device_edit)
+        form.addRow("Robot playback device", self.spotify_robot_device_edit)
+        spotify_device_hint = QLabel("Voice requests from the physical robot use this Spotify Connect device strictly. Spotify controls playback; it does not stream music through the TTS channel.")
+        spotify_device_hint.setWordWrap(True)
+        form.addRow("Audio routing", spotify_device_hint)
+        layout.addWidget(form_box)
         controls = QHBoxLayout()
         self.spotify_connect_button = QPushButton("Connect Spotify")
+        self.spotify_test_button = QPushButton("Test Connection")
         self.spotify_disconnect_button = QPushButton("Disconnect")
         self.spotify_state_button = QPushButton("Playback State")
         self.spotify_devices_button = QPushButton("Devices")
         self.spotify_prev_button = QPushButton("Previous")
         self.spotify_play_pause_button = QPushButton("Play / Pause")
         self.spotify_next_button = QPushButton("Next")
-        for button in (self.spotify_connect_button, self.spotify_disconnect_button, self.spotify_state_button, self.spotify_devices_button, self.spotify_prev_button, self.spotify_play_pause_button, self.spotify_next_button):
+        for button in (self.spotify_connect_button, self.spotify_test_button, self.spotify_disconnect_button, self.spotify_state_button, self.spotify_devices_button, self.spotify_prev_button, self.spotify_play_pause_button, self.spotify_next_button):
             controls.addWidget(button)
         controls.addStretch(1)
         layout.addLayout(controls)
@@ -5382,6 +5949,7 @@ class MainWindow(QMainWindow):
         self.spotify_status_text.setPlainText("Spotify uses OAuth Authorization Code with PKCE. Mock mode avoids live login during tests.")
         layout.addWidget(self.spotify_status_text, 1)
         self.spotify_connect_button.clicked.connect(self.connect_spotify_ui)
+        self.spotify_test_button.clicked.connect(self.test_spotify_ui)
         self.spotify_disconnect_button.clicked.connect(self.disconnect_spotify_ui)
         self.spotify_state_button.clicked.connect(lambda: self.integration_action_ui("spotify", "get_playback_state", self.spotify_status_text))
         self.spotify_devices_button.clicked.connect(lambda: self.integration_action_ui("spotify", "list_devices", self.spotify_status_text))
@@ -5399,16 +5967,34 @@ class MainWindow(QMainWindow):
         form_box = QGroupBox("Capability Workshop")
         form = QFormLayout(form_box)
         self.capability_description_edit = QPlainTextEdit()
-        self.capability_description_edit.setMaximumHeight(76)
-        self.capability_description_edit.setPlaceholderText("Describe a capability, or import/create a package below.")
+        self.capability_description_edit.setMinimumHeight(110)
+        self.capability_description_edit.setPlaceholderText("Describe what you want Brain or the robot to be able to do.")
         self.capability_type_combo = QComboBox()
-        for capability_type in ("integration", "tool", "behaviour", "hardware"):
+        for capability_type in ("tool", "integration", "behaviour", "hardware"):
             self.capability_type_combo.addItem(capability_type)
+        self.capability_detection_label = QLabel("Suggested type: describe a capability to classify it.")
+        self.capability_detection_label.setWordWrap(True)
         self.capability_permissions_label = QLabel("Default permissions: NONE")
         form.addRow("Capability description", self.capability_description_edit)
-        form.addRow("Capability type", self.capability_type_combo)
+        form.addRow("Automatically detected type", self.capability_detection_label)
+        form.addRow("Override type", self.capability_type_combo)
         form.addRow("Requested permissions", self.capability_permissions_label)
         layout.addWidget(form_box)
+
+        primary_buttons = QHBoxLayout()
+        self.capability_design_button = QPushButton("Design Capability")
+        self.capability_build_test_button = QPushButton("Build and Test")
+        self.capability_install_simple_button = QPushButton("Install Capability")
+        self.capability_clear_button = QPushButton("Clear")
+        self.capability_use_suggestion_button = QPushButton("Use latest Brain suggestion")
+        self.capability_advanced_button = QPushButton("Advanced")
+        self.capability_install_simple_button.setObjectName("PrimaryButton")
+        self.capability_build_test_button.setEnabled(False)
+        self.capability_install_simple_button.setEnabled(False)
+        for button in (self.capability_design_button, self.capability_build_test_button, self.capability_install_simple_button, self.capability_use_suggestion_button, self.capability_clear_button, self.capability_advanced_button):
+            primary_buttons.addWidget(button)
+        primary_buttons.addStretch(1)
+        layout.addLayout(primary_buttons)
 
         buttons = QHBoxLayout()
         self.capability_suggest_button = QPushButton("Suggest Capability")
@@ -5425,6 +6011,13 @@ class MainWindow(QMainWindow):
             buttons.addWidget(button)
         buttons.addStretch(1)
         layout.addLayout(buttons)
+        self.capability_advanced_widgets = [
+            self.capability_suggest_button, self.capability_template_button, self.capability_support_demo_button,
+            self.capability_import_button, self.capability_validate_button, self.capability_tests_button,
+            self.capability_install_button, self.capability_quarantine_button,
+        ]
+        for widget in self.capability_advanced_widgets:
+            widget.setVisible(False)
 
         viewer_row = QSplitter(Qt.Orientation.Horizontal)
         self.capability_manifest_view = QPlainTextEdit()
@@ -5436,6 +6029,8 @@ class MainWindow(QMainWindow):
         viewer_row.addWidget(self.capability_manifest_view)
         viewer_row.addWidget(self.capability_file_view)
         layout.addWidget(viewer_row, 1)
+        self.capability_viewer_row = viewer_row
+        viewer_row.setVisible(False)
 
         self.capability_result_text = QPlainTextEdit()
         self.capability_result_text.setReadOnly(True)
@@ -5443,6 +6038,7 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.capability_result_text, 1)
 
         library_box = QGroupBox("Capability Library")
+        library_box.setVisible(False)
         library_layout = QVBoxLayout(library_box)
         self.capability_library_list = QListWidget()
         library_layout.addWidget(self.capability_library_list, 1)
@@ -5475,6 +6071,14 @@ class MainWindow(QMainWindow):
         self.capability_rollback_button.clicked.connect(self.rollback_selected_capability_ui)
         self.capability_export_button.clicked.connect(self.export_selected_capability_ui)
         self.capability_remove_button.clicked.connect(self.remove_selected_capability_ui)
+        self.capability_description_edit.textChanged.connect(self.classify_capability_description_ui)
+        self.capability_design_button.clicked.connect(self.design_capability_ui)
+        self.capability_build_test_button.clicked.connect(self.build_and_test_capability_ui)
+        self.capability_install_simple_button.clicked.connect(self.install_capability_workshop_ui)
+        self.capability_clear_button.clicked.connect(self.clear_capability_workshop_ui)
+        self.capability_use_suggestion_button.clicked.connect(self.use_latest_capability_suggestion_ui)
+        self.capability_advanced_button.clicked.connect(self.toggle_capability_advanced_ui)
+        self.capability_workflow_ready = False
         QTimer.singleShot(0, self.refresh_capability_library_ui)
         return w
 
@@ -5523,9 +6127,44 @@ class MainWindow(QMainWindow):
     def configure_octoprint_from_ui(self) -> OctoPrintConnector:
         connector = self.integration_registry.get("octoprint")
         if isinstance(connector, OctoPrintConnector):
-            connector.settings.values["server_url"] = self.octoprint_url_edit.text().strip()
-            connector.settings.session_secrets["api_key"] = self.octoprint_key_edit.text()
+            connector.settings.values["enabled"] = bool(self.octoprint_enabled_check.isChecked())
+            connector.settings.values["base_urls"] = [item.strip() for item in self.octoprint_url_edit.text().replace("\n", ";").split(";") if item.strip()]
+            if self.octoprint_key_edit.text():
+                connector.settings.session_secrets["api_key"] = self.octoprint_key_edit.text()
+            self._persist_integration_settings("octoprint", connector)
         return connector  # type: ignore[return-value]
+
+    def configure_spotify_from_ui(self) -> SpotifyConnector:
+        connector = self.integration_registry.get("spotify")
+        if isinstance(connector, SpotifyConnector):
+            connector.settings.values.update({
+                "enabled": True,
+                "client_id": self.spotify_client_id_edit.text().strip(),
+                "redirect_uri": self.spotify_redirect_edit.text().strip(),
+                "preferred_device": self.spotify_device_edit.text().strip(),
+                "robot_device_name": self.spotify_robot_device_edit.text().strip(),
+            })
+            connector.settings.values["enabled"] = bool(self.spotify_enabled_check.isChecked())
+            if self.spotify_client_secret_edit.text():
+                connector.settings.session_secrets["client_secret"] = self.spotify_client_secret_edit.text()
+            self._persist_integration_settings("spotify", connector)
+        return connector  # type: ignore[return-value]
+
+    def _persist_integration_settings(self, integration_id: str, connector: Any) -> None:
+        integrations = dict(self.cfg.get("integrations") or {})
+        integrations["mock_mode"] = bool(self.integration_mock_check.isChecked())
+        safe_values = dict(connector.settings.values)
+        integrations[integration_id] = safe_values
+        self.cfg["integrations"] = integrations
+        save_config({"integrations": integrations})
+        secrets = _read_json_dict(SECRETS_PATH)
+        secret_integrations = dict(secrets.get("integrations") or {})
+        current = dict(secret_integrations.get(integration_id) or {})
+        current.update({k: v for k, v in connector.settings.session_secrets.items() if v})
+        secret_integrations[integration_id] = current
+        secrets["integrations"] = secret_integrations
+        CONFIG_DIR.mkdir(parents=True, exist_ok=True)
+        SECRETS_PATH.write_text(json.dumps(secrets, indent=2), encoding="utf-8")
 
     def show_capability_package_ui(self, package_path: Path) -> None:
         self.capability_workshop_path = Path(package_path)
@@ -5539,6 +6178,106 @@ class MainWindow(QMainWindow):
         except Exception as exc:
             self.capability_file_view.setPlainText(f"Could not load capability.py: {exc}")
         self.capability_result_text.setPlainText(f"Workshop package selected:\n{self.capability_workshop_path}")
+
+    def classify_capability_description_ui(self) -> None:
+        text = self.capability_description_edit.toPlainText().strip()
+        if not text:
+            self.capability_detection_label.setText("Suggested type: describe a capability to classify it.")
+            return
+        classification = classify_capability(text)
+        self.capability_detection_label.setText(
+            f"Suggested type: {classification.capability_type.title()} · "
+            f"Confidence: {classification.confidence:.0%}\n{classification.explanation}"
+        )
+        self.capability_type_combo.setCurrentText(classification.capability_type)
+
+    def design_capability_ui(self) -> None:
+        description = self.capability_description_edit.toPlainText().strip()
+        if not description:
+            QMessageBox.information(self, "Capability Workshop", "Describe the capability first.")
+            return
+        proposal = proposal_from_description(description, override_type=self.capability_type_combo.currentText())
+        package = self.capability_manager.design_proposal(proposal)
+        self.latest_capability_proposal = proposal.to_dict()
+        self.capability_workshop_path = package
+        self.capability_permissions_label.setText("Requested permissions: " + ", ".join(proposal.required_permissions))
+        self.show_capability_package_ui(package)
+        self.capability_result_text.setPlainText(
+            f"DESIGN READY — NOT INSTALLED\n\n{proposal.capability_name} · {proposal.capability_type.title()}\n"
+            f"{proposal.purpose}\n\nPermissions requested: {', '.join(proposal.required_permissions)}\n"
+            f"Forbidden: {', '.join(proposal.forbidden_permissions)}\n\nPress Build and Test to run validation, safety scanning, tests and mock execution."
+        )
+        self.capability_build_test_button.setEnabled(True)
+        self.capability_install_simple_button.setEnabled(False)
+        self.capability_workflow_ready = False
+
+    def build_and_test_capability_ui(self) -> None:
+        if not self.capability_workshop_path:
+            return
+        self.capability_result_text.setPlainText("BUILD AND TEST\n\nValidation and safety scan running…")
+        try:
+            validated = self.capability_manager.validate_package(self.capability_workshop_path)
+            tested = self.capability_manager.run_tests(self.capability_workshop_path)
+            manifest = validated["manifest"]
+            action = manifest.actions[0].action_id
+            mocked = self.capability_manager.mock_execute(self.capability_workshop_path, action, confirmed=True)
+            if not mocked.ok:
+                raise CapabilityValidationError(mocked.error or mocked.message or "Mock execution failed")
+            self.capability_workflow_ready = True
+            self.capability_install_simple_button.setEnabled(True)
+            self.capability_result_text.setPlainText(
+                f"READY TO INSTALL\n\n✓ Manifest valid\n✓ Source safety scan passed\n✓ Permissions valid\n"
+                f"✓ Automated tests passed\n✓ Mock action {action} passed\n\n"
+                f"Installation still requires your explicit confirmation.\n\nTechnical test output:\n{tested.get('stdout') or '(no output)'}"
+            )
+        except Exception as exc:
+            self.capability_workflow_ready = False
+            self.capability_install_simple_button.setEnabled(False)
+            self.capability_result_text.setPlainText(f"NEEDS ATTENTION\n\n{exc}")
+
+    def clear_capability_workshop_ui(self) -> None:
+        self.capability_description_edit.clear()
+        self.capability_workshop_path = None
+        self.capability_workflow_ready = False
+        self.capability_build_test_button.setEnabled(False)
+        self.capability_install_simple_button.setEnabled(False)
+        self.capability_permissions_label.setText("Default permissions: NONE")
+        self.capability_result_text.setPlainText("Describe a capability, then choose Design Capability.")
+
+    def toggle_capability_advanced_ui(self) -> None:
+        visible = not self.capability_viewer_row.isVisible()
+        self.capability_viewer_row.setVisible(visible)
+        for widget in self.capability_advanced_widgets:
+            widget.setVisible(visible)
+        self.capability_advanced_button.setText("Hide Advanced" if visible else "Advanced")
+
+    def load_capability_proposal_ui(self, payload: Dict[str, Any]) -> None:
+        self.latest_capability_proposal = dict(payload)
+        if not hasattr(self, "capability_description_edit"):
+            return
+        self.capability_description_edit.setPlainText(str(payload.get("purpose") or ""))
+        self.capability_type_combo.setCurrentText(str(payload.get("capability_type") or "tool"))
+        self.capability_permissions_label.setText("Requested permissions: " + ", ".join(payload.get("required_permissions") or ["NONE"]))
+        package = str(payload.get("package_path") or "")
+        if package:
+            self.capability_workshop_path = Path(package)
+            self.show_capability_package_ui(self.capability_workshop_path)
+            self.capability_build_test_button.setEnabled(True)
+        self.capability_install_simple_button.setEnabled(False)
+        self.capability_workflow_ready = False
+        self.capability_result_text.setPlainText(
+            f"BRAIN SUGGESTION READY — NOT INSTALLED\n\n{payload.get('capability_name')} · "
+            f"{str(payload.get('capability_type') or '').title()}\n{payload.get('purpose')}\n\n"
+            "Review the permissions, then press Build and Test."
+        )
+        self.switch_workspace("capabilities")
+
+    def use_latest_capability_suggestion_ui(self) -> None:
+        pending = self.core.pending_capability_proposal.get()
+        if pending is None:
+            QMessageBox.information(self, "Capability Workshop", "There is no current Brain capability suggestion.")
+            return
+        self.load_capability_proposal_ui(pending.to_dict())
 
     def suggest_capability_package_ui(self) -> None:
         self.capability_description_edit.setPlainText(
@@ -5595,6 +6334,9 @@ class MainWindow(QMainWindow):
     def install_capability_workshop_ui(self) -> None:
         if not self.capability_workshop_path:
             return
+        if self.sender() is getattr(self, "capability_install_simple_button", None) and not bool(getattr(self, "capability_workflow_ready", False)):
+            QMessageBox.information(self, "Install capability", "Build and Test must pass before installation.")
+            return
         answer = QMessageBox.question(
             self,
             "Install capability",
@@ -5627,10 +6369,126 @@ class MainWindow(QMainWindow):
             return
         self.capability_library_list.clear()
         for record in self.capability_manager.list_records():
-            item = QListWidgetItem(f"{record.manifest.display_name} {record.manifest.version} · {record.manifest.capability_type} · {record.state} · {', '.join(record.manifest.permissions)}")
+            state_label = "Enabled" if record.state == "installed" else record.state.title()
+            item = QListWidgetItem(
+                f"{record.manifest.display_name}  v{record.manifest.version}\n"
+                f"{record.manifest.capability_type.title()} · {state_label} · Permissions: {', '.join(record.manifest.permissions)}\n"
+                f"{record.manifest.description}"
+            )
             item.setData(Qt.ItemDataRole.UserRole, record.manifest.capability_id)
             item.setToolTip("Triggers: " + ", ".join(record.manifest.trigger_phrases) + "\nCannot do: " + "; ".join(record.manifest.cannot_do))
             self.capability_library_list.addItem(item)
+
+    def refresh_installed_capabilities_studio(self) -> None:
+        if not hasattr(self, "studio_installed_list"):
+            return
+        selected_type = str(self.studio_capability_filter.currentData() or "all")
+        self.studio_installed_list.clear()
+        activity = list(self.capability_manager.activity)
+        for record in self.capability_manager.list_records():
+            manifest = record.manifest
+            if selected_type != "all" and manifest.capability_type != selected_type:
+                continue
+            runtime_status = str(manifest.raw.get("runtime_status") or "")
+            if runtime_status == "functional":
+                function_label = "Functional"
+            elif "proposal" in manifest.created_by.lower() or manifest.settings_schema.get("design_status") == "review_only":
+                function_label = "Mock-only / design"
+            else:
+                function_label = "Installed; functional state unverified"
+            relevant = [event for event in activity if event.get("capability_id") == manifest.capability_id]
+            last_test = next((event.get("message") for event in reversed(relevant) if event.get("event") in {"tests_passed", "validation_passed"}), "Not recorded")
+            last_runtime = next((event.get("message") for event in reversed(relevant) if event.get("event") in {"action_result", "runtime_error", "reminder_fired"}), "Not recorded")
+            state_label = "Enabled" if record.state == "installed" else "Disabled"
+            row = QListWidgetItem(
+                f"{manifest.display_name}  ·  {manifest.capability_id}  ·  v{manifest.version}\n"
+                f"{manifest.capability_type.title()} · {state_label} · {function_label}\n"
+                f"Permissions: {', '.join(manifest.permissions)}\nLast test: {last_test}\nLast runtime: {last_runtime}"
+            )
+            row.setData(Qt.ItemDataRole.UserRole, {"kind": "capability", "id": manifest.capability_id, "state": record.state})
+            self.studio_installed_list.addItem(row)
+        if selected_type in {"all", "behaviour"}:
+            for behaviour in self.core.behaviour_store.status().get("installed", []):
+                if behaviour.get("invalid"):
+                    functional = "Runtime error / invalid"
+                else:
+                    functional = "Functional bounded behaviour"
+                name = str(behaviour.get("name") or "")
+                row = QListWidgetItem(
+                    f"{behaviour.get('display_name') or name}  ·  {name}\n"
+                    f"Behaviour · Enabled · {functional}\nPermissions: level {behaviour.get('permission_level')}\n"
+                    f"Last test: validation on install\nLast runtime: not recorded"
+                )
+                row.setData(Qt.ItemDataRole.UserRole, {"kind": "behaviour", "id": name, "state": "installed"})
+                self.studio_installed_list.addItem(row)
+
+    def selected_studio_capability(self) -> Dict[str, Any]:
+        item = self.studio_installed_list.currentItem() if hasattr(self, "studio_installed_list") else None
+        value = item.data(Qt.ItemDataRole.UserRole) if item else {}
+        return dict(value) if isinstance(value, dict) else {}
+
+    def test_studio_capability_ui(self) -> None:
+        selected = self.selected_studio_capability()
+        if not selected:
+            return
+        if selected.get("kind") == "behaviour":
+            try:
+                behaviour = self.core.behaviour_store.load(str(selected["id"]))
+                validate_behaviour(behaviour, self.core.behaviour_limits())
+                QMessageBox.information(self, "Capability Test", "Behaviour validation passed.")
+            except Exception as exc:
+                QMessageBox.warning(self, "Capability Test", str(exc))
+            return
+        record = self.capability_manager.get_record(str(selected["id"]))
+        if record.path.startswith("builtin://"):
+            result = self.capability_manager.execute_installed(record.manifest.capability_id, "list_reminders")
+        else:
+            result = self.capability_manager.execute_installed(record.manifest.capability_id, record.manifest.actions[0].action_id, confirmed=True)
+        QMessageBox.information(self, "Capability Test", self.format_capability_result(result))
+        self.refresh_installed_capabilities_studio()
+
+    def toggle_studio_capability_ui(self) -> None:
+        selected = self.selected_studio_capability()
+        if not selected or selected.get("kind") == "behaviour":
+            return
+        if selected.get("state") == "installed":
+            self.capability_manager.disable(str(selected["id"]))
+        else:
+            self.capability_manager.enable(str(selected["id"]))
+        self.refresh_installed_capabilities_studio()
+
+    def rollback_studio_capability_ui(self) -> None:
+        selected = self.selected_studio_capability()
+        if not selected or selected.get("kind") != "capability":
+            return
+        try:
+            self.capability_manager.rollback(str(selected["id"]))
+        except Exception as exc:
+            QMessageBox.warning(self, "Capability rollback", str(exc))
+        self.refresh_installed_capabilities_studio()
+
+    def remove_studio_capability_ui(self) -> None:
+        selected = self.selected_studio_capability()
+        if not selected:
+            return
+        try:
+            if selected.get("kind") == "behaviour":
+                self.core.behaviour_store.remove(str(selected["id"]))
+            else:
+                self.capability_manager.remove(str(selected["id"]))
+        except Exception as exc:
+            QMessageBox.warning(self, "Remove capability", str(exc))
+        self.refresh_installed_capabilities_studio()
+
+    def refresh_capability_activity_ui(self) -> None:
+        if not hasattr(self, "capability_activity_text"):
+            return
+        lines = [
+            f"[{datetime.fromtimestamp(float(event.get('timestamp') or 0)).strftime('%H:%M:%S')}] "
+            f"{event.get('capability_id')} · {event.get('event')}: {event.get('message')}"
+            for event in self.capability_manager.activity[-300:]
+        ]
+        self.capability_activity_text.setPlainText("\n".join(lines) if lines else "No capability activity has been recorded in this session.")
 
     def selected_capability_id(self) -> str:
         item = self.capability_library_list.currentItem() if hasattr(self, "capability_library_list") else None
@@ -5728,16 +6586,36 @@ class MainWindow(QMainWindow):
             )
             if answer != QMessageBox.StandardButton.Yes:
                 return
-        result = self.integration_registry.execute(integration_id, action_id, params or {}, initiated_by_ai=False, confirmed=confirm)
+        output.setPlainText(f"Running {action_id}…")
+        self._run_integration_background(
+            lambda: self.integration_registry.execute(integration_id, action_id, params or {}, initiated_by_ai=False, confirmed=confirm),
+            lambda result: self._integration_result_ready(integration_id, action_id, output, result),
+        )
+
+    def _run_integration_background(self, operation: Any, callback: Any) -> None:
+        worker = IntegrationWorker(operation)
+        self.integration_workers.append(worker)
+        worker.result.connect(callback)
+        worker.finished.connect(lambda: self.integration_workers.remove(worker) if worker in self.integration_workers else None)
+        worker.start()
+
+    def _integration_result_ready(self, integration_id: str, action_id: str, output: QPlainTextEdit, result: Any) -> None:
         output.setPlainText(self.format_integration_result(result))
-        self.log_integration_event(integration_id, "info" if result.ok else "error", f"{action_id}: {result.message or result.error_code}")
+        ok = bool(getattr(result, "ok", False))
+        detail = getattr(result, "message", "") or getattr(result, "error_code", "") or "Operation failed"
+        self.log_integration_event(integration_id, "info" if ok else "error", f"{action_id}: {detail}")
 
     def test_octoprint_ui(self) -> None:
         connector = self.configure_octoprint_from_ui()
-        result = connector.health_check()
-        self.octoprint_status_label.setText(result.message or ("Connected" if result.ok else "Connection failed"))
-        self.octoprint_info_text.setPlainText(self.format_integration_result(result))
-        self.log_integration_event("octoprint", "info" if result.ok else "error", f"health_check: {result.message or result.error_code}")
+        self.octoprint_status_label.setText("Testing configured addresses…")
+        self._run_integration_background(
+            connector.health_check,
+            lambda result: (
+                self.octoprint_status_label.setText(getattr(result, "message", "") or "Connection test finished"),
+                self._integration_result_ready("octoprint", "health_check", self.octoprint_info_text, result),
+                self._persist_integration_settings("octoprint", connector),
+            ),
+        )
 
     def refresh_octoprint_ui(self) -> None:
         self.integration_action_ui("octoprint", "get_printer_status", self.octoprint_info_text)
@@ -5749,19 +6627,89 @@ class MainWindow(QMainWindow):
         self.integration_action_ui("octoprint", action_id, self.octoprint_info_text, confirm=True)
 
     def connect_spotify_ui(self) -> None:
-        connector = self.integration_registry.get("spotify")
-        if isinstance(connector, SpotifyConnector):
-            auth = connector.begin_authorization()
-            result = connector.connect()
-            text = self.format_integration_result(result) + "\n\nPKCE challenge prepared. Open this URL manually when live Spotify OAuth is enabled:\n" + auth["url"]
-            self.spotify_status_text.setPlainText(mask_secret_text(text, [auth.get("verifier", "")]))
-            self.log_integration_event("spotify", "info", "PKCE authorization prepared.")
+        connector = self.configure_spotify_from_ui()
+        if not isinstance(connector, SpotifyConnector):
+            return
+        if self.spotify_oauth_callback is not None:
+            QMessageBox.information(self, "Spotify", "A Spotify connection is already waiting for browser authorization.")
+            return
+        errors = connector.validate_configuration()
+        if errors:
+            self.spotify_status_text.setPlainText("Spotify configuration is not ready:\n- " + "\n- ".join(errors))
+            return
+        try:
+            callback = SpotifyOAuthCallback(
+                str(connector.settings.values.get("redirect_uri") or ""),
+                timeout=float(connector.settings.values.get("oauth_timeout", 180)),
+            )
+            callback.start()
+        except Exception as exc:
+            self.spotify_status_text.setPlainText(str(exc))
+            return
+        self.spotify_oauth_callback = callback
+        auth = connector.begin_authorization(state=callback.state)
+        self.spotify_status_text.setPlainText(
+            "Waiting for Spotify authorization in your browser.\n\n"
+            f"Register this exact redirect URI in Spotify Developer Dashboard:\n{connector.settings.values.get('redirect_uri')}"
+        )
+        webbrowser.open(auth["url"])
+        self.log_integration_event("spotify", "info", "Spotify browser authorization started.")
+
+        def finish_oauth(outcome: Dict[str, str]) -> Any:
+            if outcome.get("error"):
+                return {"ok": False, "error": outcome["error"]}
+            return connector.exchange_code(outcome["code"])
+
+        worker = IntegrationWorker(lambda: finish_oauth(callback.wait()))
+        self.integration_workers.append(worker)
+        worker.result.connect(lambda result: self._spotify_oauth_ready(connector, result))
+        worker.finished.connect(lambda: self.integration_workers.remove(worker) if worker in self.integration_workers else None)
+        worker.start()
+
+    def _spotify_oauth_ready(self, connector: SpotifyConnector, result: Any) -> None:
+        self.spotify_oauth_callback = None
+        if isinstance(result, dict):
+            error = str(result.get("error") or "Spotify authorization failed")
+            messages = {
+                "callback_timeout": "Spotify authorization timed out.",
+                "state_mismatch": "Spotify authorization was rejected because the security state did not match.",
+                "user_denied": "Spotify authorization was cancelled or denied.",
+            }
+            self.spotify_status_text.setPlainText(messages.get(error, error))
+            self.log_integration_event("spotify", "error", messages.get(error, error))
+            return
+        if getattr(result, "ok", False):
+            self._persist_integration_settings("spotify", connector)
+            self._run_integration_background(
+                connector.health_check,
+                lambda health: self._integration_result_ready("spotify", "oauth_health_check", self.spotify_status_text, health),
+            )
+        else:
+            self._integration_result_ready("spotify", "oauth_exchange", self.spotify_status_text, result)
 
     def disconnect_spotify_ui(self) -> None:
         connector = self.integration_registry.get("spotify")
+        if self.spotify_oauth_callback is not None:
+            self.spotify_oauth_callback.stop()
+            self.spotify_oauth_callback = None
+        for key in ("access_token", "refresh_token", "expires_at", "token_type"):
+            connector.settings.session_secrets.pop(key, None)
+        secrets = _read_json_dict(SECRETS_PATH)
+        spotify_secrets = ((secrets.get("integrations") or {}).get("spotify") or {})
+        for key in ("access_token", "refresh_token", "expires_at", "token_type"):
+            spotify_secrets.pop(key, None)
+        SECRETS_PATH.write_text(json.dumps(secrets, indent=2), encoding="utf-8")
         result = connector.disconnect()
         self.spotify_status_text.setPlainText(self.format_integration_result(result))
         self.log_integration_event("spotify", "info", "Disconnected.")
+
+    def test_spotify_ui(self) -> None:
+        connector = self.configure_spotify_from_ui()
+        self.spotify_status_text.setPlainText("Testing Spotify account and devices…")
+        self._run_integration_background(
+            connector.health_check,
+            lambda result: self._integration_result_ready("spotify", "health_check", self.spotify_status_text, result),
+        )
 
     def run_behaviour_ui(self) -> None:
         name = self.behaviour_routine_combo.currentText()
@@ -7079,7 +8027,7 @@ class MainWindow(QMainWindow):
         <p><b>OctoPrint:</b> enter the server URL and a session-only API key, then use Connection Test, Refresh Printer or List Files. Read-only status includes printer state, nozzle temperature, bed temperature, current job, progress and estimated time remaining. Pause, resume, start, cancel and file-selection actions are controlled actions; starting or cancelling a print must be explicitly confirmed. Arbitrary G-code is not exposed.</p>
         <p><b>Spotify:</b> Connect Spotify prepares OAuth Authorization Code with PKCE. Playback must occur through an existing Spotify client or Spotify Connect device; Robot Brain does not download, proxy, record or stream Spotify audio. Mock mode can show the UI and action flow without a live login.</p>
         <p><b>Robot Behaviours:</b> built-in routines include greeting, celebration, curious, listening and simple_dance. The global stop button clears the active routine. Wheel movement is disabled by default, head and LED limits are enforced, and hardware commands are not sent during mock/demo mode.</p>
-        <p><b>Voice command status:</b> the integration services and safety registry exist, but natural-language voice routing is not enabled yet. Planned commands include "what is the printer status", "how much time is left on the print", "what is playing on Spotify", "pause Spotify", "run greeting behaviour" and "stop behaviour". Until command routing is added, use the Integrations page buttons.</p>
+        <p><b>Voice command status:</b> controlled natural-language routing is enabled for Spotify playback/status and OctoPrint status/confirmed controls. Spotify requests received from the physical robot require the configured Robot playback device; Brain will not silently play them on a phone or PC. Ordinary informational questions remain normal conversation.</p>
         <p><b>Secrets:</b> API keys and Spotify tokens must not be saved in Git-tracked JSON. The integration framework prefers Windows Credential Manager through keyring when available; otherwise secrets are session-only and are masked in logs.</p>
 
         <h2>8. Robot updates</h2>
@@ -8518,10 +9466,12 @@ class MainWindow(QMainWindow):
         self.signals.voice_status.connect(self.append_voice_status)
         self.signals.performance_updated.connect(self.record_performance_event)
         self.signals.body_voice_updated.connect(self.on_body_voice_updated)
+        self.signals.capability_proposal_ready.connect(self.load_capability_proposal_ui)
 
     def apply_dark_palette(self) -> None:
         preset_name = str(self.cfg.get("ui_style_preset") or "glass_blue")
-        theme = THEME_PRESETS.get(preset_name, THEME_PRESETS["midnight_blue"])
+        theme = THEME_PRESETS.get(preset_name) or THEME_PRESETS.get("clean_light") or THEME_PRESETS["midnight_blue"]
+        layout_theme = self.current_ui_theme_values()
 
         # Theme-specific structural styling. The LCARS preset uses the same
         # widgets and layouts as the standard interface, but adds the broad,
@@ -8790,10 +9740,10 @@ class MainWindow(QMainWindow):
                 border-radius: 14px;
             }}
             QWidget#SidebarPanel {{ background: {theme['panel']}; border: 1px solid {theme['border']}; border-radius: 14px; }}
-            QLabel#SidebarIdentity {{ color: {theme['title']}; font-size: 13pt; font-weight: 750; padding: 10px; border-bottom: 1px solid {theme['border']}; }}
+            QLabel#SidebarIdentity {{ color: {theme['title']}; font-size: 15px; font-weight: 800; padding: 12px 13px; border-bottom: 1px solid {theme['border']}; }}
             QLabel#SidebarFooter {{ color: {theme['muted']}; background: {theme['input']}; border: 1px solid {theme['border']}; border-radius: 10px; padding: 9px; }}
             QLabel#PageTitle {{ color: {theme['title']}; font-size: 16pt; font-weight: 750; padding: 2px 4px 6px 4px; }}
-            QPushButton#WorkspaceNavButton {{ text-align: left; padding: 8px 12px; border-radius: 9px; background: transparent; border: 1px solid transparent; color: {theme['text']}; font-weight: 600; }}
+            QPushButton#WorkspaceNavButton {{ text-align: left; padding: 9px 14px; min-height: {layout_theme['navigation_item_height']}px; border-radius: 9px; background: transparent; border: 1px solid transparent; color: {theme['text']}; font-weight: 700; font-size: {layout_theme['navigation_font_size']}px; }}
             QPushButton#WorkspaceNavButton:hover {{ background: {theme['tab']}; border-color: {theme['border']}; }}
             QPushButton#WorkspaceNavButton:checked {{ background: {theme['tab_selected']}; border-color: {theme['accent']}; color: {theme['title']}; }}
             QLabel#MissionWelcome {{ color: {theme['title']}; font-size: 18pt; font-weight: 750; padding: 8px; }}
@@ -8803,6 +9753,9 @@ class MainWindow(QMainWindow):
             QLabel#StatusCardTitle {{ color: {theme['muted']}; font-size: 8.5pt; font-weight: 650; }}
             QLabel#StatusCardValue {{ color: {theme['title']}; font-size: 14pt; font-weight: 750; }}
             QLabel#StatusCardDetail {{ color: {theme['muted']}; font-size: 9pt; }}
+            QFrame#MetricChartCard {{ background: {theme['input']}; border: 1px solid {theme['border']}; border-radius: 12px; }}
+            QLabel#ChartCardTitle {{ color: {theme['title']}; font-size: {layout_theme['chart_label_font_size']}px; font-weight: 750; }}
+            QLabel#ChartCardValue {{ color: {theme['text']}; font-size: {max(12, layout_theme['chart_label_font_size'])}px; font-weight: 650; }}
             QLabel#MissionNote {{ color: {theme['muted']}; background: {theme['hint_bg']}; border: 1px solid {theme['hint_border']}; border-radius: 10px; padding: 12px; }}
             QLabel#AppTitle {{ color: {theme['title']}; font-size: 20pt; font-weight: 750; letter-spacing: 0.5px; }}
             QLabel#AppSubtitle {{ color: {theme['muted']}; font-size: 9.5pt; }}
@@ -8858,6 +9811,11 @@ class MainWindow(QMainWindow):
             {special_theme_styles}
             """
         )
+        if hasattr(self, "sidebar"):
+            collapsed = bool(getattr(getattr(self, "navigation_state", None), "collapsed", False))
+            self.sidebar.setFixedWidth(layout_theme["sidebar_collapsed_width"] if collapsed else layout_theme["sidebar_expanded_width"])
+        for button in getattr(self, "nav_buttons", []):
+            button.setMinimumHeight(layout_theme["navigation_item_height"])
 
 
 
@@ -9321,6 +10279,53 @@ class MainWindow(QMainWindow):
                     f"{item.get('model', '')}"
                 )
             self.perf_history_text.setPlainText("\n".join(lines) if lines else "Timing history will appear here.")
+        if hasattr(self, "dashboard_history"):
+            self.dashboard_history.add(clean)
+        self.refresh_dashboard_metrics()
+
+    def refresh_dashboard_metrics(self) -> None:
+        if not hasattr(self, "home_latency_label"):
+            return
+        latest = self.performance_rows[-1] if self.performance_rows else {}
+        total_s = float(latest.get("total_s") or 0.0)
+        retrieval_s = float(latest.get("documents_s") or 0.0) + float(latest.get("memory_s") or 0.0)
+        llm_s = float(latest.get("llm_s") or 0.0)
+        tts_s = float(latest.get("tts_s") or 0.0)
+        stt_s = float(latest.get("stt_s") or 0.0)
+        tokens_per_second = float(latest.get("tokens_per_second") or latest.get("tokens_s") or 0.0)
+        self.home_latency_label.setText(f"Latency: {format_metric(total_s, 's') if total_s else 'n/a'}")
+        self.home_retrieval_label.setText(f"Retrieval: {format_metric(retrieval_s, 's') if retrieval_s else 'n/a'}")
+        self.home_llm_label.setText(f"LLM: {format_metric(llm_s, 's') if llm_s else 'n/a'}")
+        self.home_tts_label.setText(f"TTS: {format_metric(tts_s, 's') if tts_s else 'n/a'}")
+        self.home_tokens_label.setText(f"Tokens/sec: {format_metric(tokens_per_second, '', 1) if tokens_per_second else 'n/a'}")
+        system_summary = self.dashboard_system_summary()
+        self.home_system_label.setText("CPU/RAM/GPU: " + system_summary)
+        if hasattr(self, "home_latency_chart"):
+            latency_values = [value for value in self.dashboard_history.values("total_s") if value > 0.0]
+            self.home_latency_chart.set_values(latency_values, value_text=f"Current {format_metric(total_s, 's')}" if total_s else "", colour="#45a3ff")
+            self.home_breakdown_chart.set_values([stt_s, llm_s, tts_s] if any((stt_s, llm_s, tts_s)) else [], value_text=f"STT {format_metric(stt_s, 's') if stt_s else 'n/a'} / LLM {format_metric(llm_s, 's') if llm_s else 'n/a'} / TTS {format_metric(tts_s, 's') if tts_s else 'n/a'}", colour="#5eead4")
+            system_values = self.dashboard_history.values("cpu_percent") or self.dashboard_history.values("ram_percent")
+            system_values = [value for value in system_values if value > 0.0]
+            self.home_system_chart.set_values(system_values, value_text=system_summary, colour="#f59e0b")
+            conversation_values = [1.0 for _row in self.performance_rows[-40:]]
+            self.home_conversation_chart.set_values(conversation_values, value_text=f"{len(conversation_values)} recent response(s)" if conversation_values else "", colour="#a78bfa")
+            capability_runs = [float(row.get("capability_count") or 0.0) for row in self.performance_rows[-40:]]
+            capability_runs = [value for value in capability_runs if value > 0.0]
+            self.home_capability_chart.set_values(capability_runs, value_text=f"{sum(capability_runs):.0f} recent run(s)" if capability_runs else "", colour="#22c55e")
+            integration_count = len(self.integration_registry.all()) if hasattr(self, "integration_registry") else 0
+            self.home_integration_chart.set_values([float(integration_count)] if integration_count else [], value_text=f"{integration_count} connector(s)" if integration_count else "", colour="#38bdf8")
+
+    def dashboard_system_summary(self) -> str:
+        try:
+            import psutil  # type: ignore
+            cpu = float(psutil.cpu_percent(interval=None))
+            ram = float(psutil.virtual_memory().percent)
+            sample = {"cpu_percent": cpu, "ram_percent": ram}
+            if hasattr(self, "dashboard_history"):
+                self.dashboard_history.add(sample)
+            return f"CPU {cpu:.0f}% / RAM {ram:.0f}% / GPU n/a"
+        except Exception:
+            return "n/a"
 
     def clear_performance_chart(self) -> None:
         self.performance_rows.clear()
@@ -9483,6 +10488,8 @@ class MainWindow(QMainWindow):
             cards["INTEGRATIONS"].setText(f"Integrations\n{active} connectors available")
         if hasattr(self, "home_recent_activity"):
             self.home_recent_activity.setPlainText("Recent conversation and service events appear here during this session.")
+        if hasattr(self, "refresh_dashboard_metrics"):
+            self.refresh_dashboard_metrics()
         self.refresh_runtime_identity_panel()
 
     def workshop_mode(self) -> str:
@@ -10418,6 +11425,10 @@ class MainWindow(QMainWindow):
 
     def closeEvent(self, event) -> None:  # type: ignore[override]
         self.stop_api()
+        try:
+            self.core.reminder_clock.shutdown()
+        except Exception:
+            pass
         try:
             self.core.stop_speech()
         except Exception:

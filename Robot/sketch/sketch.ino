@@ -239,6 +239,25 @@ bool i2cAddressPresent(TwoWire &wire, uint8_t address) {
   return wire.endTransmission() == 0;
 }
 
+String bx1_i2c_scan() {
+  // Read-only diagnostic: never writes a device register or touches actuators.
+  Wire1.begin();
+  Wire1.setClock(100000);
+  String json = "{\"ok\":true,\"bus\":\"Wire1/Qwiic\",\"devices\":[";
+  bool first = true;
+  for (uint8_t address = 1; address < 127; address++) {
+    if (!i2cAddressPresent(Wire1, address)) continue;
+    if (!first) json += ",";
+    json += "\"0x";
+    if (address < 16) json += "0";
+    json += String(address, HEX);
+    json += "\"";
+    first = false;
+  }
+  json += "]}";
+  return json;
+}
+
 bool initialiseMovementImu() {
   lastImuInitAttemptMs = millis();
 
@@ -1116,6 +1135,7 @@ void setup() {
   Bridge.provide("bx1_set_head_pose", bx1_set_head_pose);
   Bridge.provide("bx1_test_servo_us", bx1_test_servo_us);
   Bridge.provide("bx1_set_led_zone", bx1_set_led_zone);
+  Bridge.provide("bx1_i2c_scan", bx1_i2c_scan);
 
   modeText = "bridge_ready";
   Serial.begin(115200);

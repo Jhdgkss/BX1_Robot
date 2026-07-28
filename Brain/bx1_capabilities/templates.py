@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any, Dict
 
 from bx1_capabilities.manifest import manifest_with_checksum
+from bx1_capabilities.design import CapabilityProposal
 
 
 def utc_now() -> str:
@@ -86,6 +87,74 @@ if __name__ == "__main__":
     unittest.main()
 '''
     return _write_package(folder, manifest, capability_py, tests_py, "# Workshop Greeting\n\nStarter addon template.\n", {}, manifest["ui_schema"])
+
+
+def create_proposal_package(folder: Path, proposal: CapabilityProposal) -> Path:
+    """Create a bounded review package. It deliberately implements mock-only actions."""
+    actions = [
+        {"action_id": action, "description": f"Mock implementation for {action.replace('_', ' ')}.",
+         "permissions": list(proposal.required_permissions), "confirmation_required": action.startswith(("cancel_", "dismiss_"))}
+        for action in proposal.actions
+    ]
+    triggers = [phrase for phrase in proposal.example_user_phrases if len(phrase.split()) >= 3]
+    manifest = {
+        "capability_id": proposal.capability_id,
+        "display_name": proposal.capability_name,
+        "version": "0.1.0",
+        "description": proposal.purpose,
+        "capability_type": proposal.capability_type,
+        "trigger_phrases": triggers or [f"use the {proposal.capability_name.lower()} capability"],
+        "actions": actions,
+        "permissions": list(proposal.required_permissions) or ["NONE"],
+        "confirmation_policy": {action["action_id"]: "explicit" for action in actions if action["confirmation_required"]},
+        "allowed_network_domains": [],
+        "allowed_file_paths": [],
+        "timeout_seconds": 5,
+        "dependencies": [],
+        "settings_schema": {"design_status": "review_only"},
+        "ui_schema": {"controls": [{"type": "status", "id": "design_status", "label": "Design status"}]},
+        "created_by": "BX1 Capability Workshop proposal",
+        "created_timestamp": utc_now(),
+        "minimum_brain_version": "2.12.0",
+        "checksum": "",
+        "enabled_by_default": False,
+        "limitations": list(proposal.safety_constraints),
+        "cannot_do": list(proposal.forbidden_permissions),
+    }
+    capability_py = f'''"""Bounded proposal package generated for review. No live scheduler or external access."""
+ACTIONS = {json.dumps(proposal.actions)}
+
+def get_capability_metadata():
+    return {{"capability_id": {proposal.capability_id!r}, "actions": ACTIONS}}
+
+def validate_settings(settings):
+    return {{"ok": True}}
+
+def execute(action, parameters, context):
+    if action not in ACTIONS:
+        return {{"ok": False, "error": "unknown_action", "message": "Unknown action."}}
+    return {{"ok": True, "mock": True, "action": action, "message": "Mock design action completed; no live change was made."}}
+
+def shutdown():
+    return None
+'''
+    tests_py = '''import unittest
+import capability
+
+class ProposalTests(unittest.TestCase):
+    def test_declared_actions_are_bounded_and_mocked(self):
+        for action in capability.ACTIONS:
+            result = capability.execute(action, {}, {"mock_mode": True})
+            self.assertTrue(result["ok"])
+            self.assertTrue(result["mock"])
+    def test_unknown_action_is_rejected(self):
+        self.assertFalse(capability.execute("arbitrary_action", {}, {})["ok"])
+
+if __name__ == "__main__":
+    unittest.main()
+'''
+    readme = f"# {proposal.capability_name}\n\n{proposal.purpose}\n\nThis generated package is review-only and is not installed automatically.\n"
+    return _write_package(folder, manifest, capability_py, tests_py, readme, manifest["settings_schema"], manifest["ui_schema"])
 
 
 def create_support_responder_package(folder: Path) -> Path:

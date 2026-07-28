@@ -1009,6 +1009,7 @@ class BX1RobotBodyService:
             "last_feedback_at": "",
             "wake_match_source": "",
             "wake_match_score": None,
+            "last_wake_diagnostics": {},
             "record_seconds": int(self.cfg.get("record_seconds", 5)),
             "updated_at": now_iso(),
         }
@@ -1069,6 +1070,12 @@ class BX1RobotBodyService:
         snap["input_mode"] = str(self.cfg.get("input_mode", "keyboard"))
         snap["stt_ready"] = bool(getattr(self.stt, "ready", False)) if self.stt is not None else False
         snap["stt_error"] = str(getattr(self.stt, "error", "")) if self.stt is not None else ""
+        snap["stt_guard_remaining_s"] = round(self.stt_guard_remaining_s(), 2) if hasattr(self, "stt_guard_remaining_s") else 0.0
+        snap["speech_output_active"] = bool(self.speech_output_active()) if hasattr(self, "speech_output_active") else False
+        snap["command_processing"] = bool(self.command_processing.is_set()) if hasattr(self, "command_processing") else False
+        snap["manual_audio_capture_requested"] = bool(self.manual_audio_capture_requested.is_set()) if hasattr(self, "manual_audio_capture_requested") else False
+        snap["mic_monitor_running"] = bool(self.mic_monitor.is_running()) if hasattr(self, "mic_monitor") else False
+        snap["conversation_awake_remaining_s"] = round(max(0.0, float(getattr(self, "conversation_active_until", 0.0) or 0.0) - time.monotonic()), 2)
         return snap
 
     def _voice_feedback_wav(self, kind: str) -> Path:
@@ -2604,6 +2611,75 @@ class BX1RobotBodyService:
                 cleaned = re.sub(r"(?:^|\s)" + re.escape(variant) + r"(?=$|\s)", " ", cleaned, count=1)
         return " ".join(cleaned.split())
 
+    def build_wake_diagnostics(
+        self,
+        stt_result: Dict[str, Any],
+        metrics: Dict[str, Any],
+        *,
+        event_id: str,
+        decision: str,
+        reason: str = "",
+        text: str = "",
+        accepted: bool = False,
+    ) -> Dict[str, Any]:
+        """Create a compact evidence packet for live wake-word decisions."""
+        capture = stt_result.get("capture") if isinstance(stt_result.get("capture"), dict) else {}
+        voice = stt_result.get("voice_activity") if isinstance(stt_result.get("voice_activity"), dict) else {}
+        audio = stt_result.get("audio") if isinstance(stt_result.get("audio"), dict) else {}
+        threshold = voice.get("threshold_dbfs", capture.get("threshold_dbfs", self.cfg.get("mic_noise_gate_dbfs", -48.0)))
+        peak = audio.get("peak_dbfs", capture.get("peak_dbfs"))
+        rms = audio.get("rms_dbfs", capture.get("rms_dbfs"))
+        try:
+            gate_open = bool(float(peak if peak is not None else -120.0) >= float(threshold))
+        except Exception:
+            gate_open = bool(voice.get("voiced_ms", 0))
+        diag = {
+            "event_id": event_id,
+            "decision": decision,
+            "reason": reason,
+            "accepted": bool(accepted),
+            "listener_state": str(self.voice_runtime.get("state", "")),
+            "audio_device": str(self.cfg.get("mic_device", "default")),
+            "sample_rate": int(self.cfg.get("sample_rate", 16000)),
+            "sample_width_bits": 16,
+            "channels": int(self.cfg.get("mic_channels", 1)),
+            "capture_method": str(stt_result.get("capture_method", self.cfg.get("stt_capture_method", "alsa"))),
+            "record_seconds": int(self.cfg.get("record_seconds", 5)),
+            "pre_roll_ms": int(self.cfg.get("stt_pre_roll_ms", 700)),
+            "end_silence_ms": int(self.cfg.get("stt_end_silence_ms", 1350)),
+            "post_roll_ms": int(self.cfg.get("stt_post_roll_ms", 300)),
+            "start_trigger_ms": int(self.cfg.get("stt_start_trigger_ms", 80)),
+            "noise_gate_dbfs": float(self.cfg.get("mic_noise_gate_dbfs", -48.0)),
+            "threshold_dbfs": threshold,
+            "rms_dbfs": rms,
+            "peak_dbfs": peak,
+            "gate_open": gate_open,
+            "voiced_ms": voice.get("voiced_ms"),
+            "speech_ratio": voice.get("speech_ratio"),
+            "close_reason": capture.get("close_reason"),
+            "duration_s": capture.get("duration_s"),
+            "recognized_text": text,
+            "recognition_confidence": stt_result.get("confidence"),
+            "minimum_confidence": stt_result.get("minimum_confidence"),
+            "wake_match": metrics.get("wake_match", ""),
+            "wake_match_score": metrics.get("wake_match_score"),
+            "wake_match_method": metrics.get("wake_match_method", ""),
+            "wake_match_source": metrics.get("wake_match_source", ""),
+            "cooldown_remaining_s": round(self.stt_guard_remaining_s(), 2),
+            "tts_speaking_lockout": bool(self.speech_output_active()),
+            "command_processing": bool(self.command_processing.is_set()),
+            "manual_audio_capture_requested": bool(self.manual_audio_capture_requested.is_set()),
+            "mic_monitor_running": bool(self.mic_monitor.is_running()),
+        }
+        return diag
+
+    def log_wake_diagnostics(self, diagnostics: Dict[str, Any]) -> None:
+        decision = str(diagnostics.get("decision") or "wake")
+        kind = "system" if diagnostics.get("accepted") else "warning"
+        score = diagnostics.get("wake_match_score")
+        suffix = f", score={score}" if score is not None else ""
+        self.web_log(kind, f"Wake diagnostic {decision}: {diagnostics.get('reason', '')}{suffix}", diagnostics)
+
     def is_duplicate_voice_transcript(self, text: str) -> bool:
         norm = self._normalise_spoken_text(text)
         if not norm:
@@ -2825,24 +2901,67 @@ class BX1RobotBodyService:
                 "duration_after_vad_s": (stt_result.get("brain_stt") or {}).get("duration_after_vad_s") if isinstance(stt_result.get("brain_stt"), dict) else None,
             }
             if not stt_result.get("accepted", False):
+                rejected_text = self._normalise_spoken_text(text)
+                rejected_local_text = self._normalise_spoken_text(str(stt_result.get("local_vosk_text") or ""))
+                rejected_wake, rejected_score, rejected_method = self._match_wake_word_detailed(rejected_text, wake_words)
+                rejected_source = "primary" if rejected_wake else ""
+                if not rejected_wake and rejected_local_text:
+                    rejected_wake, rejected_score, rejected_method = self._match_wake_word_detailed(rejected_local_text, wake_words)
+                    if rejected_wake:
+                        rejected_source = "local_vosk_fallback"
+                if rejected_wake:
+                    metrics.update({
+                        "stt_gate_override": "wake_phrase",
+                        "wake_match": rejected_wake,
+                        "wake_match_score": round(float(rejected_score or 0.0), 3),
+                        "wake_match_method": rejected_method,
+                        "wake_match_source": rejected_source or "primary",
+                        "original_stt_rejection_reason": stt_result.get("reason") or stt_result.get("error") or "speech rejected",
+                    })
+                    stt_result["accepted"] = True
+                    stt_result["reason"] = "configured wake phrase accepted despite STT gate"
+                else:
+                    pass
+            if not stt_result.get("accepted", False):
                 reason = str(stt_result.get("reason") or stt_result.get("error") or "speech rejected")
                 if text or reason not in {"no recognised speech", ""}:
+                    diagnostics = self.build_wake_diagnostics(
+                        stt_result, metrics, event_id=event_id, decision="stt_rejected",
+                        reason=reason, text=text, accepted=False,
+                    )
+                    metrics["wake_diagnostics"] = diagnostics
+                    self.log_wake_diagnostics(diagnostics)
                     self.record_input_event("microphone", "stt_gate", text, False, reason, event_id, metrics)
                     self.set_voice_runtime("rejected", f"Rejected microphone input: {reason}", loop_active=True,
-                                           last_rejected=text, last_rejection_reason=reason, last_stt_metrics=metrics, last_event_id=event_id)
+                                           last_rejected=text, last_rejection_reason=reason, last_stt_metrics=metrics,
+                                           last_wake_diagnostics=diagnostics, last_event_id=event_id)
                 continue
             low = self._normalise_spoken_text(text)
             echo, echo_score = self.is_likely_tts_echo(low)
             if echo:
                 metrics["echo_similarity"] = round(echo_score, 3)
+                diagnostics = self.build_wake_diagnostics(
+                    stt_result, metrics, event_id=event_id, decision="echo_rejected",
+                    reason="resembles recent robot speech", text=text, accepted=False,
+                )
+                metrics["wake_diagnostics"] = diagnostics
+                self.log_wake_diagnostics(diagnostics)
                 self.record_input_event("microphone", "echo_guard", text, False, "resembles recent robot speech", event_id, metrics)
                 self.set_voice_runtime("rejected", f"Rejected likely speaker echo ({echo_score:.2f}): {text}", loop_active=True,
-                                       last_rejected=text, last_rejection_reason="speaker echo", last_stt_metrics=metrics, last_event_id=event_id)
+                                       last_rejected=text, last_rejection_reason="speaker echo", last_stt_metrics=metrics,
+                                       last_wake_diagnostics=diagnostics, last_event_id=event_id)
                 continue
             if self.is_duplicate_voice_transcript(low):
+                diagnostics = self.build_wake_diagnostics(
+                    stt_result, metrics, event_id=event_id, decision="duplicate_rejected",
+                    reason="duplicate transcript", text=text, accepted=False,
+                )
+                metrics["wake_diagnostics"] = diagnostics
+                self.log_wake_diagnostics(diagnostics)
                 self.record_input_event("microphone", "duplicate_guard", text, False, "duplicate transcript", event_id, metrics)
                 self.set_voice_runtime("rejected", f"Rejected duplicate transcript: {text}", loop_active=True,
-                                       last_rejected=text, last_rejection_reason="duplicate transcript", last_stt_metrics=metrics, last_event_id=event_id)
+                                       last_rejected=text, last_rejection_reason="duplicate transcript", last_stt_metrics=metrics,
+                                       last_wake_diagnostics=diagnostics, last_event_id=event_id)
                 continue
             self.set_voice_runtime("heard", f"Validated speech: {text}", loop_active=True, last_heard=text, last_stt_metrics=metrics, last_event_id=event_id)
             matched_wake, wake_score, wake_method = self._match_wake_word_detailed(low, wake_words)
@@ -2861,6 +2980,13 @@ class BX1RobotBodyService:
 
             if wake_words and not matched_wake and not is_awake_waiting:
                 print(f"[audio] Heard but ignored: {text}")
+                diagnostics = self.build_wake_diagnostics(
+                    stt_result, metrics, event_id=event_id, decision="wake_rejected",
+                    reason=f"no wake word while conversation inactive; closest score={wake_score:.2f}",
+                    text=text, accepted=False,
+                )
+                metrics["wake_diagnostics"] = diagnostics
+                self.log_wake_diagnostics(diagnostics)
                 self.set_voice_runtime(
                     "ignored",
                     f"Heard but ignored because no wake word was found: {text}",
@@ -2869,6 +2995,7 @@ class BX1RobotBodyService:
                     last_ignored=text,
                     wake_match_source="none",
                     wake_match_score=round(float(wake_score or 0.0), 3),
+                    last_wake_diagnostics=diagnostics,
                 )
                 self.record_input_event("microphone", "wake_gate", text, False, f"no wake word while conversation inactive; closest score={wake_score:.2f}", event_id, metrics)
                 continue
@@ -2896,6 +3023,12 @@ class BX1RobotBodyService:
                 awake_until = time.monotonic() + hold_s
                 self.set_conversation_active_until(awake_until)
                 print(f"[audio] Wake word detected: {matched_wake}; waiting for command")
+                diagnostics = self.build_wake_diagnostics(
+                    stt_result, metrics, event_id=event_id, decision="wake_only_accepted",
+                    reason="wake-only activation", text=text, accepted=True,
+                )
+                metrics["wake_diagnostics"] = diagnostics
+                self.log_wake_diagnostics(diagnostics)
                 self.record_input_event("microphone", "wake_word", text, True, "wake-only activation", event_id, metrics)
                 self.set_voice_runtime(
                     "awake",
@@ -2907,6 +3040,7 @@ class BX1RobotBodyService:
                     last_wake_at=now_iso(),
                     wake_match_source=wake_match_source or "primary",
                     wake_match_score=round(float(wake_score or 1.0), 3),
+                    last_wake_diagnostics=diagnostics,
                 )
                 self.acknowledge_voice_event("wake")
                 if bool(self.cfg.get("wake_voice_ack_enabled", True)):
@@ -2938,6 +3072,12 @@ class BX1RobotBodyService:
                 continue
 
             print(f"[audio] Voice command accepted: wake={matched_wake or ('already awake' if is_awake_waiting else '[none required]')}; command: {cleaned}")
+            diagnostics = self.build_wake_diagnostics(
+                stt_result, metrics, event_id=event_id, decision="voice_command_accepted",
+                reason="validated", text=text, accepted=True,
+            )
+            metrics["wake_diagnostics"] = diagnostics
+            self.log_wake_diagnostics(diagnostics)
             self.record_input_event("microphone", "voice_command", cleaned, True, "validated", event_id,
                                     {**metrics, "raw_text": text, "wake_word": matched_wake, "already_awake": is_awake_waiting})
             if bool(self.cfg.get("voice_command_immediate_cue_enabled", True)):
@@ -2952,6 +3092,7 @@ class BX1RobotBodyService:
                 last_wake_at=now_iso() if matched_wake else self.voice_runtime.get("last_wake_at", ""),
                 wake_match_source=wake_match_source or ("session" if is_awake_waiting else "none"),
                 wake_match_score=round(float(wake_score or (1.0 if is_awake_waiting else 0.0)), 3),
+                last_wake_diagnostics=diagnostics,
             )
             self.web_log("user", f"voice: {cleaned}")
             # The thinking-feedback worker owns chirps and spoken progress cues.
@@ -4817,15 +4958,39 @@ class BX1RobotBodyService:
 
     def web_test_speech(self, text: str = "") -> Dict[str, Any]:
         test_text = str(text or f"Speech test. {self.robot_name} voice system online. Gravity remains suspicious.").strip()
+        forced_brain_defaults = False
+        old_tts_cfg = getattr(self.tts, "cfg", None)
         try:
+            if str(self.resolve_brain_tts_base_url(update_config=False) or "").strip():
+                tts_cfg = self.build_audio_config()
+                tts_cfg.tts_backend = "brain-tts"
+                tts_cfg.brain_tts_use_brain_defaults = True
+                self.tts.update_config(tts_cfg)
+                forced_brain_defaults = True
             report = self.tts.test_speech_blocking(test_text)  # type: ignore[attr-defined]
         except AttributeError:
             self.tts.speak(test_text)
             report = {"ok": True, "message": "speech test sent", "backend_requested": self.cfg.get("tts_backend", "unknown")}
         except Exception as exc:
             report = {"ok": False, "message": str(exc)}
+        finally:
+            if forced_brain_defaults and old_tts_cfg is not None:
+                try:
+                    self.tts.update_config(old_tts_cfg)
+                except Exception:
+                    pass
+        if isinstance(report, dict):
+            report["request_source"] = "robot_web_speech_test"
+            report["forced_brain_voice_defaults"] = forced_brain_defaults
         kind = "system" if report.get("ok") else "error"
-        self.web_log(kind, "Speech test: " + str(report.get("message", "sent")))
+        self.web_log(kind, "Speech test: " + str(report.get("message", "sent")), {
+            "request_source": "robot_web_speech_test",
+            "backend_requested": report.get("backend_requested"),
+            "voice": report.get("voice"),
+            "forced_brain_voice_defaults": forced_brain_defaults,
+            "brain_tts": report.get("brain_tts", {}),
+            "playback_device": self.cfg.get("tts_playback_device", "default"),
+        })
         return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
     def web_snapshot(self) -> Dict[str, Any]:
@@ -4899,8 +5064,14 @@ class BX1RobotBodyService:
             self.save_config_file()
             settings = self.get_brain_settings()
         except Exception as exc:
-            self.web_log("error", f"Brain App URL save failed: {exc}")
-            return {"ok": False, "error": str(exc)}
+            failure = {
+                "requested_base_url": base_url,
+                "use_browser_client_ip": use_browser_ip,
+                "config_path": str(CONFIG_PATH),
+                "error": str(exc),
+            }
+            self.web_log("error", f"Brain App URL save failed for {base_url or '[empty]'}: {exc}", failure)
+            return {"ok": False, **failure}
 
         msg = f"Brain App URL saved: {settings.get('base_url')}"
         if sync_tts:

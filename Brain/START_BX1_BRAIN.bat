@@ -65,7 +65,17 @@ if errorlevel 1 (
 echo.
 echo Starting Robot Brain...
 echo.
-".venv\Scripts\python.exe" main_pyqt.py %PROFILE_ARGS%
+set "BRAIN_PYTHON=.venv\Scripts\python.exe"
+"%BRAIN_PYTHON%" -c "import sys; from zoneinfo import ZoneInfo; ZoneInfo('Europe/London'); print('Verified Brain Python:', sys.executable)"
+if errorlevel 1 (
+    echo Reminder Clock timezone dependency verification failed.
+    echo Installing dependencies into the same interpreter used to launch Brain...
+    "%BRAIN_PYTHON%" -m pip install -r requirements.txt
+    if errorlevel 1 (
+        echo WARNING: Dependency repair failed. Brain will still start with Reminder Clock unavailable.
+    )
+)
+"%BRAIN_PYTHON%" main_pyqt.py %PROFILE_ARGS%
 
 echo.
 echo Robot Brain has closed.
