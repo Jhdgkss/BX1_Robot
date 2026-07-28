@@ -150,8 +150,8 @@ def valid_snapshot():
         "ok": True,
         "bx1_os": {
             "milestone": "BX1 OS Alpha",
-            "release_version": "0.5.0",
-            "release_tag": "BX1_OS_ALPHA_v0.5.0",
+            "release_version": qualification.RELEASE_VERSION,
+            "release_tag": qualification.RELEASE_TAG,
             "qualification_mode": True,
             "observer_only": True,
             "observer_isolation": isolation,
@@ -205,8 +205,8 @@ class ReleaseBuilderTests(unittest.TestCase):
             )
             self.assertEqual(manifest["default_install_root"], "/home/arduino/BX1_OS")
             self.assertEqual(manifest["target_service"], "bx1-os-alpha.service")
-            self.assertEqual(manifest["release_version"], "0.5.0")
-            self.assertEqual(manifest["release_tag"], "BX1_OS_ALPHA_v0.5.0")
+            self.assertEqual(manifest["release_version"], builder.RELEASE_VERSION)
+            self.assertEqual(manifest["release_tag"], builder.RELEASE_TAG)
             self.assertTrue(manifest["source_git_branch"])
             self.assertEqual(manifest["default_web_port"], 8089)
             self.assertTrue(manifest["side_by_side"])
@@ -358,7 +358,7 @@ class DeploymentIntegrationTests(unittest.TestCase):
         installed_manifest = json.loads(
             (self.root / "release_manifest.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(installed_manifest["release_version"], "0.5.0")
+        self.assertEqual(installed_manifest["release_version"], builder.RELEASE_VERSION)
         self.assertEqual(
             installed_manifest["source_git_commit"],
             builder.git_identity(REPOSITORY)[0],

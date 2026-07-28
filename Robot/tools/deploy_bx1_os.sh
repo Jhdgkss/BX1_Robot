@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "[BX1 DEPLOY] BX1 OS Alpha v0.5.0 side-by-side launcher"
+echo "[BX1 DEPLOY] BX1 OS v0.6-development voice vertical slice launcher"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/release_manifest.json" ] && [ -d "$SCRIPT_DIR/payload" ]; then

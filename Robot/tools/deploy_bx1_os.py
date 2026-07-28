@@ -26,8 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.5.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.5.0"
+RELEASE_VERSION = "0.6-development"
+RELEASE_TAG = "BX1_OS_v0.6-development_voice_vertical_slice"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -302,7 +302,7 @@ class SideBySideDeployer:
             self.release.get("release_version") != RELEASE_VERSION
             or self.release.get("release_tag") != RELEASE_TAG
         ):
-            raise DeploymentError("release manifest version/tag is not BX1 OS Alpha v0.5.0")
+            raise DeploymentError("release manifest version/tag is not BX1 OS v0.6-development voice vertical slice")
         if self.release.get("target_service") != DEFAULT_SERVICE:
             raise DeploymentError("release manifest does not target bx1-os-alpha.service")
         if canonical(Path(self.release.get("default_install_root", ""))) != canonical(
@@ -457,6 +457,18 @@ class SideBySideDeployer:
             encoding="utf-8",
         )
         config.chmod(0o600)
+        # The install launcher is intentionally run with sudo, but the service
+        # itself runs as arduino.  Keep the generated machine-local config
+        # private while making it readable by exactly that service account.
+        if os.name == "posix" and self.options.privileged:
+            if os.geteuid() != 0:
+                raise DeploymentError(
+                    "privileged deployment must run as root to set config ownership"
+                )
+            import pwd
+
+            account = pwd.getpwnam(self.options.service_user)
+            os.chown(config, account.pw_uid, account.pw_gid)
         for relative in ("runtime", "runtime/tmp", "logs", "cache"):
             (self.staging_dir / relative).mkdir(parents=True, exist_ok=True)
         return self.staging_dir

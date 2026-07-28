@@ -1,6 +1,7 @@
 {
     "robot_id": "BX1",
-    "brain_base_url": "",
+  "brain_base_url": "",
+  "voice_observer_url": "http://127.0.0.1:8089/api/voice/events",
     "api_key": "",
     "telemetry_interval_s": 1.0,
     "chat_timeout_s": 480,

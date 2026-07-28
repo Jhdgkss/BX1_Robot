@@ -453,6 +453,12 @@ class WebControlServer:
                         )
                         self._json(200, result)
                         return
+                    if path == "/api/voice/vertical-slice":
+                        result = service.web_voice_vertical_slice(
+                            str(data.get("text", "")), str(data.get("session_id", ""))
+                        )
+                        self._json(200 if result.get("ok") else 400, result)
+                        return
                     if path == "/api/repeat_last_response":
                         result = service.web_repeat_last_response()
                         self._json(200 if result.get("ok") else 400, result)

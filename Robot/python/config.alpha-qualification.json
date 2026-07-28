@@ -1,8 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS Alpha v0.5.0 safe camera preview qualification",
-  "bx1_os_release_version": "0.5.0",
-  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.5.0",
+  "app_version": "BX1 OS v0.6-development voice vertical slice",
+  "bx1_os_release_version": "0.6-development",
+  "bx1_os_release_tag": "BX1_OS_v0.6-development_voice_vertical_slice",
   "robot_name": "LEO",
   "management_interface": {
     "enabled": true,
@@ -52,6 +52,11 @@
   "web_host": "0.0.0.0",
   "web_port": 8089,
   "brain_base_url": "",
+  "voice_vertical_slice": {
+    "event_limit": 250,
+    "body_timeout_seconds": 5.0,
+    "metadata_only": true
+  },
   "api_key": "",
   "input_mode": "none",
   "voice_enabled": false,

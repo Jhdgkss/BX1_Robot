@@ -539,14 +539,29 @@ function audioPage(data) {
 }
 
 function brainPage(data) {
+  const voice = data.voice || {};
+  const events = voice.events || [];
+  const bodyFaults = data.robot_body?.active_faults || [];
+  const eventRows = events.length ? events.slice().reverse().map(item => `<tr>
+    <td>${esc(formatTimestamp(item.timestamp))}</td><td>${esc(item.event)}</td>
+    <td class="mono">${esc(item.session_id)}</td><td>${esc(item.metadata?.reason || item.metadata?.stage || item.metadata?.transport || "—")}</td>
+  </tr>`).join("") : `<tr><td colspan="4">No voice metadata received yet.</td></tr>`;
   return `<div class="grid">
-    ${panel("Brain connection", emptyPanel("brain", data.brain.status, "Connection state, latency and authentication will be surfaced here without moving Brain ownership onto the robot."), { span: 7 })}
-    ${panel("Intelligence stack", dataList([
-      ["LLM", "Pending integration"],
-      ["Voice", "Pending integration"],
-      ["Models", "Pending integration"],
-      ["Memory", "Pending integration"],
-    ]), { span: 5, subtitle: "Brain-owned capabilities" })}
+    ${panel("Brain and Body connection", dataList([
+      ["Robot Body", data.robot_body?.connected ? "Connected (port 8088)" : "Unavailable"],
+      ["Brain endpoint", voice.brain_endpoint || "Not discovered from Body configuration", true],
+      ["Brain state", data.brain.status],
+      ["Voice ownership", "Brain generates TTS; Robot Body plays it"],
+      ["MCU / safety", bodyFaults.length ? "DEGRADED / FAULTED — visible" : "No Body fault reported"],
+    ]) + `<div class="page-actions">${button("Test Brain connectivity", { className: "small primary", prototype: "Voice Brain test" })}</div>`, { span: 5, subtitle: "No Brain credentials are displayed or stored here" })}
+    ${panel("Safe typed-text test", `<label for="voiceTypedText">Question (sent once to the Robot Body; not recorded by BX1 OS)</label><textarea class="input" id="voiceTypedText" maxlength="1000" rows="4" placeholder="Ask BX1 a short question"></textarea><div class="page-actions"><button class="button primary" type="button" data-voice-action="typed-test">Send through Brain and play Brain TTS</button></div><p id="voiceActionResult" class="mono">Action packets, motors, servos, cameras and MCU commands are blocked.</p>`, { span: 7, subtitle: "Body → Brain chat/TTS → Body speaker playback" })}
+    ${panel("Conversation Timeline", `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Event</th><th>Session</th><th>Metadata / fault</th></tr></thead><tbody>${eventRows}</tbody></table></div>`, { span: 12, subtitle: "Versioned metadata only — no raw audio, prompt, transcript, credential, or Brain reply" })}
+    ${panel("Voice diagnostics", dataList([
+      ["Observer faults", (voice.active_faults || []).length],
+      ["MCU / safety faults", bodyFaults.length],
+      ["Timeline retention", `${events.length} in-memory events`],
+      ["Export", "/api/voice/diagnostics", true],
+    ]) + `<div class="page-actions"><button class="button small" type="button" data-voice-action="clear-faults">Clear observer faults</button><a class="button small" href="/api/voice/diagnostics" target="_blank" rel="noopener">Export redacted diagnostics</a></div>`, { span: 12, subtitle: "Clear never hides MCU or safety faults reported by the Robot Body" })}
   </div>`;
 }
 
@@ -757,6 +772,30 @@ function bindPrototypeActions() {
   });
 }
 
+async function voiceAction(action) {
+  const result = $("#voiceActionResult");
+  try {
+    let path = "/api/voice/brain-test";
+    let body = {};
+    if (action === "typed-test") {
+      const text = $("#voiceTypedText")?.value?.trim() || "";
+      if (!text) throw new Error("Enter a question first.");
+      path = "/api/voice/typed-test";
+      body = { text };
+    } else if (action === "clear-faults") {
+      path = "/api/voice/faults/clear";
+    }
+    const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) throw new Error(payload.error || "Voice action failed");
+    if (result) result.textContent = action === "typed-test" ? `Session ${payload.session_id}: Body accepted the request; Brain TTS playback is in progress.` : JSON.stringify(payload);
+    await loadCoreTelemetry();
+  } catch (error) {
+    if (result) result.textContent = error.message;
+    toast("Voice diagnostic failed", error.message);
+  }
+}
+
 function setCameraPreviewState(mode, detail = "") {
   const viewport = $("#cameraPreview");
   const message = $("#cameraPreviewState");
@@ -867,7 +906,7 @@ function updateCameraPageTelemetry() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -894,8 +933,8 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
       management_port: management.port || 8089,
     },
     brain: {
-      status: brain.connected ? "Connected" : "Not connected",
-      url: "",
+      status: voicePayload.brain_endpoint ? (brain.connected ? "Connected" : "Configured / probe available") : "Not connected",
+      url: voicePayload.brain_endpoint || "",
     },
     system: {
       python: system.python,
@@ -939,6 +978,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
       health: observed(robotBodyPayload.robot_body?.health, "unavailable"),
       active_faults: observed(robotBodyPayload.robot_body?.active_faults, []),
     },
+    voice: voicePayload,
     deployment: {
       current_version: deployment.version,
       commit: deployment.commit,
@@ -967,16 +1007,17 @@ async function loadCoreTelemetry() {
       "/api/core/audio",
       "/api/core/robot-body",
       "/api/core/camera",
+      "/api/voice/status",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice);
     state.connected = true;
     if (state.page === "camera") updateCameraPageTelemetry();
     else renderPage();
@@ -994,6 +1035,10 @@ function init() {
   $("#primaryNav").addEventListener("click", event => {
     const item = event.target.closest("[data-page]");
     if (item) navigate(item.dataset.page);
+  });
+  $("#pageContent").addEventListener("click", event => {
+    const action = event.target.closest("[data-voice-action]")?.dataset.voiceAction;
+    if (action) voiceAction(action);
   });
   $("#sidebarCollapse").addEventListener("click", () => {
     const shell = $(".app-shell");

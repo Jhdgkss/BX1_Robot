@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.5.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.5.0"
+RELEASE_VERSION = "0.6-development"
+RELEASE_TAG = "BX1_OS_v0.6-development_voice_vertical_slice"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -50,6 +50,7 @@ TOOL_FILES = [
     "test_hardware_freshness.py",
     "test_deployment_system.py",
     "test_management_interface.py",
+    "test_voice_vertical_slice.py",
     "test_bx1_core_telemetry.py",
     "test_hardware_audio_integration.py",
     "test_camera_preview_integration.py",
@@ -94,7 +95,7 @@ def build_release(
     files = collect_release_files(repo)
     commit, dirty = git_identity(repo)
     created_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    release_id = "bx1-os-alpha-%s" % timestamp.lower()
+    release_id = "bx1-os-v0.6-development-voice-vertical-slice-%s" % timestamp.lower()
 
     entries = []
     for source, target in files:

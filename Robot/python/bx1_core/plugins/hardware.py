@@ -372,12 +372,13 @@ class HardwarePlugin(CorePlugin):
             source="plugin.hardware",
         )
         failures = self._mapping(result.get("adapter_failures"))
-        warning = bool(failures) or not bool(body.get("connected"))
+        body_faults = list(body.get("active_faults") or [])
+        warning = bool(failures) or not bool(body.get("connected")) or bool(body_faults)
         self._set_health(
             HealthState.WARNING if warning else HealthState.HEALTHY,
             {
                 "reason": (
-                    "Observer discovery completed with degraded sources"
+                    "Observer discovery completed with degraded sources or Robot Body safety faults"
                     if warning
                     else "Observer discovery completed"
                 ),
@@ -386,6 +387,7 @@ class HardwarePlugin(CorePlugin):
                 "devices_opened": False,
                 "adapter_failures": failures,
                 "robot_body_connected": bool(body.get("connected")),
+                "robot_body_active_faults": body_faults,
                 "device_count": len(result.get("inventory", [])),
             },
         )
@@ -414,6 +416,7 @@ class HardwarePlugin(CorePlugin):
                 "imu",
                 "camera",
                 "mouth_led",
+                "network",
             )
         }
 

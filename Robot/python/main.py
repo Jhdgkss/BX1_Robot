@@ -1059,7 +1059,7 @@ class BX1RobotBodyService:
             "rejected": "warning", "ignored": "listening", "error": "error",
         }
         led_state = state_map.get(str(state or "idle").lower())
-        if led_state and hasattr(self, "hardware"):
+        if led_state and hasattr(self, "hardware") and not bool(getattr(self, "_voice_vertical_slice_no_actuators", False)):
             threading.Thread(target=self.apply_led_state, args=(led_state,), kwargs={"source": "voice_runtime"}, daemon=True).start()
 
     def get_voice_runtime_snapshot(self) -> Dict[str, Any]:
@@ -3094,6 +3094,10 @@ class BX1RobotBodyService:
                 wake_match_score=round(float(wake_score or (1.0 if is_awake_waiting else 0.0)), 3),
                 last_wake_diagnostics=diagnostics,
             )
+            if matched_wake:
+                self.emit_voice_observer_event("WakeDetected", event_id, stage="wake_word")
+            self.emit_voice_observer_event("ListeningStarted", event_id, stage="microphone")
+            self.emit_voice_observer_event("SpeechRecognised", event_id, stage="stt")
             self.web_log("user", f"voice: {cleaned}")
             # The thinking-feedback worker owns chirps and spoken progress cues.
             # Keeping this route single avoids two overlapping acknowledgements.
@@ -3803,9 +3807,36 @@ class BX1RobotBodyService:
         # should not change robot name, character or prompt state.
         return None
 
+    def emit_voice_observer_event(self, event: str, session_id: str, **metadata: Any) -> None:
+        """Best-effort metadata-only event delivery to local BX1 OS; never blocks voice."""
+        endpoint = str(self.cfg.get("voice_observer_url", "") or "").strip()
+        if not endpoint or not session_id:
+            return
+        try:
+            parsed = urlparse(endpoint)
+            if parsed.scheme != "http" or parsed.hostname not in {"127.0.0.1", "localhost", "::1"} or parsed.port != 8089 or parsed.path != "/api/voice/events":
+                return
+            payload = {"event": event, "session_id": str(session_id)[:96], "timestamp": time.time(), "source": "robot_body"}
+            for key in ("reason", "stage", "transport", "duration_ms", "latency_ms"):
+                if key in metadata:
+                    value = metadata[key]
+                    payload[key] = value if isinstance(value, (bool, int, float)) else str(value)[:240]
+            body = json.dumps(payload).encode("utf-8")
+            request = urllib.request.Request(endpoint, data=body, method="POST", headers={"Content-Type": "application/json"})
+            def deliver() -> None:
+                try:
+                    with urllib.request.urlopen(request, timeout=1.0) as response:
+                        response.read(512)
+                except Exception:
+                    pass
+            threading.Thread(target=deliver, name="bx1-voice-observer", daemon=True).start()
+        except Exception:
+            return
+
     def handle_user_text(self, text: str, use_web: Optional[bool] = None, use_memory: Optional[bool] = None,
                          allow_vision: Optional[bool] = None, source: str = "robot_body", trigger: str = "manual",
-                         event_id: str = "", input_metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+                         event_id: str = "", input_metadata: Optional[Dict[str, Any]] = None,
+                         allow_actions: bool = True) -> Dict[str, Any]:
         text = str(text or "").strip()
         if not text:
             return {"ok": False, "error": "empty text"}
@@ -3844,7 +3875,9 @@ class BX1RobotBodyService:
             last_accepted=text,
         )
         print("[brain] waiting for reply...")
-        thinking_stop = self.start_thinking_cues("chat")
+        thinking_stop = self.start_thinking_cues("chat") if allow_actions else threading.Event()
+        self.emit_voice_observer_event("BrainRequestSent", event_id, stage="chat")
+        self.emit_voice_observer_event("ThinkingStarted", event_id, stage="llm")
         t0 = time.perf_counter()
         with self.metrics_lock:
             self.performance["last_chat_started_at"] = now_iso()
@@ -3877,6 +3910,7 @@ class BX1RobotBodyService:
             print(f"[brain] chat failed: {exc}")
             self.web_log("error", f"chat failed: {exc}")
             self.set_voice_runtime("error", f"Brain request failed: {exc}", last_error=str(exc))
+            self.emit_voice_observer_event("FaultRaised", event_id, reason="brain_timeout_or_offline")
             thinking_stop.set()
             self.command_processing.clear()
             return {"ok": False, "error": str(exc)}
@@ -3888,7 +3922,7 @@ class BX1RobotBodyService:
             with self.metrics_lock:
                 self.performance["last_chat_finished_at"] = now_iso()
         try:
-            return self.handle_brain_result(result, original_message=text, thinking_stop=thinking_stop)
+            return self.handle_brain_result(result, original_message=text, thinking_stop=thinking_stop, session_id=event_id, allow_actions=allow_actions)
         finally:
             # TTS has been queued before handle_brain_result returns. The wake
             # listener now hands protection over to speech_output_active().
@@ -3940,7 +3974,8 @@ class BX1RobotBodyService:
         return self.handle_brain_result(result, original_message=prompt, thinking_stop=thinking_stop)
 
     def handle_brain_result(self, result: Dict[str, Any], original_message: str,
-                            thinking_stop: Optional[threading.Event] = None) -> Dict[str, Any]:
+                            thinking_stop: Optional[threading.Event] = None,
+                            session_id: str = "", allow_actions: bool = True) -> Dict[str, Any]:
         if not result.get("ok", False):
             err = str(result.get("error") or result.get("detail") or result.get("message") or "brain returned error")
             hint = str(result.get("hint") or "")
@@ -3948,6 +3983,7 @@ class BX1RobotBodyService:
             print(f"[brain] error: {visible}")
             self.web_log("error", f"brain returned error: {visible}", result)
             self.set_voice_runtime("error", f"Brain returned an error: {visible}", last_error=visible)
+            self.emit_voice_observer_event("FaultRaised", session_id, reason="brain_malformed_or_error")
             if thinking_stop is not None:
                 thinking_stop.set()
             self.stop_active_thinking_cues("brain_error")
@@ -3989,7 +4025,8 @@ class BX1RobotBodyService:
             with self.metrics_lock:
                 self.performance["last_reply_chars"] = len(reply)
             ai_expr = result.get("expression") if isinstance(result.get("expression"), dict) else None
-            self.apply_expression_for_reply(reply, original_message=original_message, ai_expr=ai_expr)
+            if allow_actions:
+                self.apply_expression_for_reply(reply, original_message=original_message, ai_expr=ai_expr)
             nested_audio = result.get("audio") if isinstance(result.get("audio"), dict) else {}
             brain_audio_present = bool(result.get("audio_url") or nested_audio.get("audio_url") or nested_audio.get("relative_audio_url"))
             audio_already_played_on_robot = bool(result.get("audio_played_on_robot") or result.get("played_on_body"))
@@ -4013,17 +4050,21 @@ class BX1RobotBodyService:
                     loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
                     thinking_phase="audio_download",
                 )
-                if self.play_brain_response_audio(result, reply):
+                if self.play_brain_response_audio(result, reply, session_id=session_id, fallback_on_failure=allow_actions):
                     self.web_log("system", "Playing the Brain-published Dot.TTS reply on the robot speaker.")
                 else:
-                    self.web_log("warning", "Brain reply audio could not be downloaded; using the local speech fallback.")
-                    self.tts.speak(reply, flush=True, tag="reply_fallback")
+                    self.web_log("warning", "Brain reply audio could not be downloaded.")
+                    self.emit_voice_observer_event("FaultRaised", session_id, reason="brain_tts_download_failed")
+                    if allow_actions:
+                        self.tts.speak(reply, flush=True, tag="reply_fallback")
             else:
                 if thinking_stop is not None:
                     thinking_stop.set()
                 self.stop_active_thinking_cues("reply_without_audio")
                 self.web_log("warning", "Brain returned text without audio; using the local speech fallback.")
-                self.tts.speak(reply, flush=True, tag="reply_fallback")
+                self.emit_voice_observer_event("FaultRaised", session_id, reason="brain_tts_missing")
+                if allow_actions:
+                    self.tts.speak(reply, flush=True, tag="reply_fallback")
                 if not bool(self.cfg.get("tts_enabled", True)):
                     if thinking_stop is not None:
                         thinking_stop.set()
@@ -4034,7 +4075,7 @@ class BX1RobotBodyService:
             self.stop_active_thinking_cues("no_spoken_reply")
             self.set_voice_runtime("idle", "Brain returned no spoken reply.")
         actions = result.get("actions") or []
-        ack = self.execute_actions(actions, original_message=original_message)
+        ack = self.execute_actions(actions, original_message=original_message) if allow_actions else {"actions_seen": 0, "blocked": "voice_vertical_slice"}
         if ack["actions_seen"]:
             try:
                 self.brain.command_ack(ack)
@@ -4043,7 +4084,7 @@ class BX1RobotBodyService:
                 self.web_log("error", f"command ack failed: {exc}")
         return {"ok": True, "reply": reply, "actions": actions, "ack": ack, "raw": result}
 
-    def play_brain_response_audio(self, result: Dict[str, Any], reply: str) -> bool:
+    def play_brain_response_audio(self, result: Dict[str, Any], reply: str, *, session_id: str = "", fallback_on_failure: bool = True) -> bool:
         """Download one API reply file, then play it asynchronously with mouth events."""
         download_started = time.perf_counter()
         try:
@@ -4063,16 +4104,22 @@ class BX1RobotBodyService:
         }
 
         def worker() -> None:
+            self.emit_voice_observer_event("SpeechStarted", session_id, transport="brain_api_audio")
             playback = self.tts.play_response_audio_file(
                 filename,
                 reply,
                 tag="dottts_reply",
                 delete_after=True,
                 timing=timing,
+                emit_mouth_events=allow_actions,
             )
             if not playback.get("ok"):
                 self.web_log("error", f"Brain reply audio playback failed: {playback}")
-                self.tts.speak(reply, flush=True, tag="reply_fallback")
+                self.emit_voice_observer_event("FaultRaised", session_id, reason="brain_tts_playback_failed")
+                if fallback_on_failure:
+                    self.tts.speak(reply, flush=True, tag="reply_fallback")
+            else:
+                self.emit_voice_observer_event("SpeechFinished", session_id, transport="brain_api_audio")
 
         threading.Thread(target=worker, name="bx1-brain-reply-audio", daemon=True).start()
         return True
@@ -5248,6 +5295,27 @@ class BX1RobotBodyService:
             return {"ok": False, "error": "empty text"}
         with self.command_lock:
             return self.handle_user_text(text, use_web=use_web, use_memory=use_memory, allow_vision=allow_vision)
+
+    def web_voice_vertical_slice(self, text: str, session_id: str) -> Dict[str, Any]:
+        """Run the Body-owned Brain/TTS path with actions and local fallback disabled."""
+        question = str(text or "").strip()
+        correlation = str(session_id or "").strip()
+        if not question or len(question) > 1000 or not re.fullmatch(r"voice-[a-f0-9]{32}", correlation):
+            return {"ok": False, "error": "invalid_voice_vertical_slice_request"}
+        for event in ("WakeDetected", "ListeningStarted", "SpeechRecognised"):
+            self.emit_voice_observer_event(event, correlation, stage="typed_test")
+        with self.command_lock:
+            self._voice_vertical_slice_no_actuators = True
+            try:
+                result = self.handle_user_text(
+                    question, allow_vision=False, source="bx1_os_voice_vertical_slice", trigger="typed_test",
+                    event_id=correlation, input_metadata={"kind": "typed_test"}, allow_actions=False,
+                )
+            finally:
+                self._voice_vertical_slice_no_actuators = False
+        if not result.get("ok"):
+            self.emit_voice_observer_event("FaultRaised", correlation, reason="brain_request_failed")
+        return {"ok": bool(result.get("ok")), "session_id": correlation, "playback_owner": "robot_body"}
 
     def get_identity_settings(self) -> Dict[str, Any]:
         profile = self.get_robot_profile_payload()

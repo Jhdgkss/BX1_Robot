@@ -23,10 +23,11 @@ from bx1_core.hardware import (
     CameraProxyError,
     RobotBodyCameraClient,
 )
+from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 
 
-RELEASE_VERSION = "0.5.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.5.0"
+RELEASE_VERSION = "0.6-development"
+RELEASE_TAG = "BX1_OS_v0.6-development_voice_vertical_slice"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -112,6 +113,13 @@ class ManagementApplication:
             ),
             service_provider=self._service_projection,
         )
+        voice_config = dict(self.config.get("voice_vertical_slice", {}))
+        self.voice_timeline = VoiceTimeline(limit=int(voice_config.get("event_limit", 250)))
+        self.voice = VoiceVerticalSlice(
+            self.voice_timeline,
+            body_url=str(self.config.get("hardware_observer", {}).get("robot_body_url", "http://127.0.0.1:8088")),
+            timeout=float(voice_config.get("body_timeout_seconds", 5.0)),
+        )
         self.core.state.set_many(
             {
                 "management.id": INTERFACE_ID,
@@ -137,6 +145,9 @@ class ManagementApplication:
         bx1.tick()
         bx1.health.check()
         self.core.update()
+        body = self.core.robot_body_snapshot().get("robot_body", {})
+        body_value = body.get("value", body) if isinstance(body, Mapping) else {}
+        endpoint = self.voice.update_brain_endpoint(body_value if isinstance(body_value, Mapping) else {})
         isolation = dict(self.config.get("observer_isolation", {}))
         return {
             "ok": True,
@@ -170,6 +181,11 @@ class ManagementApplication:
                     "architecture_only": True,
                     "core_telemetry": True,
                     "capabilities": self.capabilities.as_dict(),
+                },
+                "voice_vertical_slice": {
+                    "schema": "bx1.voice.vertical_slice.v1",
+                    "brain_endpoint": endpoint,
+                    "timeline": self.voice_timeline.snapshot(),
                 },
             },
         }
@@ -271,6 +287,12 @@ class ManagementApplication:
 
     def core_robot_body_health(self) -> Dict[str, Any]:
         return self.core.robot_body_health_snapshot()
+
+    def voice_status(self) -> Dict[str, Any]:
+        body = self.core.robot_body_snapshot().get("robot_body", {})
+        body_value = body.get("value", body) if isinstance(body, Mapping) else {}
+        endpoint = self.voice.update_brain_endpoint(body_value if isinstance(body_value, Mapping) else {})
+        return {"ok": True, "brain_endpoint": endpoint, **self.voice_timeline.snapshot()}
 
     def core_camera(self) -> Dict[str, Any]:
         payload = self.core.camera_snapshot()
@@ -437,6 +459,16 @@ class ManagementServer:
                     "application/json; charset=utf-8",
                 )
 
+            def _read_json(self) -> Dict[str, Any]:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+                if length < 0 or length > 65536:
+                    raise ValueError("request_too_large")
+                raw = self.rfile.read(length) if length else b"{}"
+                value = json.loads(raw.decode("utf-8"))
+                if not isinstance(value, Mapping):
+                    raise ValueError("request_must_be_object")
+                return dict(value)
+
             def do_GET(self) -> None:  # noqa: N802
                 request = urlparse(self.path)
                 path = request.path
@@ -495,6 +527,15 @@ class ManagementServer:
                         HTTPStatus.OK,
                         application.core_robot_body_health(),
                     )
+                    return
+                if path == "/api/voice/status":
+                    self._json(HTTPStatus.OK, application.voice_status())
+                    return
+                if path == "/api/voice/timeline":
+                    self._json(HTTPStatus.OK, application.voice_timeline.snapshot())
+                    return
+                if path == "/api/voice/diagnostics":
+                    self._json(HTTPStatus.OK, application.voice_status())
                     return
                 if path == "/api/core/camera":
                     self._json(HTTPStatus.OK, application.core_camera())
@@ -603,24 +644,47 @@ class ManagementServer:
                     {"ok": False, "error": "route_not_found"},
                 )
 
-            def _reject_write(self) -> None:
+            def _reject_write(self, *, body_consumed: bool = False) -> None:
                 length = min(
                     max(0, int(self.headers.get("Content-Length", "0") or "0")),
                     1024 * 1024,
                 )
-                if length:
+                if length and not body_consumed:
                     self.rfile.read(length)
                 self._json(
                     HTTPStatus.NOT_IMPLEMENTED,
                     {
                         "ok": False,
                         "error": "architecture_only",
-                        "detail": "BX1 OS Alpha v0.5.0 is read-only",
+                        "detail": "BX1 OS v0.6-development allows only the scoped voice diagnostic routes",
                     },
                 )
 
             def do_POST(self) -> None:  # noqa: N802
-                self._reject_write()
+                path = urlparse(self.path).path
+                try:
+                    body = self._read_json()
+                    if path == "/api/voice/events":
+                        if self.client_address[0] not in {"127.0.0.1", "::1"}:
+                            self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "voice_events_loopback_only"})
+                            return
+                        self._json(HTTPStatus.ACCEPTED, {"ok": True, "event": application.voice_timeline.record(body, source="robot_body")})
+                        return
+                    if path == "/api/voice/typed-test":
+                        result = application.voice.typed_test(str(body.get("text") or ""))
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        return
+                    if path == "/api/voice/brain-test":
+                        result = application.voice.brain_probe()
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        return
+                    if path == "/api/voice/faults/clear":
+                        self._json(HTTPStatus.OK, application.voice_timeline.clear_observer_faults())
+                        return
+                except (ValueError, json.JSONDecodeError) as exc:
+                    self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
+                self._reject_write(body_consumed=True)
 
             def do_PUT(self) -> None:  # noqa: N802
                 self._reject_write()

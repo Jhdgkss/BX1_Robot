@@ -122,6 +122,7 @@ class RobotBodyClient:
         vision = self._mapping(status.get("vision_awareness"))
         camera_preview = self._mapping(status.get("camera_preview"))
         hardware = self._mapping(status.get("hardware"))
+        network = self._mapping(state.get("network"))
         mic_level = self._mapping(status.get("mic_level")).get("level", {})
         faults = self._faults(state, doctor, status.get("events"))
         return {
@@ -235,6 +236,7 @@ class RobotBodyClient:
             "hardware": self._select(
                 hardware, ("hardware_registry", "hardware_control")
             ),
+            "network": self._select(network, ("brain_app_base_url",)),
         }
 
     def _offline(self, result: Mapping[str, Any]) -> Dict[str, Any]:
@@ -256,6 +258,7 @@ class RobotBodyClient:
             "camera": {"state": "unknown"},
             "mouth_led": {"state": "unknown"},
             "hardware": {},
+            "network": {},
         }
 
     @staticmethod

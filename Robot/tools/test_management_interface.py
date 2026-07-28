@@ -70,7 +70,7 @@ class ManagementApplicationTests(unittest.TestCase):
 
     def test_bootstrap_payload_contains_framework_sections_without_controls(self):
         payload = ManagementApplication(qualification_config()).bootstrap_payload()
-        self.assertEqual(payload["interface"]["version"], "0.5.0")
+        self.assertEqual(payload["interface"]["version"], RELEASE_VERSION)
         self.assertIn("system", payload)
         self.assertIn("services", payload)
         self.assertIn("deployment", payload)

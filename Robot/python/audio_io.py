@@ -635,6 +635,7 @@ class TextToSpeech:
         tag: str = "reply",
         delete_after: bool = True,
         timing: Optional[dict] = None,
+        emit_mouth_events: bool = True,
     ) -> dict:
         """Play a Brain-published reply file with real mouth-envelope events."""
         filename = str(filename or "")
@@ -658,28 +659,30 @@ class TextToSpeech:
                 f"generation_download={float((timing or {}).get('total_generation_download_s') or 0.0):.3f}s "
                 f"duration={float(profile.get('duration_s') or 0.0):.3f}s chars={len(text)}"
             )
-            self._emit_mouth_event("speech_audio_file_start", {
-                "text": text,
-                "tag": tag,
-                "backend": "brain-api-audio",
-                "filename": filename,
-                "wav": wav,
-                "audio_profile": profile,
-                "tts_timing": dict(timing or {}),
-            })
-            playback_started = time.perf_counter()
-            try:
-                play = _bx1_play_file(player, filename, self.cfg.tts_volume, wav=wav, playback_device=self.cfg.tts_playback_device)
-            finally:
-                print(f"[audio] Reply playback finished: elapsed={time.perf_counter() - playback_started:.3f}s")
-                self._emit_mouth_event("speech_audio_file_stop", {
+            if emit_mouth_events:
+                self._emit_mouth_event("speech_audio_file_start", {
                     "text": text,
                     "tag": tag,
                     "backend": "brain-api-audio",
                     "filename": filename,
                     "wav": wav,
                     "audio_profile": profile,
+                    "tts_timing": dict(timing or {}),
                 })
+            playback_started = time.perf_counter()
+            try:
+                play = _bx1_play_file(player, filename, self.cfg.tts_volume, wav=wav, playback_device=self.cfg.tts_playback_device)
+            finally:
+                print(f"[audio] Reply playback finished: elapsed={time.perf_counter() - playback_started:.3f}s")
+                if emit_mouth_events:
+                    self._emit_mouth_event("speech_audio_file_stop", {
+                        "text": text,
+                        "tag": tag,
+                        "backend": "brain-api-audio",
+                        "filename": filename,
+                        "wav": wav,
+                        "audio_profile": profile,
+                    })
             if not play.get("ok"):
                 return {"ok": False, "error": str(play.get("error") or play.get("stderr") or "playback failed"), "playback": play}
             return {"ok": True, "filename": filename, "wav": wav, "audio_profile": profile, "playback": play}
