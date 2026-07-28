@@ -1,4 +1,4 @@
-# BX1 OS Alpha v0.1.2 Side-by-Side Deployment Guide
+# BX1 OS Alpha v0.2.0 Side-by-Side Deployment Guide
 
 ## Scope and invariant
 
@@ -96,12 +96,12 @@ Official staging packages should be built from a reviewed, clean commit.
 
 ## Transfer and verify
 
-v0.1.2 uses the release basename
-`bx1-os-alpha-20260728_v0_1_2`. From the repository root:
+v0.2.0 uses the release basename
+`bx1-os-alpha-20260728_v0_2_0`. From the repository root:
 
 ```bash
-scp Deployment/bx1-os-alpha-20260728_v0_1_2.tar.gz \
-  Deployment/bx1-os-alpha-20260728_v0_1_2.tar.gz.sha256 \
+scp Deployment/bx1-os-alpha-20260728_v0_2_0.tar.gz \
+  Deployment/bx1-os-alpha-20260728_v0_2_0.tar.gz.sha256 \
   arduino@100.72.130.12:/home/arduino/
 ```
 
@@ -109,11 +109,11 @@ On the robot:
 
 ```bash
 cd /home/arduino
-sha256sum -c bx1-os-alpha-20260728_v0_1_2.tar.gz.sha256
-BX1_STAGE="$(mktemp -d /home/arduino/bx1-os-alpha-v0.1.2-staging.XXXXXX)"
-tar -xzf bx1-os-alpha-20260728_v0_1_2.tar.gz \
+sha256sum -c bx1-os-alpha-20260728_v0_2_0.tar.gz.sha256
+BX1_STAGE="$(mktemp -d /home/arduino/bx1-os-alpha-v0.2.0-staging.XXXXXX)"
+tar -xzf bx1-os-alpha-20260728_v0_2_0.tar.gz \
   -C "$BX1_STAGE"
-cd "$BX1_STAGE/bx1-os-alpha-20260728_v0_1_2"
+cd "$BX1_STAGE/bx1-os-alpha-20260728_v0_2_0"
 ```
 
 ## Read-only dry run

@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#071016">
+  <meta name="description" content="BX1 OS Management Interface">
+  <title>BX1 OS Management</title>
+  <link rel="stylesheet" href="/assets/styles.css">
+  <script src="/assets/app.js" defer></script>
+</head>
+<body>
+  <div class="app-shell" data-sidebar="expanded">
+    <aside class="sidebar" id="sidebar">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">
+          <span></span><span></span><span></span>
+        </div>
+        <div class="brand-copy">
+          <strong>BX1 OS</strong>
+          <small>Management</small>
+        </div>
+        <button class="icon-button sidebar-collapse" id="sidebarCollapse"
+                aria-label="Collapse navigation" title="Collapse navigation">
+          <svg aria-hidden="true"><use href="#icon-panel"></use></svg>
+        </button>
+      </div>
+
+      <div class="environment-pill">
+        <span class="status-dot status-dot--amber"></span>
+        <span>Alpha qualification</span>
+      </div>
+
+      <nav class="primary-nav" id="primaryNav" aria-label="BX1 OS sections"></nav>
+
+      <div class="sidebar-footer">
+        <div class="sidebar-health">
+          <span class="status-dot status-dot--green"></span>
+          <div><strong>Management online</strong><small>Observer-only mode</small></div>
+        </div>
+        <div class="version-label">BX1 OS <span data-bind="version">v0.2.0</span></div>
+      </div>
+    </aside>
+
+    <div class="main-column">
+      <header class="topbar">
+        <div class="topbar-leading">
+          <button class="icon-button mobile-menu" id="mobileMenu"
+                  aria-label="Open navigation">
+            <svg aria-hidden="true"><use href="#icon-menu"></use></svg>
+          </button>
+          <div>
+            <div class="breadcrumb"><span>BX1 OS</span><span>/</span><span id="breadcrumbPage">Dashboard</span></div>
+            <h1 id="pageHeading">Dashboard</h1>
+          </div>
+        </div>
+        <div class="topbar-actions">
+          <button class="command-button" data-prototype="Global search">
+            <svg aria-hidden="true"><use href="#icon-search"></use></svg>
+            <span>Search</span><kbd>⌘ K</kbd>
+          </button>
+          <div class="topbar-divider"></div>
+          <button class="icon-button" data-prototype="Notifications" aria-label="Notifications">
+            <svg aria-hidden="true"><use href="#icon-bell"></use></svg>
+          </button>
+          <div class="connection-chip"><span class="status-dot status-dot--green"></span><span>Connected</span></div>
+        </div>
+      </header>
+
+      <main class="workspace" id="workspace" tabindex="-1">
+        <div class="page-intro">
+          <div>
+            <p class="eyebrow" id="pageEyebrow">Command centre</p>
+            <h2 id="pageTitle">System overview</h2>
+            <p id="pageDescription">A high-level view of BX1 OS, its resources and connected systems.</p>
+          </div>
+          <div class="page-actions" id="pageActions"></div>
+        </div>
+        <div id="pageContent" aria-live="polite"></div>
+      </main>
+    </div>
+  </div>
+
+  <div class="sidebar-scrim" id="sidebarScrim"></div>
+  <div class="toast-region" id="toastRegion" aria-live="polite"></div>
+
+  <svg class="icon-sprite" aria-hidden="true">
+    <symbol id="icon-grid" viewBox="0 0 24 24"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM14 14h6v6h-6z"/></symbol>
+    <symbol id="icon-system" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+    <symbol id="icon-services" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="5" rx="1"/><rect x="3" y="10" width="18" height="5" rx="1"/><rect x="3" y="17" width="18" height="4" rx="1"/><path d="M7 5.5h.01M7 12.5h.01M7 19h.01"/></symbol>
+    <symbol id="icon-hardware" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2"/><path d="M9 1v5M15 1v5M9 18v5M15 18v5M1 9h5M18 9h5M1 15h5M18 15h5"/></symbol>
+    <symbol id="icon-brain" viewBox="0 0 24 24"><path d="M9.5 4.5A3.5 3.5 0 0 0 6 8v1a3 3 0 0 0-1 5.83V16a4 4 0 0 0 4 4h1V4.5zM14.5 4.5A3.5 3.5 0 0 1 18 8v1a3 3 0 0 1 1 5.83V16a4 4 0 0 1-4 4h-1V4.5zM10 9H8M14 9h2M10 14H8M14 14h2"/></symbol>
+    <symbol id="icon-config" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .34 1.88l.06.06-2.83 2.83-.06-.06A1.7 1.7 0 0 0 15 19.4a1.7 1.7 0 0 0-1 .6 1.7 1.7 0 0 0-.4 1v.1h-4v-.1A1.7 1.7 0 0 0 8.6 19.4a1.7 1.7 0 0 0-1.88.34l-.06.06-2.83-2.83.06-.06A1.7 1.7 0 0 0 4.6 15a1.7 1.7 0 0 0-.6-1 1.7 1.7 0 0 0-1-.4h-.1v-4H3A1.7 1.7 0 0 0 4.6 8.6a1.7 1.7 0 0 0-.34-1.88l-.06-.06 2.83-2.83.06.06A1.7 1.7 0 0 0 9 4.6a1.7 1.7 0 0 0 1-.6 1.7 1.7 0 0 0 .4-1v-.1h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.88-.34l.06-.06 2.83 2.83-.06.06A1.7 1.7 0 0 0 19.4 9c.17.38.38.72.6 1 .29.32.65.5 1 .5h.1v4H21a1.7 1.7 0 0 0-1.6.5z"/></symbol>
+    <symbol id="icon-logs" viewBox="0 0 24 24"><path d="M4 5h16M4 12h16M4 19h16"/><circle cx="7" cy="5" r="1"/><circle cx="15" cy="12" r="1"/><circle cx="10" cy="19" r="1"/></symbol>
+    <symbol id="icon-deploy" viewBox="0 0 24 24"><path d="M12 3v12M7 8l5-5 5 5M5 21h14a2 2 0 0 0 2-2v-4M3 15v4a2 2 0 0 0 2 2"/></symbol>
+    <symbol id="icon-diagnostics" viewBox="0 0 24 24"><path d="M3 12h4l2-7 4 14 2-7h6"/><path d="M20 5a10 10 0 1 0 0 14"/></symbol>
+    <symbol id="icon-updates" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 9M5.5 15A7 7 0 0 0 18 17.5L20 15"/></symbol>
+    <symbol id="icon-about" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v6M12 7h.01"/></symbol>
+    <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 7h16M4 12h16M4 17h16"/></symbol>
+    <symbol id="icon-panel" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M14 9l-3 3 3 3"/></symbol>
+    <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="m20 20-4-4"/></symbol>
+    <symbol id="icon-bell" viewBox="0 0 24 24"><path d="M18 8a6 6 0 0 0-12 0c0 7-3 7-3 9h18c0-2-3-2-3-9M10 21h4"/></symbol>
+    <symbol id="icon-external" viewBox="0 0 24 24"><path d="M14 4h6v6M20 4l-9 9"/><path d="M18 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V7a1 1 0 0 1 1-1h6"/></symbol>
+    <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 7v5h-5M4 17v-5h5"/><path d="M18.5 9A7 7 0 0 0 6 6.5L4 9M5.5 15A7 7 0 0 0 18 17.5L20 15"/></symbol>
+    <symbol id="icon-power" viewBox="0 0 24 24"><path d="M12 2v10M5.6 5.6a9 9 0 1 0 12.8 0"/></symbol>
+    <symbol id="icon-arrow" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6"/></symbol>
+    <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6"/></symbol>
+    <symbol id="icon-code" viewBox="0 0 24 24"><path d="m8 9-4 3 4 3M16 9l4 3-4 3M14 5l-4 14"/></symbol>
+    <symbol id="icon-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></symbol>
+  </svg>
+</body>
+</html>

@@ -17,7 +17,7 @@ from typing import Iterable, Optional
 LIVE_ROOT = Path("/home/arduino/Arduino_Q_Client_V1").resolve(strict=False)
 LIVE_SERVICE = "bx1-web.service"
 DEFAULT_SERVICE = "bx1-os-alpha.service"
-RELEASE_VERSION = "0.1.2"
+RELEASE_VERSION = "0.2.0"
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
     "main.py",

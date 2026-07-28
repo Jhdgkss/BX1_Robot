@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.1.2"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.1.2"
+RELEASE_VERSION = "0.2.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.2.0"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -43,7 +43,7 @@ TOOL_FILES = [
     "rollback_bx1_os.py",
     "qualify_bx1_alpha.py",
     "run_robot_body.sh",
-    "run_bx1_os_alpha.sh",
+    "run_bx1_os_management.sh",
     "check_web_health.sh",
     "test_runtime_integration.py",
     "test_communication_framework.py",
@@ -52,6 +52,7 @@ TOOL_FILES = [
     "test_hardware_services.py",
     "test_hardware_freshness.py",
     "test_deployment_system.py",
+    "test_management_interface.py",
 ]
 
 DOCUMENTATION_FILES = [
@@ -65,6 +66,8 @@ DOCUMENTATION_FILES = [
     "DEPLOYMENT_GUIDE.md",
     "BX1_OS_ALPHA_DEPLOYMENT_REPORT.md",
     "BX1_OS_ALPHA_V0_1_2_RELEASE_NOTES.md",
+    "BX1_OS_MANAGEMENT_INTERFACE.md",
+    "BX1_OS_ALPHA_V0_2_0_RELEASE_NOTES.md",
 ]
 
 

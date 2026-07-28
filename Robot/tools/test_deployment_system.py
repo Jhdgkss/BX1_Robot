@@ -150,8 +150,8 @@ def valid_snapshot():
         "ok": True,
         "bx1_os": {
             "milestone": "BX1 OS Alpha",
-            "release_version": "0.1.2",
-            "release_tag": "BX1_OS_ALPHA_v0.1.2",
+            "release_version": "0.2.0",
+            "release_tag": "BX1_OS_ALPHA_v0.2.0",
             "qualification_mode": True,
             "observer_only": True,
             "observer_isolation": isolation,
@@ -172,6 +172,19 @@ def valid_snapshot():
             "diagnostics": {"state": "READY"},
             "communication": {"state": "READY", "transport": "in_memory"},
             "health": {"state": "READY", "check_count": 2},
+            "management_interface": {
+                "id": "bx1-os-management",
+                "state": "READY",
+                "architecture_only": True,
+                "capabilities": {
+                    "service_control": False,
+                    "host_power_control": False,
+                    "configuration_write": False,
+                    "log_streaming": False,
+                    "update_installation": False,
+                    "deployment_rollback": False,
+                },
+            },
         },
         "state": {
             "observer_only": True,
@@ -192,19 +205,25 @@ class ReleaseBuilderTests(unittest.TestCase):
             )
             self.assertEqual(manifest["default_install_root"], "/home/arduino/BX1_OS")
             self.assertEqual(manifest["target_service"], "bx1-os-alpha.service")
-            self.assertEqual(manifest["release_version"], "0.1.2")
-            self.assertEqual(manifest["release_tag"], "BX1_OS_ALPHA_v0.1.2")
+            self.assertEqual(manifest["release_version"], "0.2.0")
+            self.assertEqual(manifest["release_tag"], "BX1_OS_ALPHA_v0.2.0")
             self.assertEqual(manifest["default_web_port"], 8089)
             self.assertTrue(manifest["side_by_side"])
             paths = {item["path"] for item in manifest["files"]}
             self.assertIn("service/bx1-os-alpha.service", paths)
             self.assertIn("python/config.alpha-qualification.json", paths)
             self.assertIn("tools/deploy_bx1_os.py", paths)
+            self.assertIn("python/bx1_management/server.py", paths)
+            self.assertIn("python/bx1_management/static/index.html", paths)
+            self.assertIn("python/bx1_management/static/styles.css", paths)
+            self.assertIn("python/bx1_management/static/app.js", paths)
             self.assertNotIn("service/bx1-web.service", paths)
             self.assertNotIn("tools/install_bx1_web_service.sh", paths)
             self.assertNotIn("START_BX1_WEB.sh", paths)
             self.assertNotIn("STOP_BX1_WEB.sh", paths)
             self.assertNotIn("REPAIR_BX1_STARTUP.sh", paths)
+            self.assertNotIn("tools/run_bx1_os_alpha.sh", paths)
+            self.assertIn("tools/run_bx1_os_management.sh", paths)
             self.assertFalse(any(path.startswith("sketch/") for path in paths))
             extracted = Path(temporary) / "extracted"
             with tarfile.open(archive, "r:gz") as bundle:
@@ -540,6 +559,8 @@ class ObserverIsolationTests(unittest.TestCase):
         self.assertIn("BX1_OBSERVER_ONLY=1", unit)
         self.assertIn("PrivateDevices=yes", unit)
         self.assertIn("Restart=on-failure", unit)
+        self.assertIn("ExecStart=/home/arduino/BX1_OS/tools/run_bx1_os_management.sh", unit)
+        self.assertNotIn("run_bx1_os_alpha.sh", unit)
         self.assertNotIn("Arduino_Q_Client_V1", unit)
         self.assertNotIn("bx1-web.service", unit)
         self.assertNotIn("BX1_WEB_PORT=8088", unit)
@@ -822,9 +843,21 @@ class ProcessIsolationTests(unittest.TestCase):
             "shell_code": process_record(
                 206, argv=("bash", str(root / "tools/run_bx1_os_alpha.sh")), exe="/bin/bash", cwd=root
             ),
+            "management": process_record(
+                207,
+                argv=(
+                    "/home/arduino/BX1_OS/.venv/bin/python",
+                    "-m",
+                    "bx1_management",
+                ),
+                exe="/usr/bin/python3",
+                cwd=root,
+            ),
         }
         evidence = self.scan({record["pid"]: record for record in cases.values()})
-        self.assertEqual(evidence["matching_pids"], [201, 202, 203, 204, 205, 206])
+        self.assertEqual(
+            evidence["matching_pids"], [201, 202, 203, 204, 205, 206, 207]
+        )
         reasons = {
             item["pid"]: set(item["match_reasons"])
             for item in evidence["matching_processes"]
@@ -834,6 +867,7 @@ class ProcessIsolationTests(unittest.TestCase):
         self.assertIn("working_directory_inside_install_root", reasons[203])
         self.assertIn("alpha_web_runtime", reasons[204])
         self.assertIn("alpha_hardware_bridge", reasons[205])
+        self.assertIn("bx1_management_runtime", reasons[207])
 
     def test_harmless_shell_cwd_is_not_runtime_but_relative_alpha_code_is(self):
         root = Path("/home/arduino/BX1_OS")

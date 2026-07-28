@@ -24,8 +24,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.1.2"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.1.2"
+RELEASE_VERSION = "0.2.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.2.0"
 SAMPLE_PATHS = (
     "main.py",
     "START_BX1_WEB.sh",
@@ -131,6 +131,13 @@ def observer_configuration(root: Path, expected_port: int) -> Dict[str, Any]:
     failures = []
     if not config.get("qualification_mode") or not config.get("observer_only"):
         failures.append("qualification/observer marker missing")
+    management = _mapping(config.get("management_interface"))
+    if (
+        management.get("enabled") is not True
+        or management.get("architecture_only") is not True
+        or management.get("read_only") is not True
+    ):
+        failures.append("management interface architecture-only profile is missing")
     if int(config.get("web_port", 0)) != int(expected_port) or int(expected_port) == LIVE_PORT:
         failures.append("qualification web port is unsafe")
     failures.extend("%s must be false" % key for key in false_keys if bool(config.get(key)))
@@ -415,6 +422,25 @@ def _runtime_checks(
                 "actual_version": bx1_os.get("release_version"),
                 "expected_tag": RELEASE_TAG,
                 "actual_tag": bx1_os.get("release_tag"),
+            },
+        )
+    )
+    management = _mapping(bx1_os.get("management_interface"))
+    capabilities = _mapping(management.get("capabilities"))
+    checks.append(
+        Check(
+            "Management Interface",
+            management.get("id") == "bx1-os-management"
+            and management.get("state") == "READY"
+            and management.get("architecture_only") is True
+            and capabilities
+            and all(value is False for value in capabilities.values()),
+            "BX1 OS Management Interface is ready with all control capabilities disabled",
+            {
+                "id": management.get("id"),
+                "state": management.get("state"),
+                "architecture_only": management.get("architecture_only"),
+                "capabilities": capabilities,
             },
         )
     )
@@ -827,8 +853,14 @@ def _process_match_reasons(
         reasons.append("working_directory_inside_install_root")
 
     inside_names = {path.name.lower() for path in paths_inside}
-    if inside_names & {"main.py", "run_bx1_os_alpha.sh"}:
+    if inside_names & {
+        "main.py",
+        "run_bx1_os_alpha.sh",
+        "run_bx1_os_management.sh",
+    }:
         reasons.append("alpha_web_runtime")
+    if "bx1_management" in argv and paths_inside:
+        reasons.append("bx1_management_runtime")
     if inside_names & {
         "hardware_bridge.py",
         "run_robot_body.sh",

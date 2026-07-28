@@ -2,10 +2,17 @@
 
 ## Status
 
-**v0.1.2 PROCESS-ISOLATION CORRECTION COMPLETE - RELEASE VALIDATION PENDING**
+**v0.2.0 MANAGEMENT INTERFACE FRAMEWORK IN DEVELOPMENT**
 
 No robot connection, file transfer, service operation or deployment was
 performed while implementing this revision.
+
+## v0.2.0 management milestone
+
+BX1 OS now has a separate management application architecture for port 8089.
+The dedicated Alpha service launches `bx1_management`; it does not launch,
+import or modify the existing Robot Body web interface. All management actions
+remain disabled in this framework release.
 
 ## v0.1.1 field finding and v0.1.2 correction
 
