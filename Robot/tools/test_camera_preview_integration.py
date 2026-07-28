@@ -167,7 +167,10 @@ class RobotBodyCachedEndpointTests(unittest.TestCase):
         ) as response:
             self.assertEqual(response.status, 200)
             self.assertEqual(response.headers.get_content_type(), "image/jpeg")
-            self.assertEqual(response.headers["Cache-Control"], "no-store")
+            self.assertEqual(
+                response.headers["Cache-Control"],
+                "no-store, no-cache, must-revalidate",
+            )
             self.assertEqual(response.headers["X-BX1-Frame-Sequence"], "7")
             self.assertEqual(response.read(), JPEG)
         self.assertEqual(service.capture_calls, 0)

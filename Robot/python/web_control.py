@@ -349,7 +349,10 @@ class WebControlServer:
                 self.send_response(200)
                 self.send_header("Content-Type", "image/jpeg")
                 self.send_header("Content-Length", str(len(body)))
-                self.send_header("Cache-Control", "no-store")
+                self.send_header(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate",
+                )
                 self.send_header("Pragma", "no-cache")
                 self.send_header(
                     "X-BX1-Frame-Sequence",
@@ -392,25 +395,38 @@ class WebControlServer:
                     requested_fps = 8.0
                 fps = max(1.0, min(15.0, requested_fps))
                 interval = 1.0 / fps
-                self.send_response(200)
-                self.send_header(
-                    "Content-Type",
-                    "multipart/x-mixed-replace; boundary=frame",
-                )
-                self.send_header("Cache-Control", "no-store")
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Connection", "close")
-                self.send_header("X-Accel-Buffering", "no")
-                self.send_header("X-BX1-Preview-FPS", str(round(fps, 2)))
-                self.end_headers()
                 opened = getattr(
                     service, "camera_preview_stream_opened", None
                 )
                 closed = getattr(
                     service, "camera_preview_stream_closed", None
                 )
+                registered = False
                 if callable(opened):
-                    opened()
+                    registered = opened() is not False
+                    if not registered:
+                        self._json(
+                            503,
+                            {
+                                "ok": False,
+                                "error": "camera preview client limit reached",
+                            },
+                        )
+                        return
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "multipart/x-mixed-replace; boundary=frame",
+                )
+                self.send_header(
+                    "Cache-Control",
+                    "no-store, no-cache, must-revalidate",
+                )
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Connection", "close")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("X-BX1-Preview-FPS", str(round(fps, 2)))
+                self.end_headers()
                 pending = first
                 try:
                     while True:
@@ -455,7 +471,7 @@ class WebControlServer:
                 ):
                     return
                 finally:
-                    if callable(closed):
+                    if registered and callable(closed):
                         closed()
 
             def _read_json(self) -> Dict[str, Any]:
@@ -495,6 +511,11 @@ class WebControlServer:
                             503,
                             {"ok": False, "error": str(exc)},
                         )
+                    return
+                if path == "/api/camera/status":
+                    self._json(
+                        200, service.get_camera_endpoint_status()
+                    )
                     return
                 if path == "/api/camera/stream":
                     self._camera_stream(parsed.query)

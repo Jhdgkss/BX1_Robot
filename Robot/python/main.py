@@ -3635,7 +3635,23 @@ class BX1RobotBodyService:
     def get_cached_camera_frame(self) -> Dict[str, Any]:
         """Copy the latest Robot Body-owned frame without touching the camera."""
         with self.camera_frame_lock:
-            jpeg = bytes(self.latest_camera_jpeg)
+            max_bytes = max(
+                64 * 1024,
+                min(
+                    int(
+                        self.cfg.get(
+                            "camera_preview_max_frame_bytes",
+                            2 * 1024 * 1024,
+                        )
+                    ),
+                    8 * 1024 * 1024,
+                ),
+            )
+            if len(self.latest_camera_jpeg) > max_bytes:
+                raise RuntimeError(
+                    "Cached Robot Body camera frame exceeds preview limit"
+                )
+            jpeg = memoryview(self.latest_camera_jpeg).tobytes()
             captured_at = str(self.latest_camera_frame_at or "")
             captured_mono = float(self.latest_camera_frame_mono or 0.0)
             source = str(self.latest_camera_frame_source or "camera")
@@ -3657,9 +3673,40 @@ class BX1RobotBodyService:
             "height": height,
         }
 
-    def camera_preview_stream_opened(self) -> None:
+    def get_camera_endpoint_status(self) -> Dict[str, Any]:
+        """Public cached-preview status with no device or capture access."""
+        preview = self.get_camera_preview_status()
+        return {
+            "available": bool(preview.get("preview_available")),
+            "owner": "bx1-web.service",
+            "source": "Existing Robot Body",
+            "resolution": str(preview.get("resolution", "unknown")),
+            "frame_sequence": int(preview.get("frame_sequence", 0)),
+            "last_frame_timestamp": str(
+                preview.get("last_frame_timestamp", "")
+            ),
+            "frame_age_ms": preview.get("frame_age_ms"),
+            "estimated_fps": preview.get("fps", 0.0),
+            "stale": bool(preview.get("stale", True)),
+            "error": str(preview.get("error", "")),
+            "active_preview_streams": int(
+                preview.get("active_preview_streams", 0)
+            ),
+        }
+
+    def camera_preview_stream_opened(self) -> bool:
         with self.camera_frame_lock:
+            maximum = max(
+                1,
+                min(
+                    int(self.cfg.get("camera_preview_max_streams", 4)),
+                    8,
+                ),
+            )
+            if self.camera_preview_streams >= maximum:
+                return False
             self.camera_preview_streams += 1
+            return True
 
     def camera_preview_stream_closed(self) -> None:
         with self.camera_frame_lock:
@@ -3669,7 +3716,24 @@ class BX1RobotBodyService:
 
     def get_camera_preview_status(self) -> Dict[str, Any]:
         with self.camera_frame_lock:
-            jpeg = bytes(self.latest_camera_jpeg)
+            max_bytes = max(
+                64 * 1024,
+                min(
+                    int(
+                        self.cfg.get(
+                            "camera_preview_max_frame_bytes",
+                            2 * 1024 * 1024,
+                        )
+                    ),
+                    8 * 1024 * 1024,
+                ),
+            )
+            oversized = len(self.latest_camera_jpeg) > max_bytes
+            jpeg = (
+                b""
+                if oversized
+                else memoryview(self.latest_camera_jpeg).tobytes()
+            )
             captured_at = str(self.latest_camera_frame_at or "")
             captured_mono = float(self.latest_camera_frame_mono or 0.0)
             source = str(self.latest_camera_frame_source or "")
@@ -3713,7 +3777,13 @@ class BX1RobotBodyService:
             "health": (
                 "healthy" if jpeg and not stale else "warning" if jpeg else "unavailable"
             ),
-            "error": "" if jpeg else "no_cached_frame",
+            "error": (
+                "cached_frame_exceeds_preview_limit"
+                if oversized
+                else ""
+                if jpeg
+                else "no_cached_frame"
+            ),
             "stale": stale,
             "quality": "live" if jpeg and not stale else "stale" if jpeg else "unavailable",
             "capture_requested": False,
