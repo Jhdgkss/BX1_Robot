@@ -81,3 +81,6 @@ Brain/runtime/*
 
 # Machine-specific robot configuration
 Robot/runtime/touchscreen.env
+Robot/python/config.json
+Robot/python/robot_profile.json
+Robot/python/user_settings.json

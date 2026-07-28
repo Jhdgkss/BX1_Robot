@@ -3,8 +3,7 @@ set -euo pipefail
 HOST="${BX1_HEALTH_HOST:-127.0.0.1}"
 PORT="${BX1_WEB_PORT:-8088}"
 URL="http://${HOST}:${PORT}/"
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-PYTHON_BIN="$ROOT_DIR/.venv/bin/python"
+PYTHON_BIN="/home/arduino/Arduino_Q_Client_V1/.venv/bin/python"
 [ -x "$PYTHON_BIN" ] || PYTHON_BIN="$(command -v python3)"
 
 for _ in $(seq 1 20); do

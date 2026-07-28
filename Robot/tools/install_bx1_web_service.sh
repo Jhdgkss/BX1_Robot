@@ -8,7 +8,7 @@ chmod +x "$ROOT_DIR/main.py" "$ROOT_DIR/START_BX1_WEB.sh" "$ROOT_DIR/STOP_BX1_WE
 
 sudo tee "$SERVICE_FILE" >/dev/null <<EOF2
 [Unit]
-Description=BX1 OS Alpha Robot Body
+Description=BX1 UNO Q Body Client v10.39
 After=network-online.target sound.target
 Wants=network-online.target
 
@@ -17,7 +17,6 @@ Type=simple
 User=arduino
 WorkingDirectory=$ROOT_DIR
 Environment=PYTHONUNBUFFERED=1
-Environment=BX1_OS_MILESTONE=ALPHA
 Environment=BX1_WEB_ENABLED=1
 Environment=BX1_WEB_HOST=0.0.0.0
 Environment=BX1_WEB_PORT=8088

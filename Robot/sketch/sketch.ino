@@ -146,7 +146,6 @@ float pitchDeg = 0.0f;
 float rollDeg = 0.0f;
 unsigned long lastImuInitAttemptMs = 0;
 unsigned long imuReadFailures = 0;
-uint32_t imuSampleSequence = 0;
 
 // ---------------- Command state ----------------
 String pendingActionJson = "";
@@ -240,28 +239,6 @@ bool i2cAddressPresent(TwoWire &wire, uint8_t address) {
   return wire.endTransmission() == 0;
 }
 
-String bx1_i2c_scan() {
-  // Read-only diagnostic: never writes a device register or touches actuators.
-  Wire1.begin();
-  Wire1.setClock(100000);
-  String json = "{\"ok\":true,\"bus\":\"Wire1/Qwiic\",\"devices\":[";
-  bool first = true;
-  for (uint8_t address = 1; address < 127; address++) {
-    if (!i2cAddressPresent(Wire1, address)) continue;
-    if (!first) json += ",";
-    json += "\"0x";
-    if (address < 16) json += "0";
-    json += String(address, HEX);
-    json += "\"";
-    first = false;
-  }
-  json += "],\"selected_imu_address\":\"" + jsonEscape(imuAddress) + "\",";
-  json += "\"imu_sample_sequence\":" + String(imuSampleSequence) + ",";
-  json += "\"mcu_uptime_ms\":" + String(millis()) + ",";
-  json += "\"heartbeat_sequence\":" + String(heartbeatSequence) + "}";
-  return json;
-}
-
 bool initialiseMovementImu() {
   lastImuInitAttemptMs = millis();
 
@@ -336,7 +313,6 @@ void updateImu() {
 
   if (gotAccel || gotGyro) {
     lastImuUpdateMs = millis();
-    imuSampleSequence++;
     imuReadFailures = 0;
     imuError = "";
   } else {
@@ -981,7 +957,6 @@ String bx1_get_status() {
   json += "\"protocol_version\":\"" + String(BX1_PROTOCOL_VERSION) + "\",";
   json += "\"build_id\":\"" + jsonEscape(String(BX1_BUILD_ID)) + "\",";
   json += "\"heartbeat_sequence\":" + String(heartbeatSequence) + ",";
-  json += "\"mcu_uptime_ms\":" + String(millis()) + ",";
   json += "\"maintenance_mode\":" + String(maintenanceMode ? "true" : "false") + ",";
   json += "\"drive_outputs_enabled\":" + String(BX1_ENABLE_DRIVE_OUTPUTS ? "true" : "false") + ",";
   json += "\"imu_ok\":" + String(imuOk ? "true" : "false") + ",";
@@ -990,7 +965,6 @@ String bx1_get_status() {
   json += "\"imu_bus\":\"" + jsonEscape(imuBus) + "\",";
   json += "\"imu_address\":\"" + jsonEscape(imuAddress) + "\",";
   json += "\"imu_read_failures\":" + String(imuReadFailures) + ",";
-  json += "\"imu_sample_sequence\":" + String(imuSampleSequence) + ",";
   json += "\"imu_last_update_age_ms\":" + String(lastImuUpdateMs == 0 ? 0 : millis() - lastImuUpdateMs) + ",";
   json += "\"control_owner\":\"linux_python\",";
   json += "\"mcu_runtime\":\"arduino_router_shim\",";
@@ -1142,7 +1116,6 @@ void setup() {
   Bridge.provide("bx1_set_head_pose", bx1_set_head_pose);
   Bridge.provide("bx1_test_servo_us", bx1_test_servo_us);
   Bridge.provide("bx1_set_led_zone", bx1_set_led_zone);
-  Bridge.provide("bx1_i2c_scan", bx1_i2c_scan);
 
   modeText = "bridge_ready";
   Serial.begin(115200);

@@ -4,7 +4,6 @@ import json
 import html
 import re
 import threading
-import time
 import traceback
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -14,7 +13,6 @@ from urllib.parse import parse_qs, urlparse
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
-    daemon_threads = True
 
 
 INDEX_HTML = r'''
@@ -252,7 +250,7 @@ Repair command:
 cd /home/arduino/Arduino_Q_Client_V1 && ./APPLY_BX1_V10_39_AUDIO_SERVO_FIX.sh
 
 Editable reference implementation: mcu_micropython/`;}const buses=reg.led_buses||{},zones=reg.led_zones||{},servos=reg.servos||{},drives=reg.drive_buses||{};$('registrySummary').innerHTML=`<table><thead><tr><th>Category</th><th>Configured</th><th>Enabled</th><th>Key detail</th></tr></thead><tbody><tr><td>LED buses</td><td>${Object.keys(buses).length}</td><td>${Object.values(buses).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(buses).map(([k,x])=>k+': D'+x.data_pin+', '+x.total_pixels+' pixels, limit '+x.brightness_limit).join('; '))}</td></tr><tr><td>LED zones</td><td>${Object.keys(zones).length}</td><td>${Object.values(zones).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(zones).map(([k,x])=>k+' '+x.start+'-'+x.end).join('; '))}</td></tr><tr><td>Servos</td><td>${Object.keys(servos).length}</td><td>${Object.values(servos).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(servos).map(([k,x])=>k+': D'+x.pin+' home '+x.home_deg).join('; '))}</td></tr><tr><td>Drive buses</td><td>${Object.keys(drives).length}</td><td>${Object.values(drives).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(drives).map(([k,x])=>k+': '+(x.motor_armed?'ARMED':'DISARMED')+', '+(x.diagnostics_interface||'interface pending')+', protocol '+(x.protocol_confirmed?'confirmed':'pending')).join('; '))}</td></tr></tbody></table>`;renderSimpleHardware(reg);if(!isDirty($('hardwareRegistry')))$('hardwareRegistry').value=JSON.stringify(reg,null,2)}
-function doctorData(d){return (d.hardware_doctor||{}).snapshot||d.hardware_doctor||{}}function renderDoctor(d){const q=doctorData(d),sev=q.severity||'unknown';$('doctorSummary').className='result-box '+(sev==='ok'?'good':sev==='unknown'?'':'bad');$('doctorSummary').innerHTML=`<div class="result-big">${esc(sev.toUpperCase())}</div>${esc(q.summary||'No diagnosis yet')}<br><span class="muted">Last run: ${esc(q.last_run_at||'not run')}</span>`;const e=q.evidence||{};const age=x=>x==null?'age unknown':`${Math.round(Number(x))} ms`;const rows=[['Router transport',e.mcu_transport_connected,e.bridge_error||e.bridge_mode||''],['MCU heartbeat',e.mcu_heartbeat_fresh,e.mcu_health_reason||age(e.mcu_last_update_age_ms)],['IMU detection',e.imu_present,e.imu_address||'not detected'],['IMU initialisation',e.imu_initialised,e.imu_error||e.imu_source||''],['IMU sample',e.imu_sample_fresh,e.imu_health_reason||age(e.imu_sample_age_ms)],['IMU health',e.imu_healthy,e.imu_health_reason||''],['Automatic flashing',false,'disabled by design']];$('doctorEvidence').innerHTML=rows.map(r=>`<div class="fault"><span class="badge ${r[0]==='Automatic flashing'?'good':r[1]?'good':'bad'}">${esc(r[0])}</span><div><strong>${r[0]==='Automatic flashing'?'OFF':r[1]?'OK':'FAULT'}</strong><small>${esc(r[2])}</small></div></div>`).join('');$('doctorRecommendations').innerHTML=(q.recommendations||['Run a fresh diagnosis to generate recommendations.']).map(x=>`<div class="fault"><span class="badge warn">ACTION</span><div>${esc(x)}</div></div>`).join('');$('doctorRaw').textContent=JSON.stringify(q,null,2)}
+function doctorData(d){return (d.hardware_doctor||{}).snapshot||d.hardware_doctor||{}}function renderDoctor(d){const q=doctorData(d),sev=q.severity||'unknown';$('doctorSummary').className='result-box '+(sev==='ok'?'good':sev==='unknown'?'':'bad');$('doctorSummary').innerHTML=`<div class="result-big">${esc(sev.toUpperCase())}</div>${esc(q.summary||'No diagnosis yet')}<br><span class="muted">Last run: ${esc(q.last_run_at||'not run')}</span>`;const e=q.evidence||{};const rows=[['Router socket',e.router_socket_connectable,e.router_socket_error||e.router_socket||''],['MCU RPC',e.mcu_ok,e.bridge_error||e.bridge_mode||''],['Firmware',!!e.firmware_version,e.firmware_version||'unknown'],['Protocol',!!e.protocol_version,e.protocol_version||'unknown'],['Modulino IMU',e.imu_ok,e.imu_error||[e.imu_source,e.imu_bus,e.imu_address].filter(Boolean).join(' · ')||'unknown'],['Automatic flashing',false,'disabled by design']];$('doctorEvidence').innerHTML=rows.map(r=>`<div class="fault"><span class="badge ${r[0]==='Automatic flashing'?'good':r[1]?'good':'bad'}">${esc(r[0])}</span><div><strong>${r[0]==='Automatic flashing'?'OFF':r[1]?'OK':'FAULT'}</strong><small>${esc(r[2])}</small></div></div>`).join('');$('doctorRecommendations').innerHTML=(q.recommendations||['Run a fresh diagnosis to generate recommendations.']).map(x=>`<div class="fault"><span class="badge warn">ACTION</span><div>${esc(x)}</div></div>`).join('');$('doctorRaw').textContent=JSON.stringify(q,null,2)}
 function renderAdvanced(d){setValueIfClean('brainUrl',(d.brain||{}).base_url||'');$('rawSnapshot').textContent=JSON.stringify(d,null,2)}
 function renderAll(d){SNAP=d;EVENTS=d.events||[];renderOverview(d);renderConversation(d);renderSpeech(d);renderVision(d);renderIdle(d);renderMouth(d);renderHardware(d);renderDoctor(d);renderAdvanced(d);renderLogs();$('lastRefresh').textContent='Updated '+new Date().toLocaleTimeString()}
 async function refreshAll(manual=false){if(refreshing)return;refreshing=true;try{const d=await req('/api/status');renderAll(d);if(manual)toast('Status refreshed','good')}catch(e){toast('Status failed: '+e.message,'bad')}finally{refreshing=false}}
@@ -344,136 +342,6 @@ class WebControlServer:
             def _json(self, status: int, data: Dict[str, Any]) -> None:
                 self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
-            def _camera_snapshot(self, frame: Dict[str, Any]) -> None:
-                body = bytes(frame.get("jpeg", b""))
-                self.send_response(200)
-                self.send_header("Content-Type", "image/jpeg")
-                self.send_header("Content-Length", str(len(body)))
-                self.send_header(
-                    "Cache-Control",
-                    "no-store, no-cache, must-revalidate",
-                )
-                self.send_header("Pragma", "no-cache")
-                self.send_header(
-                    "X-BX1-Frame-Sequence",
-                    str(int(frame.get("sequence", 0))),
-                )
-                self.send_header(
-                    "X-BX1-Frame-Timestamp",
-                    str(frame.get("timestamp", "")),
-                )
-                self.send_header(
-                    "X-BX1-Frame-Age-Ms",
-                    str(frame.get("age_ms", "")),
-                )
-                self.send_header(
-                    "X-BX1-Frame-Resolution",
-                    "%sx%s"
-                    % (
-                        frame.get("width") or 0,
-                        frame.get("height") or 0,
-                    ),
-                )
-                self.end_headers()
-                self.wfile.write(body)
-
-            def _camera_stream(self, query: str) -> None:
-                try:
-                    first = service.get_cached_camera_frame()
-                except Exception as exc:
-                    self._json(
-                        503,
-                        {"ok": False, "error": str(exc)},
-                    )
-                    return
-                values = parse_qs(query or "")
-                try:
-                    requested_fps = float(
-                        (values.get("fps") or ["8"])[0]
-                    )
-                except (TypeError, ValueError):
-                    requested_fps = 8.0
-                fps = max(1.0, min(15.0, requested_fps))
-                interval = 1.0 / fps
-                opened = getattr(
-                    service, "camera_preview_stream_opened", None
-                )
-                closed = getattr(
-                    service, "camera_preview_stream_closed", None
-                )
-                registered = False
-                if callable(opened):
-                    registered = opened() is not False
-                    if not registered:
-                        self._json(
-                            503,
-                            {
-                                "ok": False,
-                                "error": "camera preview client limit reached",
-                            },
-                        )
-                        return
-                self.send_response(200)
-                self.send_header(
-                    "Content-Type",
-                    "multipart/x-mixed-replace; boundary=frame",
-                )
-                self.send_header(
-                    "Cache-Control",
-                    "no-store, no-cache, must-revalidate",
-                )
-                self.send_header("Pragma", "no-cache")
-                self.send_header("Connection", "close")
-                self.send_header("X-Accel-Buffering", "no")
-                self.send_header("X-BX1-Preview-FPS", str(round(fps, 2)))
-                self.end_headers()
-                pending = first
-                try:
-                    while True:
-                        frame = pending
-                        pending = None
-                        if frame is None:
-                            try:
-                                frame = service.get_cached_camera_frame()
-                            except Exception:
-                                time.sleep(interval)
-                                continue
-                        sequence = int(frame.get("sequence", 0))
-                        jpeg = bytes(frame.get("jpeg", b""))
-                        if not jpeg:
-                            time.sleep(interval)
-                            continue
-                        timestamp = (
-                            str(frame.get("timestamp", ""))
-                            .replace("\r", "")
-                            .replace("\n", "")
-                        )
-                        part = (
-                            b"--frame\r\n"
-                            b"Content-Type: image/jpeg\r\n"
-                            + (
-                                "Content-Length: %s\r\n"
-                                "X-BX1-Frame-Sequence: %s\r\n"
-                                "X-BX1-Frame-Timestamp: %s\r\n\r\n"
-                                % (len(jpeg), sequence, timestamp)
-                            ).encode("ascii", errors="replace")
-                            + jpeg
-                            + b"\r\n"
-                        )
-                        self.wfile.write(part)
-                        self.wfile.flush()
-                        time.sleep(interval)
-                except (
-                    BrokenPipeError,
-                    ConnectionResetError,
-                    ConnectionAbortedError,
-                    OSError,
-                ):
-                    return
-                finally:
-                    if registered and callable(closed):
-                        closed()
-
             def _read_json(self) -> Dict[str, Any]:
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(length) if length else b"{}"
@@ -500,25 +368,6 @@ class WebControlServer:
                         self._send(200, body, "image/jpeg")
                     except Exception as exc:
                         self._json(503, {"ok": False, "error": str(exc)})
-                    return
-                if path == "/api/camera/snapshot":
-                    try:
-                        self._camera_snapshot(
-                            service.get_cached_camera_frame()
-                        )
-                    except Exception as exc:
-                        self._json(
-                            503,
-                            {"ok": False, "error": str(exc)},
-                        )
-                    return
-                if path == "/api/camera/status":
-                    self._json(
-                        200, service.get_camera_endpoint_status()
-                    )
-                    return
-                if path == "/api/camera/stream":
-                    self._camera_stream(parsed.query)
                     return
                 if path == "/api/mic_level":
                     self._json(200, service.web_mic_level())

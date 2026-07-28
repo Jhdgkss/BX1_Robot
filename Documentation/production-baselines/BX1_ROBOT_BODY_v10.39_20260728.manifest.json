@@ -1,0 +1,2651 @@
+{
+  "classification_counts": {
+    "active": 45,
+    "documentation": 59,
+    "historical": 71,
+    "staged": 151,
+    "support": 50
+  },
+  "files": [
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_BRAIN_V1_7_3.bat",
+      "sha256": "55d2b02a00fc5d5c18a2928d4424f1ea5bbdb19cb23a1c699f9f5a55e1f7f32f",
+      "size": 1499
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_22.sh",
+      "sha256": "53fe8f90bbe711cac646d509799ba84750f00e034520cc9a27b2c60fcc0d2fc7",
+      "size": 2623
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_22_1.sh",
+      "sha256": "cf200924bc2d565395f1d8a658da5833e30dfb843311302e04c0feafd8927cda",
+      "size": 1702
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_23.sh",
+      "sha256": "4bcdb6c2484ad2634a16e232944ed91972b96678cf2b308837b384fc3e65823c",
+      "size": 3659
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_24.sh",
+      "sha256": "b773924ae86f33413a111b693bb4cbfaad17800f1402823e6298f9f85128ecf1",
+      "size": 7371
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_24_1_WEB_HOTFIX.sh",
+      "sha256": "b034f3e250ac8ac2c76045da826547e4ec90e173170e4029f533a51548d17cc2",
+      "size": 3726
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_25.sh",
+      "sha256": "d234971b640977670c2a551f7eff114c35fc941746376cd5743a65ce2d9a3745",
+      "size": 5092
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_26.sh",
+      "sha256": "d88c47c1063075f0631ba12d456d09a189299b2db140a24a808e368eb0d25e31",
+      "size": 6053
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_27.sh",
+      "sha256": "250275603374cad96e8d2cbafbf279a51cf245c4c5026b0fa31ad0e8ecd6eed7",
+      "size": 7471
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_28.sh",
+      "sha256": "b51b28982794df71cd412f1a911adc6397b3bdb4b8f03882ae6172b774cd59d3",
+      "size": 7476
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_29.sh",
+      "sha256": "bf325450e6d5f465b15cabb6015cd0f6ca7a32f3e8dd02ee38f9fc02a2f06b31",
+      "size": 4289
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_30.sh",
+      "sha256": "cfc37dde541feffa7a65cad290a6d1b4da09d3d0cc9301f35393b7521450d52a",
+      "size": 3672
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_32.sh",
+      "sha256": "5368b68145bd72073b5ec7d6f2be8f8771daf624868346c61dd87004fe6d139c",
+      "size": 3001
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_33.sh",
+      "sha256": "9065a965d40ecf4f39faeed7b6f5f78a9506d8f7754d3245ab1b3ad1807322e8",
+      "size": 3073
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_34.sh",
+      "sha256": "9b66472b7e5a939211b8ca275f5a74a8e0608fcb8ec333c69e865a3f87ef838e",
+      "size": 5118
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_34_1.sh",
+      "sha256": "ba7e32881c856ae17ff330be4e8ca296ffde4d3be5e9ddd7865e731e1a001e3e",
+      "size": 2281
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_34_2.sh",
+      "sha256": "a60f95d06ce4779e0db0d7a45c613f5f007fa38a5b06944e4980e913c1a38e91",
+      "size": 3783
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_36_AUDIO_FIX.sh",
+      "sha256": "7ac7ddd399eee8b537cae3da45e3f519f3456095b61273229b98c9dbf5b0bc6f",
+      "size": 1140
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_37_HARDWARE_FIX.sh",
+      "sha256": "1e5b7fa19dcd9ddf37a80d959ad6ab9d55dc0e437227ea753dd0c63c4b01782f",
+      "size": 968
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_38_MCU_RECOVERY.sh",
+      "sha256": "f26b73999fab9674a2ba8e0420f93aebf2d72c69126224ade6030bede32d7c5b",
+      "size": 1012
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_39_AUDIO_SERVO_FIX.sh",
+      "sha256": "5ed2d4beac880bccb83cd12f00aed904155b37351bdd5830527d41ad113a15a9",
+      "size": 1445
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_40_BRAIN_PROFILE_AUDIO.sh",
+      "sha256": "d2583874f9eb51935a4c7b9f3fac903ecc4b69f8ad1eac8ff13035eeeb16fe0e",
+      "size": 3066
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_41_TOUCHSCREEN.sh",
+      "sha256": "1f45feb009fb84e1373af024e4f9d513df9341e8c91372ae7b43fbc11646fabe",
+      "size": 4825
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_42_1_RUNTIME_FIX.sh",
+      "sha256": "3f5fcaed5c9adf3081dc26f2f756b5ba748084fecd5e876f642fdfb6d9128d4a",
+      "size": 5245
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_42_CONNECTION_DISPLAY_FIX.sh",
+      "sha256": "972a82569dd2a1aa85e3a939e2a2cf20bb6a00ef141af0bd8cb3be9e05644e96",
+      "size": 6274
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_43_1_DISPLAY_ROUTE_FIX.sh",
+      "sha256": "9db5f3ba7124e8f2c7c03fec73dc9aad41f133a5fe3fd1848621e4f2020c26d7",
+      "size": 1881
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V10_43_TOUCH_ORIENTATION_FIX.sh",
+      "sha256": "603d8e1e82b42ec5d4d8b03a41b591ccf8b40653e486eddfb6826c12c39c4798",
+      "size": 3528
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V11_0_1_SYSTEMD_KIOSK_FIX.sh",
+      "sha256": "649bef02ad5a0bc109f1cae92490ac23785db364725cd6c609111ef068dfcff9",
+      "size": 2526
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "APPLY_BX1_V11_0_STABLE_TOUCHSCREEN.sh",
+      "sha256": "5cb505d5b65f1274ed8cd2f7309ad27eabe0ca85e0dda70f86db3f27bfa4c789",
+      "size": 3116
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "BX1_Start_Web.desktop",
+      "sha256": "8ec067b9c74165d61675369688aac9647e9fcf69907c009ac7e26b42b09871da",
+      "size": 232
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "CHANGELOG.md",
+      "sha256": "3f360ffaeae06137b4740aabb0cbd645a1e63052162ce7bb41e845a92de781d9",
+      "size": 4415
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "CLEAN_AND_FINALISE_BX1_BODY.sh",
+      "sha256": "082c221f89cdb6be92f21501571cdf10cfb943adac294cd1e249151c1b06f710",
+      "size": 2688
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "COLLECT_BX1_VOICE_TRACE.sh",
+      "sha256": "a6b41047decd9dae97f8e639c1b34f6c6a6352172ed651f7fa0667293fc8d745",
+      "size": 7625
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "COPY_OVER_EXISTING_PROJECT.txt",
+      "sha256": "f4f7a8921ba5ef9162cdf1322f3abef69190e6e3c4cabfca4340d20b44d0aa4f",
+      "size": 348
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "DIAGNOSE_BX1_WEB.sh",
+      "sha256": "93aaaa37f6bc1b3f067b9271dcaac2e83f6c3f3441b3d6540da79bef8b81b663",
+      "size": 1266
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_BX1_BETTER_STT_MODEL.sh",
+      "sha256": "0a27d5c4accc66a331d8cd5c9eb6f38a4ad57e99b15ec247501049d5a9cc172b",
+      "size": 3176
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_BX1_OPENCV.sh",
+      "sha256": "b139ac1a4f5ec0d8b07c69eeecc4302cb9a6d8a8b3ee8709545b26251b26a0bb",
+      "size": 1846
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_BX1_TOUCHSCREEN.sh",
+      "sha256": "2d40defe3d74b4bcd37c6c0ba8bc3fc3c351ef7cd6f060f6c802a323abaf99ef",
+      "size": 6592
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_EDGE_TTS.sh",
+      "sha256": "c66c9f54619076a39a7f314418a6b692c215218f850920d03f62e72ab40d41dd",
+      "size": 973
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "INSTALL_FIRST_V10_20.txt",
+      "sha256": "8fac7245047dffd3d3ec6f166310055b2e6ccd3c645a7ab052e796a247200085",
+      "size": 1004
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "INSTALL_FIRST_V10_21.txt",
+      "sha256": "fc3167963bcd51a1ebc137863c61850c6ac628ef77667f490f4dcfa773b94fd4",
+      "size": 1159
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_OR_UPDATE_BX1_V10_35.sh",
+      "sha256": "7684bb083ddc5570b5aa23e9988917165918253ac9a6a0c97abeed1a548014d6",
+      "size": 5702
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "INSTALL_VOSK_STT.sh",
+      "sha256": "ac7ee0f0503bb97c7f8109a3b7fd4a42245e72d676270d3c950945c9d017e0ec",
+      "size": 2174
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_36.md",
+      "sha256": "ddb7caf84b915e7f520950650cb8cd90b2261d56aa2c592ddb11ce5111a3197c",
+      "size": 1456
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_37.md",
+      "sha256": "3b703ed6f7d8e765b4877059589bf2daf33c00a490a4a4dd1fc6aeebe6d3663a",
+      "size": 379
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_38.md",
+      "sha256": "359daf9c6596a0e6331112882e954f51ee084666ecc28666b4ad90a430ff1331",
+      "size": 1678
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_39.md",
+      "sha256": "4755e985fc28b412190ef2726aa568795d41a31ee7015869ac7930cff3a7a14b",
+      "size": 1464
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_40.md",
+      "sha256": "33ed1552cac80603bf4bf4b93b76a2a592349e535ef88e3af961d4a81f594e50",
+      "size": 1591
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_41.md",
+      "sha256": "743b48cfd2f78bf2a78908c6fdf0f762fc77701b7807f83a5de98ff7aba14327",
+      "size": 1087
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "PATCH_SUMMARY_V10_42.md",
+      "sha256": "f29aa345e8dc8fd2a6438be0715b6376e10c7eba8fd45d7f44f98ae28709955c",
+      "size": 1494
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README.md",
+      "sha256": "988feed5c91dc33427253325f612cd5a6899f1a7dc525b1497061b3993ff1811",
+      "size": 4020
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README.txt",
+      "sha256": "a6c953569de71748791dfa82a15dccd93522b04bdd5267c52af435085486134b",
+      "size": 1030
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_BRAIN_V1_7_3.md",
+      "sha256": "312a26a95b6481df8a37cbce07eff85cc55a7a828650020290a5132eda3ae277",
+      "size": 599
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_FAST_INSTALLER.md",
+      "sha256": "2247880cc65073b9e11c71807e231219dada4d94753fae70a65f47b4c43f7f5a",
+      "size": 932
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_START_HERE.md",
+      "sha256": "8fa79a24473681ef6815997e81cfaf189be3645eb14d4bc31700d7947e7e99e3",
+      "size": 1642
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_START_HERE.txt",
+      "sha256": "3f72c5a95880921e873d93c4722c93e439f366152218a92f7dd6caf51cc57afa",
+      "size": 193
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_16_BRAIN_OWNED_PERSONALITY_PORTS.txt",
+      "sha256": "d169284cae790daa1a47644888d907b8b33fae2597afaacc3b7a9cf07273c255",
+      "size": 1519
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_17_FULL_SPEECH_REPEAT.txt",
+      "sha256": "f6ac765a9f64ad38e9bfa252c744152f6521aca8c38942f4c5802d3ae31a253e",
+      "size": 444
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_20_HARDWARE_DOCTOR_AUDIO_FILTERS.md",
+      "sha256": "f8fcb9b929a8cb4c1630ec62f08ec3436750b567200cdddcf8c9bcbfec7312cd",
+      "size": 3614
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_21_GIMBAL_LED_STATES.md",
+      "sha256": "4137af875051b2ced33fc70e0ad2c37a1783399dc83e62be8aca27d3f4e7ecd3",
+      "size": 2730
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_22.txt",
+      "sha256": "10b01fe880ba0999f33f13b6f46be84ee82f590d92bdd86d5c4aa887416aa637",
+      "size": 1295
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_23.txt",
+      "sha256": "464961a252aa467ef26461c0c4885307f1e38c9ba2a19aa6d3cf6fabd3229904",
+      "size": 1714
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_24.md",
+      "sha256": "85af2d66ad8c40704df8ed3772f56c8c85a8de3f180c820034aca3bd875d16a7",
+      "size": 4682
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_24_1_WEB_HOTFIX.md",
+      "sha256": "c62fe27e4333fce3bf81ef9f25d635dd4184d0a6f07834e9618880375431e13d",
+      "size": 705
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_25.md",
+      "sha256": "4e031f0837259bdee2b0e18796d6cd60ff8682aa81bc8d5fdbe8041cd46ff832",
+      "size": 2318
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_26.md",
+      "sha256": "c50393e31d0b8d621d6767743fd91c9514868d3ec9b00d539bef09a9bd8194ef",
+      "size": 3479
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_27.md",
+      "sha256": "172e79538487e133906f46a4aab674c8a4230fbc2a6c85220358caba340caa91",
+      "size": 4127
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_28.md",
+      "sha256": "278dd09a57a352c4cc14d64b859be0f6aace3e27ce4611e8e61ca813992bca91",
+      "size": 1254
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_29.md",
+      "sha256": "aa0d63e99fad05bf389efd158e13cd26019f9ec52d1a3e42f0ce6b770d20256b",
+      "size": 615
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_30.md",
+      "sha256": "6b8acaf01888c2ae595e078fb081a7778201c9ec4e7676c88aee9eaaee9f6da7",
+      "size": 763
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_31.md",
+      "sha256": "bb8235776c64921ad75936f4292c9cac995087fa9a672140c27cec586097164b",
+      "size": 629
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_32.md",
+      "sha256": "b65655c894a857a8eb3e23bb5db547aeb1283a645c2578cbb7d45794f030dc14",
+      "size": 990
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_33.md",
+      "sha256": "5e9a69dbec5249c8d07fbfd2905adaaeee694d197814ecbabc2118e807c2f140",
+      "size": 2361
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_34.md",
+      "sha256": "09442e7ae46d2fff327070126b8da680bc58bb63257709686dd67fdf6110cfd5",
+      "size": 2959
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_34_2.md",
+      "sha256": "a7f647a9fef5ed6d98e4cdced3b10561cddf3b672661bb92f405540022023993",
+      "size": 1392
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_42_1.txt",
+      "sha256": "290dd23f32f90e51238a9d250bd7f2f2c7a596dc2b0a07110636b624e7965150",
+      "size": 411
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_43.txt",
+      "sha256": "522529a3cc1d20f30095d21ca4e523dc23c2a6e3c4937f15090b8b7f9bcddcc2",
+      "size": 446
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "README_V10_43_1.txt",
+      "sha256": "2b7bb22b208a81a95c7485f58e0a0070cfd6cf8c2514e558b1e2e0af4ee63f67",
+      "size": 301
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "REPAIR_BX1_STARTUP.sh",
+      "sha256": "0b8fb7730ec322396fcf11a1b65df5329a5dbe710470e536514fcb23b1ce2167",
+      "size": 251
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "RUN_BX1_BRAIN_V1_7_3_UPDATE.bat",
+      "sha256": "55d2b02a00fc5d5c18a2928d4424f1ea5bbdb19cb23a1c699f9f5a55e1f7f32f",
+      "size": 1499
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "RUN_BX1_BRAIN_V1_7_3_UPDATE.cmd",
+      "sha256": "55d2b02a00fc5d5c18a2928d4424f1ea5bbdb19cb23a1c699f9f5a55e1f7f32f",
+      "size": 1499
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "START_BX1_WEB.bat",
+      "sha256": "13a830b881331924afff5dee74ed75548c6bf5ae77e342f83aee454ce49fce62",
+      "size": 106
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "START_BX1_WEB.sh",
+      "sha256": "37c3f59c4b26b587f574f34d89c185ce463100e81d6721a3450f2f70acb703c5",
+      "size": 5578
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "STOP_BX1_WEB.sh",
+      "sha256": "6449490fdf49d702a3df0449b764bd5d895c62cc03008a3c8f2d59ccdab82abd",
+      "size": 2258
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_REPORT.txt",
+      "sha256": "b42fc7805c3dd3c1ba61248c52fea285c159e30ba2a799bb9b801400fc1c27e5",
+      "size": 942
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_37.txt",
+      "sha256": "0e9a7718514230dceb319ca404d05181bfec4dd142aa818eb03b1b02e6fa0eb0",
+      "size": 951
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_38.txt",
+      "sha256": "3a1e835d09a031dae0ee8137c42f0cdbb9e69f7793b28123e4178da5441ea97d",
+      "size": 700
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_39.txt",
+      "sha256": "bec5f97a1dc9d81bf7eab88027be0109271505d1d8184c80d0f7b2da7a64dcff",
+      "size": 826
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_40.txt",
+      "sha256": "c1b10ba62c154b53077965b9858b81becd9cba8167584ebb3d1079913f292d99",
+      "size": 1088
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_41.txt",
+      "sha256": "51feb38fc0b7f0c9828e3e3f97f9cfb5b9def00336ceeed7783a595abd36fbca",
+      "size": 417
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "VALIDATION_V10_42.txt",
+      "sha256": "6d0e4f8495e572dfe619375c37355596400d459f6be782cb379f60b8ab4fdadb",
+      "size": 851
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "VERSION.txt",
+      "sha256": "796eb3dd458e73ef0118dae43fa7211667d3b57c47d37198337248a04f4a6435",
+      "size": 6
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "^C",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "size": 0
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "app.yaml",
+      "sha256": "f65d99f840e28ccc2e646362626533d6ef142fa0b060b8460d44958b9aed9f0b",
+      "size": 450
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "config_additions.json",
+      "sha256": "1c155cfe39f3c0b7007956824e64091dc5fdec2e10338fbbdf72e612f2500a38",
+      "size": 1237
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "main.py",
+      "sha256": "df8556de5afa343dd7a1b33c30166240983f8e8427209a952c1574b4c0d27e03",
+      "size": 745
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "Body_V10_42/APPLY_BX1_V10_42_CONNECTION_DISPLAY_FIX.sh",
+      "sha256": "972a82569dd2a1aa85e3a939e2a2cf20bb6a00ef141af0bd8cb3be9e05644e96",
+      "size": 6274
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/PATCH_SUMMARY_V10_42.md",
+      "sha256": "f29aa345e8dc8fd2a6438be0715b6376e10c7eba8fd45d7f44f98ae28709955c",
+      "size": 1494
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/VALIDATION_V10_42.txt",
+      "sha256": "6d0e4f8495e572dfe619375c37355596400d459f6be782cb379f60b8ab4fdadb",
+      "size": 851
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/CHANGELOG.md",
+      "sha256": "4b3029f209da97e417d4e5e319c20f8b4279400f558fe1a71c4016c8a2cb7787",
+      "size": 7064
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/README.md",
+      "sha256": "3364a318b83764b79ebebd6b394e45e030c7a400d244c96a329f0527094ab6ae",
+      "size": 5069
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/VERSION.txt",
+      "sha256": "35accd677667ac92473c17a67757994ea16db5f4548e21d89f733d73569e04ed",
+      "size": 6
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/app.yaml",
+      "sha256": "587b50986c3168a3dc41e7094ad2c7770bd526653a9a0e5e0738d92b65513b23",
+      "size": 552
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/python/main.py",
+      "sha256": "6e3375378b0e844011bf1bd508ec517a231b29cf60e6f2c92c01f65de6669199",
+      "size": 362142
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/python/touchscreen_display.html",
+      "sha256": "80aee90bb9812bd9376f6fa6beb39cad7acc58dfa23e457c5fe75a4eec49c92a",
+      "size": 11917
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/python/web_control.py",
+      "sha256": "d37cc2f5729e1793403e7d158e3a0ffefaee852a2dbbc32caa110e50c8023e6e",
+      "size": 110243
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "Body_V10_42/payload/service/bx1-web.service",
+      "sha256": "cdbf4fa6f38aafce8ad6a66b02285da26c87329449e1a9bd1a438339db66e962",
+      "size": 592
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "Body_V10_42/payload/tools/bx1_touchscreen_kiosk.sh",
+      "sha256": "6b9e3778ddaa1fafaa4c7bfe390a0706c8a8e71158e6da2d1073d320bbd43a46",
+      "size": 5000
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "Body_V10_42/payload/tools/install_bx1_web_service.sh",
+      "sha256": "9ecd747033aa3592f78789af0543ecc09bb99fcedcb60839fd8367a48e857048",
+      "size": 1058
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/ACTION_PACKET_CONTRACT.md",
+      "sha256": "80d8f5d6fa9606c12fc2085ed1314b205d4fb27b1edc70077a70cda8714d3fd2",
+      "size": 2254
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/BRAIN_APP_SETUP.md",
+      "sha256": "92735deeb7cd10e83baba2a92b2e174b7baf7ca774bace8441a9dcaca2d75283",
+      "size": 1501
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/BX1_DATA_PACKET_CONTRACT.md",
+      "sha256": "3061e4b829b2176692b45fd8cac829158be168f668e316d42792d44cf8d86e08",
+      "size": 1928
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/CLEAN_PROJECT_NOTES.md",
+      "sha256": "dada713e059b6544e26b323c99f8526444a51e35505a76e6dda5a97ced159c49",
+      "size": 1254
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/CONTROL_OWNERSHIP.md",
+      "sha256": "3ceb7ce184d623ccd843c41b54007f196b85ddf369dc50c15f9f98a742d7c848",
+      "size": 2978
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/HARDWARE_MAPPING.md",
+      "sha256": "6ffe52194d2e025358900b3cc27c67856556683cc644f5662607f193e151bf6f",
+      "size": 3128
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/MICROPYTHON_HARDWARE_ARCHITECTURE.md",
+      "sha256": "fdb41411ad05c74faece6957d1f9115ef7e6b5dc16d66f90d6128957f2ed9860",
+      "size": 732
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/MODULINO_MOVEMENT_V10_37.md",
+      "sha256": "a0a6eaa43b08fc64b07bd7bee0136dcaeba163557d73d448bc3f01e7a04aa88c",
+      "size": 478
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/ROBOT_PROFILE_AND_LAPTOP_APP.md",
+      "sha256": "9a495b2f569b3d481513fd05d02f9161c6c1e69c1ded987e491f219a1e72a349",
+      "size": 1945
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/TOUCHSCREEN_DISPLAY.md",
+      "sha256": "7c91655b1391165dabeee60b05fb4a508a259815731676711c1c0b815ac533dd",
+      "size": 2010
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/TOUCH_ORIENTATION_V10_43.md",
+      "sha256": "a1cabcc10bc8e99dcaa90aa0d7d9fb14d6cd8c2681cabff9d224bd0498abe43b",
+      "size": 1203
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/WEB_BRAIN_IP_SETTINGS.md",
+      "sha256": "64a167eae232014eeb67d88f2f4ac218de90119487a5d23cb63455127be5ff05",
+      "size": 1061
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/WEB_ELEVENLABS_TTS.md",
+      "sha256": "d68cbcfa8d22516c10cd93a56c8c2443a1ccee9c3b2520c0e60a34a74e40657f",
+      "size": 593
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/WEB_INTERFACE.md",
+      "sha256": "986679ee0e7ec3bb8b0668a4c3763547d1ca47a795dee315222d51af1e7c96ea",
+      "size": 1554
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/WEB_SPEECH_SETTINGS.md",
+      "sha256": "121a2cf447935a8a241ccdc3412385b26eeda1a42656991b2ed38d1a399a158d",
+      "size": 1605
+    },
+    {
+      "classification": "documentation",
+      "mode": "0644",
+      "path": "docs/images/BX1_HEAD_GIMBAL_LINKAGE_REFERENCE.png",
+      "sha256": "a98bf328bf280d408b955dc1e9ae40d49adc98b729e1a28568124e587dae2cd5",
+      "size": 192308
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES.txt",
+      "sha256": "d55cd1e24217e25419c6ec808233b0b1ccb047cb67095a4df49bc0401346b70b",
+      "size": 806
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_0_HARDWARE_REGISTRY_LED_ZONES.md",
+      "sha256": "c9030a36087d3d4cbb942061fffd3fa80461b9a38e48dcd276f1db549cdb1284",
+      "size": 1189
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_10_STARTUP_ROBOT_BRAIN_BRIDGE.md",
+      "sha256": "3b09123b8c0c85c8162b5f67021619850a1362c26c451549d588200d8a74a364",
+      "size": 1746
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_11_BRAIN_BODY_SPLIT_STT_PERSISTENCE.md",
+      "sha256": "411736150ae09172c07ee8a5e8534c32b4040938fa1f4db896f83f3967fc5f86",
+      "size": 1631
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_12_CONVERSATION_LOAD_CUES.md",
+      "sha256": "1b334778f9084eb645daaa07b51fea6754a9f85a4195505d34a8c757cbdd1d52",
+      "size": 1012
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_13_ECHO_GUARD_LOCAL_CUES.md",
+      "sha256": "1d3ed2e82bc1c13c289650eaf8fd73fd2d6ec230144fdbd77efe792fb10f2a9d",
+      "size": 1675
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_14_BRAIN_TTS_AUTO_SYNC_HARDWARE_UI_FIX.md",
+      "sha256": "358c4acefdb443a440373084828b17b59ad1ca708544d0c90faa5608e6d6087c",
+      "size": 1005
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_15A_STARTUP_HOTFIX.md",
+      "sha256": "d22d3d89991e9c86c819565f8fa325487116377f9a71da48dc578c788b45b947",
+      "size": 655
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_15_STABILITY.md",
+      "sha256": "8463db9e145b8861cdd49cdcce3595f8da0cdcb3e6d0c111c7d88f4067ae34a0",
+      "size": 1061
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_16_BRAIN_OWNED_PERSONALITY_PORTS.md",
+      "sha256": "cfff7730f4463cf4eec0977d40d354b1c33d54d221f0f21d22479943d7c2d0e9",
+      "size": 579
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_17A_STARTUP_ENTRYPOINT_FIX.md",
+      "sha256": "6c8a9324979cb04c17dff634c9c786463890955f184d62f79eef74d5e47da043",
+      "size": 632
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_18_IDLE_LIFE_CONVERSATION.md",
+      "sha256": "9e8dd6ef7919a14076d425d09d707478093b2e420c362ab099107b911ebbd002",
+      "size": 1716
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_19_VISION_MCU_BRIDGE_STABILITY.md",
+      "sha256": "c1384fda9ae9e68ac2f2ad944ebf4c1c74c7529d08e2e9f35ed946ba565d93c5",
+      "size": 1604
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_1_FEEDBACK_MOVEMENT_VIEW.md",
+      "sha256": "0d52223f81cc427a03d3e07cb8ce066c4310ed328059acf4e82e6d2f873818a5",
+      "size": 312
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_20_HARDWARE_DOCTOR_AUDIO_GATES.md",
+      "sha256": "f8fcb9b929a8cb4c1630ec62f08ec3436750b567200cdddcf8c9bcbfec7312cd",
+      "size": 3614
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_21_GIMBAL_LED_STATES.md",
+      "sha256": "38772625316af959b9cc19a01fa42abcd44431ab2c42c16def769b9f266111d7",
+      "size": 1481
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_24_STT_DIAGNOSTIC_UI_MOUTH_OWNERSHIP.md",
+      "sha256": "75c98199e446276c6805c6558f369b8e1ba9611478ed1fc842336e4de3673a73",
+      "size": 806
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_2_ROUTERBRIDGE_SKETCH_COMPILE_FIX.md",
+      "sha256": "dc9538726c93ffcc9fd7f84e6b4eceb30bc261bd7be417875ea0860461d3bf81",
+      "size": 1206
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_3_HARDWARESERVO_ZEPHYR_FIX.md",
+      "sha256": "57bf83ded6bd655671f7d6239e6febf1d22c6b071b311ae21766da9f43c5af3c",
+      "size": 1205
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_4_ROUTER_RPC_PYTHON_BRIDGE.md",
+      "sha256": "26a647944d3cd51750728ebc2894e46e1487d39acda2303b91ab5d0e49b7a12a",
+      "size": 1257
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_5_COMPACT_ROUTER_RPC_HARDWARE_CONFIG.md",
+      "sha256": "82074a3aefa0a3284cae921bef9c5db1dd12a1948e3a7744ac14631eb1d5422a",
+      "size": 1244
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_6_SERVO_PIN_LOCK_STARTUP_HOME.md",
+      "sha256": "a8f0970e3bc23d8529934bfc8de7b8ac9911f8e31ed78d1f0113bb55e7c1c8e6",
+      "size": 1255
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_7_MOUTH_AUDIO_SERVO_HOME_FIX.md",
+      "sha256": "260a4cbfc498ff7fda09d42c6769ee23a54fa406e15b5a2c03d269eec0186708",
+      "size": 1433
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_8_LED_PAINT_MOUTH_AUDIO_INTENT.md",
+      "sha256": "59b901ee774ac8488031d968ac211187cb374b4de652e5b3b071490c4ece0820",
+      "size": 1510
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V10_9_AI_EXPRESSION_HEAD_MOUTH.md",
+      "sha256": "fbb2fbfbd8e2b0a180879b1b55078263fb9da44ceb6a16cd624a45038348a789",
+      "size": 1589
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V2_CAMERA_SENSOR_LOCATION.txt",
+      "sha256": "6e4f7e507d8726665e9ebea3331f68a2923fb9bfd60d75aabf0ee14249a428a5",
+      "size": 491
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V3_WEB_CONTROL.txt",
+      "sha256": "1ded88dcb14e88c40ba09d94a741073cb3a17cc822e811d5ef617d43e513ba95",
+      "size": 1104
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V4_WEB_BRAIN_IP_SETTINGS.txt",
+      "sha256": "de1ddffecfaefd5b625a4d727b4e836a95e60528b4647eeb8472a0f10e4d9e48",
+      "size": 1209
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V5_SPEECH_VOLUME.md",
+      "sha256": "6ca8b8f13375afdcdf7ba30aa19fdf1da9519908102bc3b12e256aac197c431a",
+      "size": 1387
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V6_1_EDGE_VOICE_DROPDOWN.md",
+      "sha256": "0ff14420dd92dc763b505c2fae9158ccdeb6a3064540d254c318892a41c81352",
+      "size": 1012
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V6_2_TTS_DIAGNOSTICS.md",
+      "sha256": "ba7447ff345e6832439e62711a8d1afe542dff2c731052f157c8cd73670588d0",
+      "size": 1129
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V6_VOICE_DROPDOWNS_ELEVENLABS.md",
+      "sha256": "29e20826f3e165b9f7ffdd7d420088822fd3c5c133761e3618dc64fe15cac7e2",
+      "size": 1077
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V7_1_EDGE_VOLUME_FIX.md",
+      "sha256": "b0e59c41b363afd27df679de11c7aea5996f60d5e688a63c79f84ca4543077c8",
+      "size": 1248
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V7_MULTIPAGE_WEB_UI.md",
+      "sha256": "4221fd53fb951f6fa2aa27662967b175a18fefff02d57ecd524ab1e58da45208",
+      "size": 1016
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_3_MICROPHONE_LEVELS.md",
+      "sha256": "54cbf23155cb502369df06a18a2e01d9c6b6ac98e4f5934f601a812f9da36ffc",
+      "size": 1449
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_4_MIC_STT_STATUS.md",
+      "sha256": "7e59f0cb7c503465b17a11df9265711fc546e83b8d0ced8be3b1ed2a488cd70b",
+      "size": 828
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_5_VOSK_STT_INSTALL.md",
+      "sha256": "d4ba1b1f118e9dcd26d2e230e5ed0b627f84d9df62daa7a293275935af14cf20",
+      "size": 1034
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_6_MIC_DEBUG_PLAYBACK.md",
+      "sha256": "2abba48db72d39911894709a2d1d6b02f0061542ee89e3d6c5cfd6f96863fc09",
+      "size": 1127
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_7_AUDIO_DIAGNOSTICS.md",
+      "sha256": "feb30f11a9e1eee02489b292914dda40e68c950c69ddddd37cfa17908928fa83",
+      "size": 1065
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_8_TTS_PLAYBACK_DEVICE.md",
+      "sha256": "c0e98ebc14452361509982942df3e5b4629e4d6c2508b9baba635cc3abf10803",
+      "size": 927
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_9_ROBOT_PROFILE_THEMES.md",
+      "sha256": "a899ce66396069db7b2cf1112ef121eb186ea149a03a790c9c68d770db1abb0a",
+      "size": 1450
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V8_THINKING_PERFORMANCE_STT.md",
+      "sha256": "dcaa4db2371cc1aba2926b47d578d2068cfaa0b914327bd5173b6307c838059c",
+      "size": 1978
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_0_MAIN_STT_CAMERA_WEB.md",
+      "sha256": "1b6ba9268f4f6bf38dd6fe3b9f50c4776eee114ba9004f64c6fe4d1bcc044efb",
+      "size": 2133
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_1_WAKE_LISTENING_INDICATORS.md",
+      "sha256": "2c87ee3be4baa94083878ac1113c9c0ed134492017811df2100ffe1938405cf4",
+      "size": 1308
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_2_WAKE_BRAIN_HOTFIX.md",
+      "sha256": "36e4192ac0930dcb7331dfd3fab3392ef21c9da4dba69750f8c0cb337cd0de7e",
+      "size": 1471
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_4_ROBOT_BRAIN_VOICE_HARDWARE_MAP.md",
+      "sha256": "39b457847b97767be3ebd6d0178b6f97126dc1832d287c9458b1ac27eb8028fd",
+      "size": 1679
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_5_HARDWARE_LIMITS_NO_ELEVENLABS.md",
+      "sha256": "ceb99bbb6dc5941b7c7bd254bf0fff9d70969e701b703f7dde50d8f775cbcce2",
+      "size": 985
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_6_PORTABLE_BRAIN_CONNECTION.md",
+      "sha256": "4d0ebf242ddfddfe6638c8848cf325faa7a22eb6136da5227c08e3800a3b1bc4",
+      "size": 1148
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_7_HARDWARE_PIN_SAVE_FIX.md",
+      "sha256": "bc729e2605d20bc2078e2b1789e890ffcf5eefd5128a7427aa6f1dad075e3306",
+      "size": 714
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_8_HARDWARE_DROPDOWN_PIN_MAP.md",
+      "sha256": "34803a8450bc3070faa0e1a4c2c328c235fc57f886aab65470af1814644d5429",
+      "size": 794
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/PATCH_NOTES_V9_9_SERIAL_MCU_BRIDGE.md",
+      "sha256": "300c6d95ae9700b789eef8ba4ad18a0d2b953224a663b23b887cbb7e5a0ec74d",
+      "size": 881
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/README_PATCH_V9_0.md",
+      "sha256": "098c127ee583c20208ffe6141d173e9491acabcc3c79f80118e2f38635e51a7d",
+      "size": 690
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "docs/patch_history/README_PATCH_V9_1.md",
+      "sha256": "6a249af267de6391b8b24859aee5d05fdce5068150068fb31d9c8902cae53084",
+      "size": 366
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "files/python/hardware_bridge.py",
+      "sha256": "2da8f1bbf01ad76a8d72211a5a263a71065fb40966b38ce82d8980ded564e2de",
+      "size": 22772
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "files/sketch/sketch.ino",
+      "sha256": "b0c2dfa17856dfde03e26aec99eb3ea966a8e54d296a318ec3d7fe85199d358d",
+      "size": 38682
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "files/tools/check_mcu_router_bridge.py",
+      "sha256": "473c868d1a9e29e2e3ce2cc83b5b4d783406a6e474063e2b03f86b69eaafba26",
+      "size": 3884
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "files/tools/test_head_direct_rpc.py",
+      "sha256": "f736a8235d9e95fc140396187d0df712477a55bb6fc5931a9a015d6c1d3332d8",
+      "size": 2918
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/README.md",
+      "sha256": "cf78927ba9c33f7d87515f0e947878c450ce48cf8f8fc1bcf563d4197e99d376",
+      "size": 924
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/config.py",
+      "sha256": "b31dc58f06b74838819e81eedbbd9dbd5126e2c5b63dc46fadba47b4bbc0eaa7",
+      "size": 766
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/head_servos.py",
+      "sha256": "489579a429e6bb4bd4f5da446800cfdde85bda22dd7d368bc3110205704a90a2",
+      "size": 2622
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/led_controller.py",
+      "sha256": "5ce8f63cc045083d460307cebc575322c2960652972ccb1bd2db267f7dd303d2",
+      "size": 500
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/main.py",
+      "sha256": "4f103253517e990dc4207b0c2abc9d1ef13d5b4fadc2b76da0998934868fc143",
+      "size": 496
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/movement_imu.py",
+      "sha256": "6bf0b3c39b5a3a2a291adb72fe2e91cfbeeb5c92ad6b5a87994fd5ead9966754",
+      "size": 1243
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/protocol.py",
+      "sha256": "4c146e58cb2da56cb4dd38b67000afd974ea331ec346a7151b1a5a577e63a285",
+      "size": 163
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/rs485_wheels.py",
+      "sha256": "fa6b367127bbf4a1b23c4e8d7bd1022f4c2381ed00ccb6512e4d776b2e7f7978",
+      "size": 541
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "mcu_micropython/safety.py",
+      "sha256": "252cbe7b379852df088ecf9884fba69701b6051dd40623038673a8e8c3e2efb0",
+      "size": 149
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/CHANGELOG.md",
+      "sha256": "4b3029f209da97e417d4e5e319c20f8b4279400f558fe1a71c4016c8a2cb7787",
+      "size": 7064
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/INSTALL_BX1_TOUCHSCREEN.sh",
+      "sha256": "2d40defe3d74b4bcd37c6c0ba8bc3fc3c351ef7cd6f060f6c802a323abaf99ef",
+      "size": 6592
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/PATCH_SUMMARY_V10_41.md",
+      "sha256": "743b48cfd2f78bf2a78908c6fdf0f762fc77701b7807f83a5de98ff7aba14327",
+      "size": 1087
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/README.md",
+      "sha256": "3364a318b83764b79ebebd6b394e45e030c7a400d244c96a329f0527094ab6ae",
+      "size": 5069
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/START_BX1_WEB.sh",
+      "sha256": "14eb30a7b1fccce6f7fe9e9af646165e18dae858f355712b4b4120878b42e1a0",
+      "size": 5578
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/VALIDATION_V10_41.txt",
+      "sha256": "51feb38fc0b7f0c9828e3e3f97f9cfb5b9def00336ceeed7783a595abd36fbca",
+      "size": 417
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/VERSION.txt",
+      "sha256": "35accd677667ac92473c17a67757994ea16db5f4548e21d89f733d73569e04ed",
+      "size": 6
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/app.yaml",
+      "sha256": "587b50986c3168a3dc41e7094ad2c7770bd526653a9a0e5e0738d92b65513b23",
+      "size": 552
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/docs/README_V11_0_TOUCHSCREEN.md",
+      "sha256": "d101f6a4b127fdfa8d6cded8c5874444c1382a6236215da0466263c8890bd74d",
+      "size": 735
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/docs/TOUCHSCREEN_DISPLAY.md",
+      "sha256": "7c91655b1391165dabeee60b05fb4a508a259815731676711c1c0b815ac533dd",
+      "size": 2010
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/audio_io.py",
+      "sha256": "be8a46266e008d5f864a4e629adf9ca3feef52a5efd53905a2979636357b18ee",
+      "size": 164151
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/bx1_robot_client.py",
+      "sha256": "616825578860ace3bb06eaef372afa68c6d67e298afe4f8b04381311fc407f16",
+      "size": 11576
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/config.example.json",
+      "sha256": "31085098bf27c1ac151f80797a2319ae06aac7d36c8908e2b7d6ee1c021e0a45",
+      "size": 27711
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/config.fresh.json",
+      "sha256": "4f6531ff876ac8fe7281ad52b02f80d59a2391fe526dbfd6bc484ee34882103f",
+      "size": 27047
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/main.py",
+      "sha256": "6e3375378b0e844011bf1bd508ec517a231b29cf60e6f2c92c01f65de6669199",
+      "size": 362142
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/touchscreen_display.html",
+      "sha256": "80aee90bb9812bd9376f6fa6beb39cad7acc58dfa23e457c5fe75a4eec49c92a",
+      "size": 11917
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/python/web_control.py",
+      "sha256": "d37cc2f5729e1793403e7d158e3a0ffefaee852a2dbbc32caa110e50c8023e6e",
+      "size": 110243
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/service/bx1-kiosk.service",
+      "sha256": "9206a1e9fffae320ef25d3c8e9cf2e42af2d60c885a2255786ebf6c537f903e5",
+      "size": 488
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload/service/bx1-web.service",
+      "sha256": "cdbf4fa6f38aafce8ad6a66b02285da26c87329449e1a9bd1a438339db66e962",
+      "size": 592
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/tools/bx1_configure_autologin.py",
+      "sha256": "6d3588ca1017d9927a644783118057283db7bd9804dad387725ed9ab5092c3fe",
+      "size": 3838
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/tools/bx1_touchscreen_calibrate.sh",
+      "sha256": "e690cb579f4a8bafd9fda7d22af14cb429620b2e1314df5a1235465b60b0fb7b",
+      "size": 6305
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/tools/bx1_touchscreen_kiosk.sh",
+      "sha256": "117eb176dd42b8a30055eacab315b5154cb4c4829310e75eeae1964fc7978f74",
+      "size": 4665
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload/tools/install_bx1_web_service.sh",
+      "sha256": "9ecd747033aa3592f78789af0543ecc09bb99fcedcb60839fd8367a48e857048",
+      "size": 1058
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/VERSION.txt",
+      "sha256": "8cbfd4539a2819ce97402a3ae5a96ee09f8b27b7b01d43f82957828158a5c1b4",
+      "size": 8
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/python/audio_io.py",
+      "sha256": "be8a46266e008d5f864a4e629adf9ca3feef52a5efd53905a2979636357b18ee",
+      "size": 164151
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/python/main.py",
+      "sha256": "406180ae880686505b7a638b90fbd3bf0745e80451b309c238d7ca3e7f3b5ab8",
+      "size": 363066
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/python/touchscreen_display.html",
+      "sha256": "80aee90bb9812bd9376f6fa6beb39cad7acc58dfa23e457c5fe75a4eec49c92a",
+      "size": 11917
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/python/web_control.py",
+      "sha256": "08fe10300f3eb02ee5926837fa51c894abd809457974cbdbdccf4fb00ce3206b",
+      "size": 110249
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_42_1/service/bx1-web.service",
+      "sha256": "a76829225bb5aceedc44a9707a68178774d332e2a8ae48aaead536ad1ca3da18",
+      "size": 594
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_43/docs/TOUCH_ORIENTATION_V10_43.md",
+      "sha256": "a1cabcc10bc8e99dcaa90aa0d7d9fb14d6cd8c2681cabff9d224bd0498abe43b",
+      "size": 1203
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload_v10_43/tools/bx1_touchscreen_calibrate.sh",
+      "sha256": "e690cb579f4a8bafd9fda7d22af14cb429620b2e1314df5a1235465b60b0fb7b",
+      "size": 6305
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload_v10_43/tools/bx1_touchscreen_kiosk.sh",
+      "sha256": "44522907f098b6678195dd24d9603638dbb1aa415a1b20b8dbab28e967e2df9b",
+      "size": 4908
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "payload_v10_43_1/python/web_control.py",
+      "sha256": "308263bd1d565b03bf46658a0cbae07312c6752e155fce9abe279369e9560264",
+      "size": 106081
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "payload_v10_43_1/tools/bx1_touchscreen_kiosk.sh",
+      "sha256": "7dcd8891f597b168bc2a00c917ba18992af9f69a4190a779bc2c135f2f1af553",
+      "size": 5462
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/audio_io.py",
+      "sha256": "7f54500ea51b2613f333799ec2643cfc182131250ea74ae34444f09ff21cad95",
+      "size": 140764
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/bx1_robot_client.py",
+      "sha256": "cdc734e3863ca561a3adf6302e1c561d18e64e7e0b950cb094fb6d069d771e73",
+      "size": 9461
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/camera_io.py",
+      "sha256": "e98704701278cda596b67ebe0e18d4b0156ce5a5dea4aa811abdbbbc72d5e235",
+      "size": 10562
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config.example.json",
+      "sha256": "a5609e4cea35f08e2af8637c87b0df1e27b8e3cc0b227acea9906cc974b5fa24",
+      "size": 27370
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config.fresh.json",
+      "sha256": "a3949b3c1f4d04aca1da37e3910912034f9de5766a57fea189214711b0f2a7de",
+      "size": 26705
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config.v10.27.defaults.json",
+      "sha256": "ba54d9520109c18dbf3e218efab002f06edbdf3ac194648fa92bd8b85ce9fee7",
+      "size": 25862
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config.v10.32.defaults.json",
+      "sha256": "76d863b1c08857c2b8a6ff9c4c274742a0516caaa347a3bbc05fdb015d647aec",
+      "size": 26324
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config.v10.33.defaults.json",
+      "sha256": "e491449f7b099dac901b265c363e112ef2fac2986b64e35e1ccbbf55116d7d55",
+      "size": 26714
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/config_v2_additions.json",
+      "sha256": "84dda1a757e21d758133eb7e492185918510bb30c9a3e10031b96743b7095680",
+      "size": 377
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/hardware_bridge.py",
+      "sha256": "0ad418fc7d1aad59e7e43cf09dfc2ec30bfb04b1ebef5ff38681003ba593673c",
+      "size": 24230
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/hardware_doctor.py",
+      "sha256": "75ea17b5149e149be0c3885b527f2cff0e254b8ac002587eb87eb6c324ca599f",
+      "size": 16257
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/location_io.py",
+      "sha256": "3b71ce8edc23dba8c3e41aed6a44590841c3fa4e71628dedb0a244fa95f389e6",
+      "size": 3398
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/main.py",
+      "sha256": "ee09584aafaa3d2181616802c7c2b1e5a7f8278e92094df12db029716bfd8810",
+      "size": 347177
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "python/main.py.pre_v10_22.bak",
+      "sha256": "8a4828a8ba0db00ab11a3fd227ee9546a6c7f4dbbe82bfa775c18def3d09cfb4",
+      "size": 244775
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/requirements-optional.txt",
+      "sha256": "683f29463deaff759d661cd2189c4892a1feb4c384cc21132a85b3cadb3392a5",
+      "size": 261
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/requirements.txt",
+      "sha256": "ca58536d30b39939d9239ad10bc5ced2b6e0b3468dd3c1ba224ad7d00dc362f7",
+      "size": 46
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/touchscreen_display.html",
+      "sha256": "80aee90bb9812bd9376f6fa6beb39cad7acc58dfa23e457c5fe75a4eec49c92a",
+      "size": 11917
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "python/web_control.py",
+      "sha256": "27a2c0a0a5c8aaba4c1ccc0b7fc2038dcd9815a8236e70281def0845bbc8be4d",
+      "size": 106322
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "python/web_control.py.pre_v10_22.bak",
+      "sha256": "31ff84b8dad7d29d2afaff5c9a9ffa6d37292104c1df94024edb243442505c0a",
+      "size": 183130
+    },
+    {
+      "classification": "historical",
+      "mode": "0644",
+      "path": "service/bx1-robot-body.service",
+      "sha256": "922b87c38ab164d6e754809cb159ea6eb865d9d905daf4ba947feeccc90706d6",
+      "size": 429
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "service/bx1-web.service",
+      "sha256": "499722aec085679e94055e84fe9dbd1fc7fb6847407cc3d4599984118ac7c9e7",
+      "size": 592
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "sketch/sketch.ino",
+      "sha256": "ed71ed7fcf6e927ff4c1645e68344bb9517e6797c4a3f47b6b4660822d9f32a5",
+      "size": 47937
+    },
+    {
+      "classification": "active",
+      "mode": "0644",
+      "path": "sketch/sketch.yaml",
+      "sha256": "351d3c79af53c4494f8a7ce83917275019212701ece255f5ae925c2c8380c9d1",
+      "size": 282
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/BX1_MCU_BRIDGE_PERMANENT_REPAIR.sh",
+      "sha256": "9a008149f3c52d18c8e5aadf052a35f1aac11e7efc8d4f4171f4d7c63e9000d6",
+      "size": 6835
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/BX1_RUNTIME_SETTINGS_FIX.sh",
+      "sha256": "388573c822f317984acebd4a94105cc9ed2dc508d61dbc7a7bc41be28cd78772",
+      "size": 2845
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/bx1_configure_autologin.py",
+      "sha256": "6d3588ca1017d9927a644783118057283db7bd9804dad387725ed9ab5092c3fe",
+      "size": 3838
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/bx1_touchscreen_calibrate.sh",
+      "sha256": "e690cb579f4a8bafd9fda7d22af14cb429620b2e1314df5a1235465b60b0fb7b",
+      "size": 6305
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/bx1_touchscreen_kiosk.sh",
+      "sha256": "117eb176dd42b8a30055eacab315b5154cb4c4829310e75eeae1964fc7978f74",
+      "size": 4665
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "tools/bx1_touchscreen_kiosk.sh.before_stable_fix.bak",
+      "sha256": "7dcd8891f597b168bc2a00c917ba18992af9f69a4190a779bc2c135f2f1af553",
+      "size": 5462
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/check_mcu_router_bridge.py",
+      "sha256": "bf4079cbb06353a09781ca9de40c635cf323611b249a958362911549f3108f06",
+      "size": 3937
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/check_mcu_router_ping.py",
+      "sha256": "7bd641fabc440d26dacab96f3f300a1b896e9604bcb749ee8279cea883cc267b",
+      "size": 1728
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/check_mcu_serial_bridge.py",
+      "sha256": "286b35ff4558f15c454fcf4a1b357809e56f394c3121f47d9783032723d8366c",
+      "size": 2205
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/check_web_health.sh",
+      "sha256": "3942416b4dd71ff107df083bb1e9d5ed2dc7bd329cdc57cda4dbbdd13361201f",
+      "size": 745
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/compile_mcu_sketch.sh",
+      "sha256": "b0a8f21d9a900fba3fb7a8266a05bfb12f6cfff713982c441e2bafac7493b13b",
+      "size": 602
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/desktop_api_smoke_test.py",
+      "sha256": "c9fa8fbfef23170b35c4c4fd5a36668a8651c08a47b3482dd0bebef8e5cda91d",
+      "size": 597
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/force_restart_web.sh",
+      "sha256": "282a51bc13213f23ddc3b59afcb598fa54e04704d6572e4e2deaf8066bab2459",
+      "size": 324
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/install_bx1_web_service.sh",
+      "sha256": "bdf6f5636629adbae66af494e53789555dc3157ba9e36da2b3787722e3f30330",
+      "size": 1058
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/install_on_uno_q.sh",
+      "sha256": "26c646c694dab0c2bce9b2986363e58539905a6f33aafddfd2f5b44708cb9590",
+      "size": 867
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_24_config.py",
+      "sha256": "eba4a7d386222fa95db8b0a3e55e5649390a29ca33cec8dfa0fa6be312cda1e9",
+      "size": 4432
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_25_config.py",
+      "sha256": "1d592cac16d62e87332f913eb925910c3b782b92edbf6a7bc6e5c5d6a8e7c286",
+      "size": 5906
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_26_config.py",
+      "sha256": "ea4183024d63bbc705391179d104f944b2d2ed5b30297a93d2bf5f4d2464c947",
+      "size": 6438
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_27_config.py",
+      "sha256": "544a76aceef59ef5517521bc8ae3d162479601e9057f8dc53b9e3d6b0ea08ff3",
+      "size": 10213
+    },
+    {
+      "classification": "support",
+      "mode": "0644",
+      "path": "tools/migrate_v10_31_config.py",
+      "sha256": "13c86f718550c5fd6dc42256f646c9e76fc6eacbf992f58c52320331c716d732",
+      "size": 2113
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_32_config.py",
+      "sha256": "ff011723012a5f876bbb1bcd7e318dd048ca1cbdbc1ade650183689c38b0d12a",
+      "size": 1500
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_33_config.py",
+      "sha256": "b18a8ca4a6b676a3e94ebc78aab9cb4e8050f83ec9803f6eb3c3699b04ae59fa",
+      "size": 2729
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_34_2_config.py",
+      "sha256": "cf81765d3228d5016c530ab79a9a34cd13637d026b3dc557cbd3cb9d6b26197f",
+      "size": 3827
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_34_config.py",
+      "sha256": "f58477a7382f2d7faa79fde944b056a78365129d861a1f4f166b08611cbfdc9d",
+      "size": 2996
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_35_config.py",
+      "sha256": "536781225ad8e63d05dd4e91d93a770c733c634302b86e70c1df250514ec2385",
+      "size": 4031
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_36_audio_config.py",
+      "sha256": "3a27e52fc728d472205728c739fd95d48f82b5e82d03f253c9a35341a511e8ba",
+      "size": 3426
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_37_hardware_config.py",
+      "sha256": "9c7d29c665a892a9517b48a829245c5f21744c47049dfa3f07712cd1a6ee64e3",
+      "size": 1702
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/migrate_v10_39_audio_servo_config.py",
+      "sha256": "c8c503bc020efa7581731ba04f1e9c3f04730052ab28a7d0424332d7195ba261",
+      "size": 1591
+    },
+    {
+      "classification": "active",
+      "mode": "0755",
+      "path": "tools/run_robot_body.sh",
+      "sha256": "7f8e7a8f126ab686fad5b89fae37c2e063cc0501868b589620781ba47deceac1",
+      "size": 1056
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/set_bx1_v10_hardware_registry.py",
+      "sha256": "58410006555be5a6ff1e99a19d8151c54576e573629afa9e1275428b292162d6",
+      "size": 2794
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/set_mic_v10_34_1.py",
+      "sha256": "29aa92f884fe4cc4a5f9cc353ddf3b9643b861a8be2939fa4b11ed7fd06a2426",
+      "size": 968
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/set_mouth_led_d3.py",
+      "sha256": "0b23f835ab8f9774914abf5505bbe7113ff1dd5ef3d4912a35d1fce5d88410be",
+      "size": 836
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/set_robot_profile.py",
+      "sha256": "70c472b7d1f24ebe8b083ad6a93b5807437d8060ba22834bab64f6d6af44478e",
+      "size": 3943
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/set_tts_output_device.py",
+      "sha256": "8f6c252b727c3c10259a2d6396a6f5da8cfee884a398d5b672d4ff123fc1986f",
+      "size": 970
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "tools/start_touchscreen_kiosk.sh",
+      "sha256": "a9132ed6380309a8358fab3139c55682c5b8350d3d73592c296c3d835b8523cb",
+      "size": 3349
+    },
+    {
+      "classification": "historical",
+      "mode": "0755",
+      "path": "tools/start_touchscreen_kiosk.sh.before_touch_mapping.bak",
+      "sha256": "4f617a87d97dd62ebf62e42c1ce235e3b429861e1890a077a954ad1e18134777",
+      "size": 2865
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_brain_connection_settings.py",
+      "sha256": "1296329ff012a9beefc814659bedc27bb9cb737e67761ebb2d0e6479ceede3eb",
+      "size": 8838
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_head_direct_rpc.py",
+      "sha256": "f736a8235d9e95fc140396187d0df712477a55bb6fc5931a9a015d6c1d3332d8",
+      "size": 2918
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_head_mixer_only.py",
+      "sha256": "1d04f350d930b8356acbd6509c0f72178e441498041c01bf9dbbd6877d398d12",
+      "size": 2425
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_mouth_led_colours.py",
+      "sha256": "cdb6659df4434abac97f10b6cdf074d9c1b46d7094040081e76a09762d8681f6",
+      "size": 892
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_mouth_led_d3.py",
+      "sha256": "8c47a19b24a911291aee7f35e21ed9362743abaa7fe7e1f78c8b786489bf88f3",
+      "size": 1564
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_21_config.py",
+      "sha256": "09926674ff9dbdf166bb5acb98d8c1c88bc79b15a6c6c79e919c61d470c6a26e",
+      "size": 1954
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_24_config.py",
+      "sha256": "ca613c51486893f7a257327325873d582978c9459b98a9120d0d9ae9f79d9ca0",
+      "size": 6829
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_25_config.py",
+      "sha256": "37613343dba99f6574b03d7b475c10754bf44cce2089dca4ece6ae78d8b59062",
+      "size": 6126
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_26_config.py",
+      "sha256": "239b03c2c08d604bb1b08fcb3f4aed37d8998d846faff5a03fff283c53f5a54c",
+      "size": 5343
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_27_config.py",
+      "sha256": "c3f41b8bb697d4822414f4899f7d02a84b74784f10b512371c41640361ad5b61",
+      "size": 9306
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_32_config.py",
+      "sha256": "a3e0ffac91ead176fd2ff5d4eae8e3086b2b1c12fe04499c0da9811cf5015f88",
+      "size": 664
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_33_config.py",
+      "sha256": "41cb0fb71da147758379b405695fd2d6b4895a15055bf66a0a91cd7656ea18c2",
+      "size": 1542
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_34.py",
+      "sha256": "1d97f7cbc0be4ace19de221aefd3a3060dbab426f0c4258da704b372f9a4edbe",
+      "size": 3071
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_34_2.py",
+      "sha256": "f7efa5cb65d4d267208924811d7cad652e9d6241517f7ecfb6192dc33eb070b6",
+      "size": 1998
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_v10_35.py",
+      "sha256": "5d3e672b570d4369015eb9ffe7707a4ca2b217dd61814a849c51464a6c785414",
+      "size": 5486
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/test_wake_and_voice_paths.py",
+      "sha256": "efd4ec9e2bcdcb18614f37a34b45c8e35641cb3d04e0f330211baef599bdb037",
+      "size": 4917
+    },
+    {
+      "classification": "support",
+      "mode": "0755",
+      "path": "tools/upload_mcu_sketch.sh",
+      "sha256": "85d3291523c8419c1cd27f8723196d5ae7f2cf02f79af446d626654f16fbfa9a",
+      "size": 423
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/main_pyqt.py",
+      "sha256": "e21fd65d44b4e9f4c328d8002e21e4c313f9c7747df282332addd4ac32f2f93f",
+      "size": 404027
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/config/app_config.example.json",
+      "sha256": "e1bcd98509ba36ea2b0e92ee13330030b0c6d2cd1b48115a3d45fc03c2637a82",
+      "size": 11740
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/python/main.py",
+      "sha256": "441a735908e62fc2053e8c06021c5752789f3e84a51ad3815de45365d07cf17a",
+      "size": 252342
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/python/web_control.py",
+      "sha256": "2df433f5a38f980c0284b266ebd295f56e04a06d4073a6f4f5d1b76f879f50a7",
+      "size": 185587
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/tools/migrate_brain_v1_7_3.py",
+      "sha256": "fbfdbfe994ac29b2192b53487ff1c33e735043290536249049940e3b5173b53f",
+      "size": 1301
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/tools/test_brain_v1_7_3.py",
+      "sha256": "e0354da710c10725f7b1a5b2fa14837d03d767b58f76e64748b56cb00cd61279",
+      "size": 1332
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/tools/test_head_mixer_only.py",
+      "sha256": "1d04f350d930b8356acbd6509c0f72178e441498041c01bf9dbbd6877d398d12",
+      "size": 2425
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/tools/test_mouth_led_colours.py",
+      "sha256": "cdb6659df4434abac97f10b6cdf074d9c1b46d7094040081e76a09762d8681f6",
+      "size": 892
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_28/INSTALL_BX1_BETTER_STT_MODEL.sh",
+      "sha256": "0a27d5c4accc66a331d8cd5c9eb6f38a4ad57e99b15ec247501049d5a9cc172b",
+      "size": 3176
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_28/INSTALL_BX1_OPENCV.sh",
+      "sha256": "b139ac1a4f5ec0d8b07c69eeecc4302cb9a6d8a8b3ee8709545b26251b26a0bb",
+      "size": 1846
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/README_V10_28.md",
+      "sha256": "278dd09a57a352c4cc14d64b859be0f6aace3e27ce4611e8e61ca813992bca91",
+      "size": 1254
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/python/audio_io.py",
+      "sha256": "0b853d9f2bb5dced22d0edabc88587989b1dd4ff946c6840ca0fd8a2a8ebbfb2",
+      "size": 120752
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/python/camera_io.py",
+      "sha256": "68374abb2c4fd47c7e84964a0ae46c2dd937f0dec259f62fd7a04594ea1298b9",
+      "size": 9800
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/python/config.v10.28.defaults.json",
+      "sha256": "7ee7b2086554c4ff66e640efd5fd93a0e0e66a9ea12fa2710ac1a53a1c3becd5",
+      "size": 25862
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/python/main.py",
+      "sha256": "3186312b839aeac72ab1464be0b254a886e6465aa151d5e6baead876bd097989",
+      "size": 286496
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/python/web_control.py",
+      "sha256": "cd31b5667e8bea6fe2e6359971fef629401c5e0d8ae1f90ba86d8ce74d532b1c",
+      "size": 95379
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_28/service/bx1-web.service",
+      "sha256": "16b3cab2dda0bbc7369eebfa0ca48e02efa51da9b1e4c071b2373d5a5a549743",
+      "size": 592
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_28/tools/migrate_v10_28_config.py",
+      "sha256": "d0156b19bff392574763ff063c4eea6069252bf6b7c63934ffd02e64e58b5d17",
+      "size": 10255
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_28/tools/test_v10_28_config.py",
+      "sha256": "e71f52e0b0dce79d63b5c61cbeeaea9ceb8fd9275e5df10d94f5bd4bf95e3e3b",
+      "size": 9780
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_29/INSTALL_BX1_BETTER_STT_MODEL.sh",
+      "sha256": "0a27d5c4accc66a331d8cd5c9eb6f38a4ad57e99b15ec247501049d5a9cc172b",
+      "size": 3176
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_29/INSTALL_BX1_OPENCV.sh",
+      "sha256": "b139ac1a4f5ec0d8b07c69eeecc4302cb9a6d8a8b3ee8709545b26251b26a0bb",
+      "size": 1846
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/README_V10_29.md",
+      "sha256": "aa0d63e99fad05bf389efd158e13cd26019f9ec52d1a3e42f0ce6b770d20256b",
+      "size": 615
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/python/audio_io.py",
+      "sha256": "0b853d9f2bb5dced22d0edabc88587989b1dd4ff946c6840ca0fd8a2a8ebbfb2",
+      "size": 120752
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/python/camera_io.py",
+      "sha256": "68374abb2c4fd47c7e84964a0ae46c2dd937f0dec259f62fd7a04594ea1298b9",
+      "size": 9800
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/python/config.v10.29.defaults.json",
+      "sha256": "478a99e686dfcca4ef5975ab4c9f4678738a4e670ef8cf99766adc6812d72704",
+      "size": 26021
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/python/main.py",
+      "sha256": "7620966bc96c9bccb5cf2cc7b1debe42437eb63bc419c261313c8d58eeb30611",
+      "size": 287315
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/python/web_control.py",
+      "sha256": "f40c460a27e99de2d380abf3e48c013f51849b06633f803ea8c5a04fac4b7a6b",
+      "size": 95379
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_29/service/bx1-web.service",
+      "sha256": "16b3cab2dda0bbc7369eebfa0ca48e02efa51da9b1e4c071b2373d5a5a549743",
+      "size": 592
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_29/tools/migrate_v10_29_config.py",
+      "sha256": "3bad8f8e2805ef45bbbb58da1eb8920447d55c5ab3dc6ab83d82dd9ee9370d06",
+      "size": 1699
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_29/tools/test_v10_29_config.py",
+      "sha256": "228ad5f8f87bed9fe7f53394e890362cae7784f8fd917ec634654c1e5a2ae7c4",
+      "size": 1754
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/README_V10_30.md",
+      "sha256": "6b8acaf01888c2ae595e078fb081a7778201c9ec4e7676c88aee9eaaee9f6da7",
+      "size": 763
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/python/audio_io.py",
+      "sha256": "0b853d9f2bb5dced22d0edabc88587989b1dd4ff946c6840ca0fd8a2a8ebbfb2",
+      "size": 120752
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/python/camera_io.py",
+      "sha256": "68374abb2c4fd47c7e84964a0ae46c2dd937f0dec259f62fd7a04594ea1298b9",
+      "size": 9800
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/python/config.v10.30.defaults.json",
+      "sha256": "e504438bb6e256e908e9ff7bb0ba83711d2219113c6a38f71e81168b9769aceb",
+      "size": 26001
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/python/main.py",
+      "sha256": "eae39a0e5f8686d2395516064a6a88f88eb1e99a19aeeebbd497364dd17daa55",
+      "size": 287787
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_30/python/web_control.py",
+      "sha256": "1b66abce0d4df29b8558601b50a3a1dce2999fdcbc77dcf2cd31cd70c4c55508",
+      "size": 96366
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_30/tools/migrate_v10_30_config.py",
+      "sha256": "652586e3d68d72425bc57cc70536c11c0fe6244aab13caa72043e25965a2b635",
+      "size": 1844
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_30/tools/test_v10_30_config.py",
+      "sha256": "858764b2d8c50859dac47ee4bbdd28845345f37afc30a0a421e7dcd64b7200fd",
+      "size": 1217
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/README_V10_32.md",
+      "sha256": "b65655c894a857a8eb3e23bb5db547aeb1283a645c2578cbb7d45794f030dc14",
+      "size": 990
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/python/audio_io.py",
+      "sha256": "04f8c8e6a05035d0062a14ec3a54ff8db68abb9e1daab65249d7c4d0a552f4bc",
+      "size": 121337
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/python/bx1_robot_client.py",
+      "sha256": "79ecfdbbb69fc4f8f1e2b7b44da0780d38cfa457cdd42016e8acc5101457d032",
+      "size": 7526
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/python/config.v10.32.defaults.json",
+      "sha256": "76d863b1c08857c2b8a6ff9c4c274742a0516caaa347a3bbc05fdb015d647aec",
+      "size": 26324
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/python/main.py",
+      "sha256": "8a0efdf30de7138becee87932369a0e1c3824bef58eeb82da59c83fa50051874",
+      "size": 303600
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_32/python/web_control.py",
+      "sha256": "d63a762c91e87e960c891fe1deb116db86b586936a8dd2f4bee8d0c2e80d105b",
+      "size": 98390
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_32/tools/migrate_v10_32_config.py",
+      "sha256": "ff011723012a5f876bbb1bcd7e318dd048ca1cbdbc1ade650183689c38b0d12a",
+      "size": 1500
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_32/tools/test_v10_32_config.py",
+      "sha256": "a3e0ffac91ead176fd2ff5d4eae8e3086b2b1c12fe04499c0da9811cf5015f88",
+      "size": 664
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/README_V10_33.md",
+      "sha256": "5e9a69dbec5249c8d07fbfd2905adaaeee694d197814ecbabc2118e807c2f140",
+      "size": 2361
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/python/audio_io.py",
+      "sha256": "4a3995304d9e024e1cd4974194c0b9a830e5027e4966a1a35ad49b6d26c7666e",
+      "size": 126233
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/python/bx1_robot_client.py",
+      "sha256": "79ecfdbbb69fc4f8f1e2b7b44da0780d38cfa457cdd42016e8acc5101457d032",
+      "size": 7526
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/python/config.v10.33.defaults.json",
+      "sha256": "e491449f7b099dac901b265c363e112ef2fac2986b64e35e1ccbbf55116d7d55",
+      "size": 26714
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/python/main.py",
+      "sha256": "80560ad4163810b7323d37a234015026d0b5eebac0e8b070a215c90155a7a5d4",
+      "size": 308416
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_33/python/web_control.py",
+      "sha256": "af5e8dacdf2c7981b7bd142cd2a760d6c0b55caf44ed78b42bc73c1336abf38e",
+      "size": 98528
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_33/tools/migrate_v10_33_config.py",
+      "sha256": "b18a8ca4a6b676a3e94ebc78aab9cb4e8050f83ec9803f6eb3c3699b04ae59fa",
+      "size": 2729
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_33/tools/test_v10_33_config.py",
+      "sha256": "41cb0fb71da147758379b405695fd2d6b4895a15055bf66a0a91cd7656ea18c2",
+      "size": 1542
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/README_V10_34.md",
+      "sha256": "09442e7ae46d2fff327070126b8da680bc58bb63257709686dd67fdf6110cfd5",
+      "size": 2959
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/python/audio_io.py",
+      "sha256": "f3f9ed1c6dd5a00e18a87b66be03485ce9a2265dd78f25968b8d8612cf0e163d",
+      "size": 128337
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/python/hardware_doctor.py",
+      "sha256": "61faa74e64ecf956d672a9915f65b5c6f73dd7a67eeb0006819f262996df4e90",
+      "size": 15173
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/python/main.py",
+      "sha256": "859295e74342967dbb6e286b1a5956a33770a29870205919c20da3b4f7f5b57b",
+      "size": 322723
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/python/web_control.py",
+      "sha256": "aa8b8095b63eda5f5975ec58968490c9512c8556d81b68032f7b1d2046dca4c2",
+      "size": 99203
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/sketch/sketch.ino",
+      "sha256": "a6841153a88f4d0a1a34de5e2f5cb70c204e4c4aa980f906fc1bd735d34985c0",
+      "size": 39848
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34/sketch/sketch.yaml",
+      "sha256": "eb740962b67afb611492b1557698282088d8586dcc298f6e7c13709855b8a6c9",
+      "size": 282
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34/tools/BX1_MCU_BRIDGE_PERMANENT_REPAIR.sh",
+      "sha256": "d7202a3db7cddfeede844cac16675cbc883acd03ca9b544c8b9dfb983063f892",
+      "size": 3630
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34/tools/check_mcu_router_bridge.py",
+      "sha256": "473c868d1a9e29e2e3ce2cc83b5b4d783406a6e474063e2b03f86b69eaafba26",
+      "size": 3884
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34/tools/migrate_v10_34_config.py",
+      "sha256": "f58477a7382f2d7faa79fde944b056a78365129d861a1f4f166b08611cbfdc9d",
+      "size": 2996
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34/tools/test_v10_34.py",
+      "sha256": "1d97f7cbc0be4ace19de221aefd3a3060dbab426f0c4258da704b372f9a4edbe",
+      "size": 3071
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_1/README_V10_34_1.md",
+      "sha256": "23dea725c2bacef0db6b2ea08cc538dcb26ae73af808233439a2b54e0d91f570",
+      "size": 376
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_1/python/web_control.py",
+      "sha256": "12998bf037f51814248a179699394c661c0b3c0b2348cef81a5ce0c97583db4f",
+      "size": 100170
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34_1/tools/set_mic_v10_34_1.py",
+      "sha256": "29aa92f884fe4cc4a5f9cc353ddf3b9643b861a8be2939fa4b11ed7fd06a2426",
+      "size": 968
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_2/README_V10_34_2.md",
+      "sha256": "a7f647a9fef5ed6d98e4cdced3b10561cddf3b672661bb92f405540022023993",
+      "size": 1392
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_2/python/audio_io.py",
+      "sha256": "f3f9ed1c6dd5a00e18a87b66be03485ce9a2265dd78f25968b8d8612cf0e163d",
+      "size": 128337
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_2/python/camera_io.py",
+      "sha256": "e98704701278cda596b67ebe0e18d4b0156ce5a5dea4aa811abdbbbc72d5e235",
+      "size": 10562
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_2/python/main.py",
+      "sha256": "1fb109cfcf0c35de512dfc1b98ed4363775c1fed084672247e70b461d0a0a450",
+      "size": 323307
+    },
+    {
+      "classification": "staged",
+      "mode": "0644",
+      "path": "update_files/v10_34_2/python/web_control.py",
+      "sha256": "12998bf037f51814248a179699394c661c0b3c0b2348cef81a5ce0c97583db4f",
+      "size": 100170
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34_2/tools/migrate_v10_34_2_config.py",
+      "sha256": "cf81765d3228d5016c530ab79a9a34cd13637d026b3dc557cbd3cb9d6b26197f",
+      "size": 3827
+    },
+    {
+      "classification": "staged",
+      "mode": "0755",
+      "path": "update_files/v10_34_2/tools/test_v10_34_2.py",
+      "sha256": "f7efa5cb65d4d267208924811d7cad652e9d6241517f7ecfb6192dc33eb070b6",
+      "size": 1998
+    }
+  ],
+  "install_root": "/home/arduino/Arduino_Q_Client_V1",
+  "observed_at": "2026-07-28T20:05:15.6504095Z",
+  "private_files_excluded": 25,
+  "role": "production_robot_body",
+  "schema": "bx1.production.manifest.v1",
+  "service": "bx1-web.service",
+  "version": "10.39",
+  "web_port": 8088
+}

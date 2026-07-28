@@ -10,52 +10,6 @@ from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
 
-def jpeg_dimensions(data: bytes) -> Tuple[Optional[int], Optional[int]]:
-    """Return JPEG dimensions without decoding or opening camera hardware."""
-    value = bytes(data or b"")
-    if len(value) < 4 or value[:2] != b"\xff\xd8":
-        return None, None
-    offset = 2
-    start_of_frame = {
-        0xC0,
-        0xC1,
-        0xC2,
-        0xC3,
-        0xC5,
-        0xC6,
-        0xC7,
-        0xC9,
-        0xCA,
-        0xCB,
-        0xCD,
-        0xCE,
-        0xCF,
-    }
-    while offset + 4 <= len(value):
-        if value[offset] != 0xFF:
-            offset += 1
-            continue
-        while offset < len(value) and value[offset] == 0xFF:
-            offset += 1
-        if offset >= len(value):
-            break
-        marker = value[offset]
-        offset += 1
-        if marker in {0xD8, 0xD9} or 0xD0 <= marker <= 0xD7:
-            continue
-        if offset + 2 > len(value):
-            break
-        length = int.from_bytes(value[offset : offset + 2], "big")
-        if length < 2 or offset + length > len(value):
-            break
-        if marker in start_of_frame and length >= 7:
-            height = int.from_bytes(value[offset + 3 : offset + 5], "big")
-            width = int.from_bytes(value[offset + 5 : offset + 7], "big")
-            return width or None, height or None
-        offset += length
-    return None, None
-
-
 @dataclass
 class CameraConfig:
     camera_index: int = 0
