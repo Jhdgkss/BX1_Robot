@@ -40,6 +40,57 @@ class BridgeCallResult:
     error: str = ""
 
 
+class ObserverOnlyHardwareBridge:
+    """Non-owning bridge used by the side-by-side Alpha qualification service.
+
+    It never opens a serial device, connects to Router RPC, imports GPIO drivers,
+    polls the MCU, or forwards an actuator command.
+    """
+
+    BLOCK_REASON = "BX1 OS Alpha observer-only isolation blocks hardware ownership"
+
+    def __init__(self, config: Optional[Dict[str, Any]] = None) -> None:
+        self.available = False
+        self.last_error = self.BLOCK_REASON
+        self.last_state: Dict[str, Any] = {
+            "mcu_ok": False,
+            "bridge_available": False,
+            "mcu_transport_connected": False,
+            "bridge_mode": "observer_only",
+            "observer_only": True,
+            "hardware_ownership": False,
+            "actuator_access": False,
+            "safety_ok": True,
+            "mode": "alpha_qualification",
+            "bridge_error": self.BLOCK_REASON,
+        }
+
+    def call(self, method: str, *args: Any) -> BridgeCallResult:
+        return BridgeCallResult(False, None, f"{self.BLOCK_REASON}: {method}")
+
+    def send_action(self, action: Dict[str, Any]) -> BridgeCallResult:
+        action_type = str(action.get("type", "unknown"))
+        return BridgeCallResult(
+            False,
+            {"blocked": True, "observer_only": True, "action_type": action_type},
+            f"{self.BLOCK_REASON}: {action_type}",
+        )
+
+    def get_status(self) -> Dict[str, Any]:
+        state = dict(self.last_state)
+        state["timestamp_linux"] = time.time()
+        return state
+
+    def validate_cached_status(
+        self,
+        state: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        current = dict(state or self.last_state)
+        current.update(self.last_state)
+        current["timestamp_linux"] = time.time()
+        return current
+
+
 class RouterRpcClient:
     """Tiny MessagePack-RPC client for the UNO Q arduino-router daemon.
 

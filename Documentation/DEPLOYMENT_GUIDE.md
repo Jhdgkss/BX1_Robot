@@ -1,42 +1,78 @@
-# BX1 OS Deployment Guide
+# BX1 OS Alpha Side-by-Side Deployment Guide
 
-## Scope
+## Scope and invariant
 
-This is the permanent transactional deployment process for BX1 OS releases.
-The first supported milestone is **BX1 OS Alpha**.
-
-Default Robot installation:
+BX1 OS Alpha qualification is a separate installation:
 
 ```text
-/home/arduino/Arduino_Q_Client_V1
+Live installation:       /home/arduino/Arduino_Q_Client_V1
+Live service:            bx1-web.service
+Live port:               8088
+
+Alpha installation:      /home/arduino/BX1_OS
+Alpha service:           bx1-os-alpha.service
+Alpha qualification port: 8089
 ```
 
-Default service:
+The Alpha workflow must never replace, stop, restart, enable, disable, rewrite,
+or otherwise alter `bx1-web.service` or the live installation. Replacing
+`bx1-web.service` during Alpha qualification is explicitly prohibited.
 
-```text
-bx1-web.service
-```
+The generated release manifest is marked `side_by_side: true` and contains
+only `bx1-os-alpha.service`. The legacy `bx1-web.service` unit and its installer
+are excluded from the Alpha payload.
 
-The service name is retained for compatibility. Its systemd description is
-`BX1 OS Alpha Robot Body`.
+## Deployment modes
 
-## Safety guarantees
+The default mode is `--install-only`.
 
-- Release hashes are verified before backup or installation.
-- Deployment cannot start unless the existing `config.json` and service unit
-  are present.
-- The live service is not stopped until the backup has completed and passed
-  archive/config/service validation.
-- `config.json`, Brain settings, profiles, calibration, virtual environments,
-  runtime data, models, logs and backups are not included in the payload.
-- Wi-Fi and NetworkManager configuration are never read or modified.
-- Firmware and `Robot/sketch/` are not included.
-- Installation is qualified before being declared successful.
-- Qualification failure automatically executes rollback.
-- Rollback removes only paths listed in the signed-off release manifest before
-  restoring the complete pre-deployment program archive.
+| Mode | Result |
+|---|---|
+| `--install-only` | Install/update BX1 OS, install its unit, and leave the unit disabled and inactive. This is the default when no mode is supplied. |
+| `--no-start` | Explicit synonym for the safe inactive installation result. |
+| `--start-canary` | Install/update BX1 OS and manually start `bx1-os-alpha.service` on port 8089. It remains disabled. |
 
-## Build a release package
+The mode flags are mutually exclusive.
+
+## Safety guards
+
+Canonical path and reserved-resource checks reject:
+
+- `/home/arduino/Arduino_Q_Client_V1`;
+- any path resolving inside that installation, including through a symlink;
+- `bx1-web.service`;
+- port `8088`;
+- unsafe service names and unsafe root paths;
+- a backup root inside `/home/arduino/BX1_OS`; and
+- a release without the side-by-side manifest marker.
+
+Preflight also requires the existing service and its port 8088 status endpoint
+to be healthy. It records the live unit-definition checksum and hashes a fixed
+sample of live startup/configuration files.
+
+## Observer-only qualification profile
+
+Fresh installation generates `python/config.json` from the reviewed
+`python/config.alpha-qualification.json` template. It contains no API key or
+other secret.
+
+Qualification mode:
+
+- binds only to `0.0.0.0:8089`;
+- replaces the legacy hardware bridge with a non-owning bridge;
+- blocks servo, wheel, LED, GPIO and other actuator commands;
+- disables hardware startup application and servo homing;
+- disables camera, microphone, speech, autonomous expression and idle life;
+- disables kiosk startup;
+- uses the new installation's `runtime/`, `logs/`, `cache/` and `runtime/tmp/`;
+- uses `/run/bx1-os-alpha/service.pid`; and
+- reports observer isolation through `/api/status`.
+
+The systemd unit also uses a private device namespace. Enabling camera or
+microphone later therefore requires a separately reviewed configuration and
+unit change; it is not part of Alpha qualification.
+
+## Build
 
 From the repository root:
 
@@ -52,31 +88,19 @@ bx1-os-alpha-<timestamp>.tar.gz.sha256
 bx1-os-alpha-<timestamp>.manifest.json
 ```
 
-The manifest records:
+Official staging packages should be built from a reviewed, clean commit.
 
-- source Git commit;
-- dirty/clean source state;
-- creation time;
-- every payload path, size, mode and SHA-256;
-- protected user paths;
-- target service and default installation;
-- explicit confirmation that firmware is not included.
+## Transfer and verify
 
-A release from a dirty worktree is clearly marked. For production releases,
-build from a reviewed, committed tag.
-
-## Transfer to the Robot
-
-Example from a workstation:
+Example:
 
 ```bash
 scp Deployment/bx1-os-alpha-<timestamp>.tar.gz \
-  arduino@BX1.local:/home/arduino/
-scp Deployment/bx1-os-alpha-<timestamp>.tar.gz.sha256 \
+  Deployment/bx1-os-alpha-<timestamp>.tar.gz.sha256 \
   arduino@BX1.local:/home/arduino/
 ```
 
-On the Robot:
+On the robot:
 
 ```bash
 cd /home/arduino
@@ -85,242 +109,137 @@ tar -xzf bx1-os-alpha-<timestamp>.tar.gz
 cd bx1-os-alpha-<timestamp>
 ```
 
-## Preflight without changes
+## Read-only dry run
 
 ```bash
-./deploy_bx1_os.sh --dry-run
+./deploy_bx1_os.sh --dry-run --install-only
 ```
 
-This verifies package hashes, install location, preserved configuration and
-systemd availability. It does not create a backup, stop a service or copy a
-file.
+Dry-run verifies the signed payload, canonical safety guards, live service
+health, live definition/sample baseline and canary-port state. It creates no
+directory, backup, virtual environment, unit, report or process.
 
-## Deploy
+## Install-only workflow
 
 ```bash
-./deploy_bx1_os.sh
+./deploy_bx1_os.sh --install-only
 ```
 
-For a non-default installation:
+The installer:
 
-```bash
-./deploy_bx1_os.sh \
-  --install-root /path/to/Arduino_Q_Client_V1 \
-  --backup-root /path/to/Arduino_Q_Client_V1/backups \
-  --service bx1-web.service \
-  --service-user arduino
-```
+1. captures the live invariants and any prior Alpha installation/unit state;
+2. stages only manifest-listed files;
+3. generates the observer-only configuration without secrets;
+4. creates `/home/arduino/BX1_OS/.venv`;
+5. installs `python/requirements.txt` into that isolated environment;
+6. creates separate runtime/log/cache/temp directories;
+7. validates `bx1-os-alpha.service` with `systemd-analyze verify`;
+8. atomically places the staged installation at `/home/arduino/BX1_OS`;
+9. installs only `/etc/systemd/system/bx1-os-alpha.service`;
+10. leaves that unit disabled and inactive; and
+11. qualifies that port 8089 is unused and no BX1_OS process is running.
 
-Do not use qualification overrides for the first Alpha deployment. The default
-deployment requires the Hardware Bridge and Brain App to be available.
-
-## Backup layout
-
-Before changing the installation, deployment creates:
+Backups live outside the installation:
 
 ```text
-<install-root>/backups/YYYYMMDD_HHMMSS_ALPHA/
-    installation.tar.gz
-    configuration/
-        config.json
-        robot_profile*.json
-        *calibration*.json
-    systemd/
-        bx1-web.service
-        bx1-web.service.d/       (when present)
-    startup/
-        main.py
-        START_BX1_WEB.sh
-        STOP_BX1_WEB.sh
-        REPAIR_BX1_STARTUP.sh
-        tools/
-    deployment_manifest.json
-    deployed_release_manifest.json
-    qualification_report.json   (after qualification)
-    deployment_report.json      (after success)
-    rollback_report.json        (only after rollback)
+/home/arduino/BX1_OS_backups/YYYYMMDD_HHMMSS_ALPHA_SIDE_BY_SIDE/
 ```
 
-`deployment_manifest.json` records the live Git commit, original service path,
-service active/enabled state, installation root and saved configuration hash.
+Retain the printed backup path.
 
-The program archive excludes `.venv`, runtime audio, models, logs, existing
-backups, `.git` and bytecode. Those paths are not overwritten by deployment and
-are not needed to restore the previous program.
+`--no-start` may be used when an explicit no-start command is preferred:
 
-## Installation sequence
+```bash
+./deploy_bx1_os.sh --no-start
+```
+
+## Canary workflow
+
+Canary startup is a separate approval gate:
+
+```bash
+./deploy_bx1_os.sh --start-canary
+```
+
+This performs the same transactional installation and then:
+
+- confirms port 8089 is unused;
+- starts only `bx1-os-alpha.service`;
+- leaves it disabled;
+- queries `http://127.0.0.1:8089/api/status`;
+- validates BX1 core services and observer isolation; and
+- revalidates the live service, port 8088, unit checksum and file sample.
+
+Useful read-only checks:
+
+```bash
+systemctl status bx1-web.service --no-pager -l
+systemctl status bx1-os-alpha.service --no-pager -l
+systemctl is-enabled bx1-os-alpha.service
+curl --fail http://127.0.0.1:8088/api/status
+curl --fail http://127.0.0.1:8089/api/status
+```
+
+The expected Alpha canary state is `active` and `disabled`.
+
+## Activation gate
+
+Alpha qualification does not authorise boot-time activation or replacement of
+the live application. Do not run:
 
 ```text
-Verify package
-    |
-Validate target/config/service
-    |
-Create and validate backup
-    |
-Stop bx1-web.service
-    |
-Install payload (config excluded)
-    |
-Verify config hash unchanged
-    |
-Install rendered systemd unit
-    |
-daemon-reload + enable + restart
-    |
-Strict qualification
-    |
-    +-- PASS --> deployment report
-    |
-    +-- FAIL --> automatic rollback
+systemctl enable bx1-os-alpha.service
+systemctl disable bx1-web.service
+systemctl stop bx1-web.service
 ```
 
-## Qualification
+Permanent activation requires a later reviewed migration plan and explicit
+approval.
 
-The deployer runs:
+## Rollback
 
-```bash
-python tools/qualify_bx1_alpha.py \
-  --install-root /home/arduino/Arduino_Q_Client_V1 \
-  --service-name bx1-web.service \
-  --status-url http://127.0.0.1:8088/api/status
-```
-
-It verifies:
-
-- BX1 Alpha bootstrap;
-- required Service Registry entries and lifecycle;
-- cooperative Scheduler activity;
-- Event Bus;
-- Diagnostics;
-- in-memory Communication;
-- Health Monitor;
-- existing Hardware Bridge availability;
-- configured Brain `/api/status`;
-- Robot web interface;
-- active and enabled existing runtime service.
-
-Qualification is read-only. It does not send motor, servo, LED or firmware
-commands.
-
-Maintenance-only overrides exist for offline test environments:
-
-```bash
---allow-hardware-unavailable
---allow-brain-offline
---skip-systemd
---snapshot-file <captured-status.json>
-```
-
-These must not be used to declare the first physical Alpha deployment
-qualified.
-
-## Manual rollback
-
-Use the backup path printed by deployment:
+Validate a backup without changes:
 
 ```bash
 ./rollback_bx1_os.sh \
-  --backup /home/arduino/Arduino_Q_Client_V1/backups/YYYYMMDD_HHMMSS_ALPHA
+  --backup /home/arduino/BX1_OS_backups/<backup> \
+  --dry-run
 ```
 
-Validate a backup without changing the Robot:
+Run rollback:
 
 ```bash
-./rollback_bx1_os.sh --backup <backup-path> --dry-run
+./rollback_bx1_os.sh \
+  --backup /home/arduino/BX1_OS_backups/<backup>
 ```
 
 Rollback:
 
-1. validates the backup manifest, archive, service and release manifest;
-2. stops the deployed service;
-3. removes only release-manifest files;
-4. safely extracts the prior installation;
-5. restores the original service file and drop-ins;
-6. restores enabled state;
-7. restarts the previous service;
-8. verifies the preserved configuration hash; and
-9. creates `rollback_report.json`.
+1. validates the v2 backup manifest and dedicated Alpha service name;
+2. stops only `bx1-os-alpha.service`;
+3. moves the failed/current BX1 OS installation to a timestamped quarantine;
+4. restores any previous `/home/arduino/BX1_OS` directory snapshot;
+5. removes a newly created Alpha unit or restores a pre-existing Alpha unit;
+6. restores the prior Alpha enabled state;
+7. restores the prior Alpha active state, leaving inactive units inactive; and
+8. writes `rollback_report.json`.
 
-## Automatic rollback
+It contains a hard guard against `bx1-web.service`.
 
-After changes begin, any shell error, startup failure or failed qualification
-invokes the rollback utility automatically. The previous service is restarted.
-The backup remains available for manual recovery.
+## Qualification evidence
 
-## Recovery if automatic rollback is interrupted
+Install-only qualification checks:
 
-1. Do not delete the backup or extracted release directory.
-2. Check the backup:
+- Alpha unit disabled and inactive;
+- port 8089 unused;
+- no process running from `/home/arduino/BX1_OS`;
+- observer-only configuration active;
+- `bx1-web.service` still active;
+- port 8088 healthy;
+- live unit-definition checksum unchanged; and
+- sampled live installation checksum unchanged.
 
-   ```bash
-   ./rollback_bx1_os.sh --backup <backup-path> --dry-run
-   ```
-
-3. Run the rollback again without `--dry-run`.
-4. Inspect:
-
-   ```bash
-   systemctl status bx1-web.service --no-pager -l
-   journalctl -u bx1-web.service -n 150 --no-pager
-   ```
-
-5. Confirm the configuration checksum against
-   `deployment_manifest.json`.
-
-If the deployment shell is unavailable, use the copy inside the extracted
-release package. Do not manually delete the installation directory.
-
-## Troubleshooting
-
-### Package verification fails
-
-Re-transfer the archive and checksum. Do not deploy an archive with a hash or
-payload mismatch.
-
-### Backup fails
-
-Check free space and ownership:
-
-```bash
-df -h /home/arduino
-ls -ld /home/arduino/Arduino_Q_Client_V1/backups
-```
-
-No installation files have changed at this point.
-
-### Service fails to start
-
-Automatic rollback should run. Preserve:
-
-```text
-deployment_manifest.json
-qualification_report.json
-rollback_report.json
-```
-
-Review the service journal and startup report.
-
-### Hardware Bridge qualification fails
-
-Do not bypass it for the first deployment. Check `arduino-router`, the existing
-Router RPC socket and the Robot diagnostics page. Deployment does not restart
-or reconfigure the MCU.
-
-### Brain qualification fails
-
-Confirm the saved Brain URL, Windows Brain service, API key and network
-reachability. Deployment does not change Brain or Wi-Fi settings.
-
-### Web qualification fails
-
-Inspect `bx1-web.service`, port 8088 and the service journal. A failed web check
-causes rollback.
-
-## Release governance recommendations
-
-- Build official packages from a clean tagged commit.
-- Store the archive, sidecar manifest, checksum and deployment report together.
-- Never edit an extracted payload after manifest generation.
-- Retain at least the last two qualified backups.
-- Test rollback periodically, not only after a failed release.
-- Require a stationary/no-motion physical qualification before Beta.
+Canary qualification additionally checks BX1 bootstrap, service registry,
+scheduler, event bus, diagnostics, in-memory communication, health monitor,
+port 8089 status and reported observer-only hardware isolation. Hardware bridge
+ownership and actuator access are never required.

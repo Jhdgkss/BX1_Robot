@@ -21,7 +21,7 @@ from array import array
 from collections import deque
 from difflib import SequenceMatcher
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Mapping, Optional
 from urllib.parse import urlparse
 
 try:
@@ -56,7 +56,7 @@ from bx1_core import (
 )
 from bx1_robot_client import BX1BrainClient, BrainClientConfig, now_iso
 from camera_io import CameraCapture, CameraConfig
-from hardware_bridge import BX1HardwareBridge
+from hardware_bridge import BX1HardwareBridge, ObserverOnlyHardwareBridge
 from hardware_doctor import BX1HardwareDoctor
 from location_io import LocationProvider
 from web_control import WebControlServer
@@ -103,7 +103,9 @@ STARTUP_OPTIONS = _read_startup_options(sys.argv)
 CONFIG_PATH = Path(str(STARTUP_OPTIONS.get("config_path") or Path(__file__).with_name("config.json"))).expanduser()
 ROBOT_PROFILE_PATH = Path(__file__).with_name("robot_profile.deprecated.json")
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-RUNTIME_DIR = PROJECT_ROOT / "runtime"
+RUNTIME_DIR = Path(
+    os.environ.get("BX1_RUNTIME_DIR", str(PROJECT_ROOT / "runtime"))
+).expanduser()
 LOCAL_CUE_DIR = RUNTIME_DIR / "audio" / "cues"
 LOCAL_CUE_MANIFEST = LOCAL_CUE_DIR / "manifest.json"
 VOICE_FEEDBACK_DIR = RUNTIME_DIR / "audio" / "feedback"
@@ -600,6 +602,84 @@ def flatten_hardware_map_for_mcu(hardware_map: Dict[str, Dict[str, Any]]) -> Dic
 # High-level personality controls were removed from the body client in v10.35.
 # Robot identity, prompt style and personality are owned by the desktop Brain App.
 
+def _truthy(value: Any) -> bool:
+    return str(value or "").strip().lower() in {"1", "true", "yes", "on", "enabled"}
+
+
+def observer_only_requested(config: Mapping[str, Any]) -> bool:
+    return (
+        _truthy(os.environ.get("BX1_OBSERVER_ONLY", ""))
+        or bool(config.get("observer_only", False))
+        or bool(config.get("qualification_mode", False))
+    )
+
+
+def apply_observer_only_isolation(config: Mapping[str, Any]) -> Dict[str, Any]:
+    """Force the Alpha canary into a non-owning, output-free runtime."""
+
+    cfg = dict(config)
+    cfg.update(
+        {
+            "qualification_mode": True,
+            "observer_only": True,
+            "input_mode": "none",
+            "voice_enabled": False,
+            "camera_enabled": False,
+            "send_periodic_camera_frames": False,
+            "send_periodic_vision": False,
+            "visual_awareness_enabled": False,
+            "idle_life_enabled": False,
+            "idle_life_micro_actions_enabled": False,
+            "idle_life_self_chatter_enabled": False,
+            "expression_engine_enabled": False,
+            "expression_idle_head_enabled": False,
+            "hardware_auto_apply_on_start": False,
+            "hardware_startup_home_servos": False,
+            "hardware_doctor_enabled": False,
+            "voice_feedback_audio_enabled": False,
+            "thinking_feedback_enabled": False,
+            "thinking_cues_enabled": False,
+            "local_voice_cue_cache_enabled": False,
+            "mouth_audio_reactive_enabled": False,
+            "tts_enabled": False,
+        }
+    )
+    isolation = {
+        "actuators_blocked": True,
+        "camera_blocked": True,
+        "gpio_blocked": True,
+        "hardware_bridge_blocked": True,
+        "leds_blocked": True,
+        "microphone_blocked": True,
+        "servos_blocked": True,
+        "wheels_blocked": True,
+    }
+    cfg["observer_isolation"] = isolation
+    cfg["hardware_control"] = {
+        "enabled": False,
+        "mcu_transport": "disabled",
+        "observer_only": True,
+    }
+    cfg["hardware_registry"] = {
+        "schema": "bx1.hardware_registry.v1",
+        "led_buses": {},
+        "led_zones": {},
+        "servos": {},
+        "sensors": {},
+        "drive_buses": {},
+    }
+    hardware_services = dict(cfg.get("hardware_services", {}))
+    hardware_services["backend"] = "simulation"
+    hardware_services["drive"] = {
+        "enabled": False,
+        "drive_dry_run": True,
+        "rs485_enabled": False,
+        "serial_port": "",
+    }
+    cfg["hardware_services"] = hardware_services
+    return cfg
+
+
 def load_config() -> Dict[str, Any]:
     if not CONFIG_PATH.exists():
         raise FileNotFoundError(f"Missing config file: {CONFIG_PATH}")
@@ -616,6 +696,10 @@ def load_config() -> Dict[str, Any]:
         cfg["web_enabled"] = web_enabled_override not in {"0", "false", "no", "off", "disabled"}
     if STARTUP_OPTIONS.get("brain_url"):
         cfg["brain_base_url"] = str(STARTUP_OPTIONS.get("brain_url")).rstrip("/")
+    if observer_only_requested(cfg):
+        cfg = apply_observer_only_isolation(cfg)
+        if int(cfg.get("web_port", 8089)) == 8088:
+            raise ValueError("observer-only qualification must not bind live port 8088")
 
     # Repair historical saved values such as 192.168.1.50:8765.  An empty
     # Brain URL is valid while disconnected, but it must never become the
@@ -715,6 +799,8 @@ def load_config() -> Dict[str, Any]:
     cfg.setdefault("idle_life_enabled", True)
     cfg.setdefault("idle_life_micro_actions_enabled", True)
     cfg.setdefault("idle_life_self_chatter_enabled", True)
+    if observer_only_requested(cfg):
+        cfg = apply_observer_only_isolation(cfg)
     return cfg
 
 
@@ -736,18 +822,26 @@ def resolve_runtime_hardware(
 def bootstrap_robot_runtime(
     config: Optional[Dict[str, Any]] = None,
     *,
-    hardware_factory=BX1HardwareBridge,  # type: ignore[no-untyped-def]
+    hardware_factory=None,  # type: ignore[no-untyped-def]
 ) -> BootstrapResult:
     """Build the validated BX1 OS Alpha graph without starting Robot loops."""
 
+    loaded_config = load_config() if config is None else dict(config)
+    if observer_only_requested(loaded_config):
+        loaded_config = apply_observer_only_isolation(loaded_config)
+    selected_hardware_factory = hardware_factory or (
+        ObserverOnlyHardwareBridge
+        if observer_only_requested(loaded_config)
+        else BX1HardwareBridge
+    )
     return bootstrap_bx1_runtime(
-        config,
-        config_loader=None if config is not None else load_config,
+        loaded_config,
+        config_loader=None,
         config_source=str(CONFIG_PATH),
         service_factories={
             "runtime_hardware": lambda _root, loaded: CompatibilityServiceAdapter(
                 "runtime_hardware",
-                hardware_factory(dict(loaded)),
+                selected_hardware_factory(dict(loaded)),
             )
         },
         service_dependencies={
@@ -1108,6 +1202,27 @@ class BX1RobotBodyService:
         self.idle_life_last_comment_mono = 0.0
         self.idle_life_last_curiosity_mono = 0.0
         self.idle_life_sleep_announced = False
+
+    def observer_block(
+        self,
+        capability: str,
+        *,
+        allow_key: str = "",
+    ) -> Optional[Dict[str, Any]]:
+        if not bool(self.cfg.get("observer_only", False)):
+            return None
+        if allow_key and bool(self.cfg.get(allow_key, False)):
+            return None
+        return {
+            "ok": False,
+            "blocked": True,
+            "observer_only": True,
+            "capability": capability,
+            "error": (
+                "BX1 OS Alpha qualification mode blocks %s ownership"
+                % capability
+            ),
+        }
 
     def set_voice_runtime(self, state: str, label: str = "", **updates: Any) -> None:
         """Update the live voice/wake-word status shown on the web UI."""
@@ -3735,15 +3850,33 @@ class BX1RobotBodyService:
             self.stop_event.wait(max(0.75, float(self.cfg.get("visual_awareness_interval_s", 2.0))))
 
     def web_camera_probe(self) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "camera",
+            allow_key="observer_allow_camera",
+        )
+        if blocked:
+            return blocked
         report = self.camera.probe()
         self.set_visual_awareness_runtime(camera_ok=bool(report.get("ok")), last_error=str(report.get("error", "")), state="ready" if report.get("ok") else "error")
         self.web_log("vision" if report.get("ok") else "error", "Camera probe completed.", report)
         return {"ok": bool(report.get("ok")), "probe": report, "vision_awareness": self.get_visual_awareness_snapshot()}
 
     def web_camera_frame(self) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "camera",
+            allow_key="observer_allow_camera",
+        )
+        if blocked:
+            return blocked
         return self.visual_awareness_sample(send_frame=True, source="web_camera_frame")
 
     def web_camera_vision(self, prompt: str) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "camera",
+            allow_key="observer_allow_camera",
+        )
+        if blocked:
+            return blocked
         text = str(prompt or "Describe what you can see and mention any person, object, movement or clear gesture.").strip()
         return self.handle_vision(text, source="body_web", trigger="web_camera_vision")
 
@@ -5040,6 +5173,9 @@ class BX1RobotBodyService:
             return {"ok": False, "error": str(exc)}
 
     def web_test_speech(self, text: str = "") -> Dict[str, Any]:
+        blocked = self.observer_block("audio output")
+        if blocked:
+            return blocked
         test_text = str(text or f"Speech test. {self.robot_name} voice system online. Gravity remains suspicious.").strip()
         forced_brain_defaults = False
         old_tts_cfg = getattr(self.tts, "cfg", None)
@@ -5127,6 +5263,9 @@ class BX1RobotBodyService:
             return {
                 "milestone": "BX1 OS Alpha",
                 "integrated": True,
+                "qualification_mode": bool(self.cfg.get("qualification_mode", False)),
+                "observer_only": bool(self.cfg.get("observer_only", False)),
+                "observer_isolation": dict(self.cfg.get("observer_isolation", {})),
                 "startup_validated": bool(startup.get("success", False)),
                 "startup": startup,
                 "status": self.bx1.status(),
@@ -5444,6 +5583,9 @@ class BX1RobotBodyService:
         return {"ok": True, "diagnosis": diagnosis, "automatic_flashing": False}
 
     def web_hardware_doctor_recover(self) -> Dict[str, Any]:
+        blocked = self.observer_block("hardware recovery")
+        if blocked:
+            return blocked
         self.apply_led_state("diagnostic", source="hardware_doctor_recovery", force=True)
         result = self.hardware_doctor.safe_recover(reason="manual web request", force=True)
         self.apply_led_state("success" if result.get("ok") else "error", source="hardware_doctor_result", force=True)
@@ -5601,6 +5743,12 @@ class BX1RobotBodyService:
         return {"ok": True, "mic": self.get_mic_settings(), "volume_report": volume_report, "saved_to": str(CONFIG_PATH)}
 
     def web_start_mic_monitor(self) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "microphone",
+            allow_key="observer_allow_microphone",
+        )
+        if blocked:
+            return blocked
         # The live wake listener and level meter cannot own the same ALSA device
         # simultaneously. Pause the wake loop while the diagnostic meter is open.
         self.manual_audio_capture_requested.set()
@@ -5649,6 +5797,12 @@ class BX1RobotBodyService:
         }
 
     def web_record_mic_test(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "microphone",
+            allow_key="observer_allow_microphone",
+        )
+        if blocked:
+            return blocked
         seconds = data.get("seconds", self.cfg.get("record_seconds", 5))
         device = str(data.get("mic_device", self.cfg.get("mic_device", "default"))).strip() or "default"
         sample_rate = int(self.cfg.get("sample_rate", 16000))
@@ -5751,6 +5905,12 @@ class BX1RobotBodyService:
         }
 
     def web_stt_mic_test(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        blocked = self.observer_block(
+            "microphone",
+            allow_key="observer_allow_microphone",
+        )
+        if blocked:
+            return blocked
         # Transcribe the most recent web-recorded sample. This needs the vosk
         # Python module and a model folder, but does not need sounddevice.
         model_path = str(data.get("vosk_model_path", self.cfg.get("vosk_model_path", "models/vosk-model-small-en-us-0.15"))).strip()
@@ -5955,6 +6115,9 @@ class BX1RobotBodyService:
         }
 
     def web_update_hardware_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        blocked = self.observer_block("hardware configuration")
+        if blocked:
+            return blocked
         raw = data.get("hardware_registry", data.get("hardware_map", data))
         self.hardware_registry = normalise_hardware_registry(raw)
         self.hardware_map = legacy_hardware_map_from_registry(self.hardware_registry)
@@ -5965,6 +6128,9 @@ class BX1RobotBodyService:
         return {"ok": True, "hardware": self.get_hardware_settings(), "saved_to": str(CONFIG_PATH)}
 
     def web_apply_hardware_to_mcu(self) -> Dict[str, Any]:
+        blocked = self.observer_block("hardware bridge")
+        if blocked:
+            return blocked
         action = flatten_hardware_registry_for_mcu(self.hardware_registry)
         action["source"] = "web_hardware_settings"
         res = self.hardware.send_action(action)
@@ -5978,6 +6144,9 @@ class BX1RobotBodyService:
         }
 
     def web_test_hardware_device(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        blocked = self.observer_block("actuator")
+        if blocked:
+            return blocked
         role = str(data.get("role", "") or data.get("device", "") or data.get("zone", "")).strip().lower()
         value = data.get("value")
 
@@ -6114,6 +6283,9 @@ class BX1RobotBodyService:
     def web_manual_action(self, action: Dict[str, Any]) -> Dict[str, Any]:
         if not isinstance(action, dict):
             return {"ok": False, "error": "action must be a JSON object"}
+        blocked = self.observer_block("manual actuator action")
+        if blocked:
+            return blocked
         with self.command_lock:
             ack = self.execute_actions([action], original_message="web_manual_action")
             if ack["actions_seen"]:

@@ -1,0 +1,71 @@
+{
+  "schema": "bx1.alpha.qualification.config.v1",
+  "app_version": "BX1 OS Alpha qualification",
+  "qualification_mode": true,
+  "observer_only": true,
+  "observer_allow_camera": false,
+  "observer_allow_microphone": false,
+  "observer_isolation": {
+    "actuators_blocked": true,
+    "camera_blocked": true,
+    "gpio_blocked": true,
+    "hardware_bridge_blocked": true,
+    "leds_blocked": true,
+    "microphone_blocked": true,
+    "servos_blocked": true,
+    "wheels_blocked": true
+  },
+  "web_enabled": true,
+  "web_host": "0.0.0.0",
+  "web_port": 8089,
+  "brain_base_url": "",
+  "api_key": "",
+  "input_mode": "none",
+  "voice_enabled": false,
+  "camera_enabled": false,
+  "send_periodic_camera_frames": false,
+  "send_periodic_vision": false,
+  "visual_awareness_enabled": false,
+  "idle_life_enabled": false,
+  "idle_life_micro_actions_enabled": false,
+  "idle_life_self_chatter_enabled": false,
+  "expression_engine_enabled": false,
+  "expression_idle_head_enabled": false,
+  "hardware_auto_apply_on_start": false,
+  "hardware_startup_home_servos": false,
+  "hardware_doctor_enabled": false,
+  "voice_feedback_audio_enabled": false,
+  "thinking_feedback_enabled": false,
+  "thinking_cues_enabled": false,
+  "local_voice_cue_cache_enabled": false,
+  "mouth_audio_reactive_enabled": false,
+  "tts_enabled": false,
+  "hardware_control": {
+    "enabled": false,
+    "mcu_transport": "disabled",
+    "observer_only": true
+  },
+  "hardware_services": {
+    "backend": "simulation",
+    "drive": {
+      "enabled": false,
+      "drive_dry_run": true,
+      "rs485_enabled": false,
+      "serial_port": ""
+    }
+  },
+  "hardware_registry": {
+    "schema": "bx1.hardware_registry.v1",
+    "led_buses": {},
+    "led_zones": {},
+    "servos": {},
+    "sensors": {},
+    "drive_buses": {}
+  },
+  "runtime_paths": {
+    "cache": "cache",
+    "logs": "logs",
+    "runtime": "runtime",
+    "temporary": "runtime/tmp"
+  }
+}

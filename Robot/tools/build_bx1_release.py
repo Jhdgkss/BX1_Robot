@@ -38,11 +38,13 @@ ROOT_STARTUP_FILES = [
 TOOL_FILES = [
     "build_bx1_release.py",
     "deploy_bx1_os.sh",
+    "deploy_bx1_os.py",
     "rollback_bx1_os.sh",
+    "rollback_bx1_os.py",
     "qualify_bx1_alpha.py",
     "run_robot_body.sh",
+    "run_bx1_os_alpha.sh",
     "check_web_health.sh",
-    "install_bx1_web_service.sh",
     "test_runtime_integration.py",
     "test_communication_framework.py",
     "test_core_services.py",
@@ -97,8 +99,11 @@ def build_release(
         "created_at": created_at,
         "source_git_commit": commit,
         "source_worktree_dirty": dirty,
-        "target_service": "bx1-web.service",
-        "default_install_root": "/home/arduino/Arduino_Q_Client_V1",
+        "target_service": "bx1-os-alpha.service",
+        "default_install_root": "/home/arduino/BX1_OS",
+        "default_web_port": 8089,
+        "default_deployment_mode": "install-only",
+        "side_by_side": True,
         "firmware_included": False,
         "preserved_paths": list(PRESERVED_PATHS),
         "files": entries,
@@ -175,8 +180,8 @@ def collect_release_files(repo: Path) -> List[Tuple[Path, PurePosixPath]]:
     for name in TOOL_FILES:
         include(robot / "tools" / name, "tools/" + name)
     include(
-        robot / "service" / "bx1-web.service",
-        "service/bx1-web.service",
+        robot / "service" / "bx1-os-alpha.service",
+        "service/bx1-os-alpha.service",
     )
     for name in DOCUMENTATION_FILES:
         include(

@@ -2,57 +2,53 @@
 
 ## Status
 
-**RELEASE SOURCE READY — ROBOT-SIDE EXECUTION PENDING**
+**SIDE-BY-SIDE IMPLEMENTATION COMPLETE — ROBOT STAGING PENDING**
 
-The permanent deployment, rollback and qualification system has been created
-and tested locally. Direct access to the BX1 Robot filesystem and systemd is
-not available in this workspace, so no files were copied to the Robot and no
-service was restarted.
+No robot connection, file transfer, service operation or deployment was
+performed while implementing this revision.
 
-## Source
+## Corrected architecture
 
-- Branch: `feature/bx1-os-phase-1`
-- Release tag: `BX1_OS_ALPHA_v0.1`
-- Source commit: recorded by the generated release manifest
-- Source worktree requirement: clean
-- Milestone: BX1 OS Alpha
+- Live installation remains `/home/arduino/Arduino_Q_Client_V1`.
+- Live service remains `bx1-web.service` on port 8088.
+- Alpha installs at `/home/arduino/BX1_OS`.
+- Alpha uses `bx1-os-alpha.service` on port 8089.
+- Default deployment mode is install-only.
+- Install-only leaves the Alpha service disabled and inactive.
+- Canary mode starts only the Alpha service and never enables it.
+- The Alpha release payload excludes `bx1-web.service` and its installer.
 
-Generated archives, manifests and checksums live under the ignored
-`Deployment/` directory. They are built after the release commit is created so
-the manifest records the clean release source rather than a pre-commit working
-tree.
+## Safety implementation
 
-## Local package verification
+- Canonical-path guards reject the live root and descendants.
+- Reserved service and port guards reject `bx1-web.service` and port 8088.
+- Fresh installation creates an isolated virtual environment and reviewed
+  secret-free configuration.
+- Observer-only runtime blocks hardware bridge, GPIO and actuator ownership.
+- Camera, microphone, speech, kiosk, autonomous motion and idle behaviour are
+  disabled.
+- Baseline and post-install qualification protect the live unit definition,
+  sampled live files, service health and port 8088.
+- Rollback understands absent/pre-existing directories and units, restores
+  active/enabled states exactly, and quarantines failed installations.
 
-- Release:
-  `bx1-os-alpha-20260728_alpha1`
-- Archive:
-  `Deployment/bx1-os-alpha-20260728_alpha1.tar.gz`
-- Archive SHA-256: recorded in the generated `.sha256` file
-- Manifest:
-  `Deployment/bx1-os-alpha-20260728_alpha1.manifest.json`
-- Release manifest generation: passed
-- Per-file SHA-256 verification: 78/78 passed
-- Tamper-detection test: passed
-- Firmware included: no
-- User `config.json` included: no
-- Brain/Wi-Fi/calibration overwrite paths: none
+## Required robot-side approval gates
 
-## Robot-side steps remaining
+1. Read-only SSH baseline.
+2. Release checksum verification and deployment dry-run.
+3. Install-only deployment.
+4. Review install-only qualification report.
+5. Separately approve observer-only canary startup.
+6. Review canary qualification before any later activation discussion.
 
-1. Transfer the generated archive and checksum to the Robot.
-2. Verify the archive checksum.
-3. Extract the release.
-4. Run `./deploy_bx1_os.sh --dry-run`.
-5. Confirm the Brain App and existing Hardware Bridge are available.
-6. Run `./deploy_bx1_os.sh`.
-7. Retain the printed backup location and generated reports.
+Enabling the Alpha unit or replacing/stopping `bx1-web.service` is outside the
+Alpha qualification scope and prohibited.
 
 ## Deployment outcome
 
-- Backup location: not yet created
-- Files installed: none
-- Services updated: none
-- Qualification: not run on Robot
-- Rollback: not used
-- Deployment status: pending direct Robot access
+- Robot files installed: none
+- Robot services changed: none
+- Robot processes started: none
+- Existing service interrupted: no
+- Qualification on robot: pending
+- Rollback on robot: not used
