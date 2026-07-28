@@ -17,6 +17,9 @@ def observer_diagnostics(
 
     mic = robot_body.get("microphone", {})
     speaker = robot_body.get("speaker", {})
+    camera = robot_body.get("camera", {})
+    preview = _get(camera, "preview")
+    preview = preview if isinstance(preview, Mapping) else {}
     checks = [
         _check(
             "Robot Body API reachable",
@@ -34,6 +37,33 @@ def observer_diagnostics(
         _check("IMU state known", _known(robot_body.get("imu"))),
         _check("Touchscreen detected", present("touchscreen")),
         _check("Display detected", present("display")),
+        _check("Physical camera detected", present("camera")),
+        _check(
+            "Robot Body owns camera",
+            _get(preview, "owner") == "bx1-web.service",
+        ),
+        _check(
+            "Camera frame source available",
+            bool(_get(preview, "preview_available")),
+        ),
+        _check(
+            "BX1 OS camera proxy available",
+            bool(robot_body.get("connected")),
+        ),
+        _check(
+            "Camera frame recently received",
+            bool(_get(preview, "preview_available"))
+            and not bool(_get(preview, "stale")),
+        ),
+        _check(
+            "Preview stream healthy",
+            bool(_get(preview, "streaming"))
+            and _get(preview, "health") == "healthy",
+        ),
+        _check(
+            "Preview performance acceptable",
+            _performance_acceptable(preview),
+        ),
     ]
     required_failures = [
         check["name"]
@@ -76,3 +106,13 @@ def _known(value: Any) -> bool:
         "unknown",
         "unavailable",
     }
+
+
+def _performance_acceptable(preview: Mapping[str, Any]) -> bool:
+    if not preview.get("preview_available"):
+        return False
+    try:
+        fps = float(preview.get("fps", 0.0))
+    except (TypeError, ValueError):
+        return False
+    return 0.0 <= fps <= 15.0 and not bool(preview.get("stale"))

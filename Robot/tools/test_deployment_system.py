@@ -150,8 +150,8 @@ def valid_snapshot():
         "ok": True,
         "bx1_os": {
             "milestone": "BX1 OS Alpha",
-            "release_version": "0.4.0",
-            "release_tag": "BX1_OS_ALPHA_v0.4.0",
+            "release_version": "0.5.0",
+            "release_tag": "BX1_OS_ALPHA_v0.5.0",
             "qualification_mode": True,
             "observer_only": True,
             "observer_isolation": isolation,
@@ -205,8 +205,8 @@ class ReleaseBuilderTests(unittest.TestCase):
             )
             self.assertEqual(manifest["default_install_root"], "/home/arduino/BX1_OS")
             self.assertEqual(manifest["target_service"], "bx1-os-alpha.service")
-            self.assertEqual(manifest["release_version"], "0.4.0")
-            self.assertEqual(manifest["release_tag"], "BX1_OS_ALPHA_v0.4.0")
+            self.assertEqual(manifest["release_version"], "0.5.0")
+            self.assertEqual(manifest["release_tag"], "BX1_OS_ALPHA_v0.5.0")
             self.assertTrue(manifest["source_git_branch"])
             self.assertEqual(manifest["default_web_port"], 8089)
             self.assertTrue(manifest["side_by_side"])
@@ -220,6 +220,8 @@ class ReleaseBuilderTests(unittest.TestCase):
             self.assertIn("python/bx1_management/static/app.js", paths)
             self.assertNotIn("service/bx1-web.service", paths)
             self.assertNotIn("tools/install_bx1_web_service.sh", paths)
+            self.assertNotIn("tools/run_robot_body.sh", paths)
+            self.assertNotIn("main.py", paths)
             self.assertNotIn("START_BX1_WEB.sh", paths)
             self.assertNotIn("STOP_BX1_WEB.sh", paths)
             self.assertNotIn("REPAIR_BX1_STARTUP.sh", paths)
@@ -356,7 +358,7 @@ class DeploymentIntegrationTests(unittest.TestCase):
         installed_manifest = json.loads(
             (self.root / "release_manifest.json").read_text(encoding="utf-8")
         )
-        self.assertEqual(installed_manifest["release_version"], "0.4.0")
+        self.assertEqual(installed_manifest["release_version"], "0.5.0")
         self.assertEqual(
             installed_manifest["source_git_commit"],
             builder.git_identity(REPOSITORY)[0],

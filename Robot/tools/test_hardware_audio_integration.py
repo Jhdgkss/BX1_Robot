@@ -119,7 +119,26 @@ class FakeRobotBodyClient:
             "tts": {"state": "enabled", "backend": "brain-tts"},
             "mcu": {"state": "online"},
             "imu": {"state": "fresh", "driver": "robot_body"},
-            "camera": {"state": "online", "device": "/dev/video0"},
+            "camera": {
+                "state": "online",
+                "device": "/dev/video0",
+                "preview": {
+                    "connected": True,
+                    "owner": "bx1-web.service",
+                    "source": "Existing Robot Body",
+                    "streaming": False,
+                    "preview_available": True,
+                    "resolution": "640x480",
+                    "fps": 8.0,
+                    "frame_age_ms": 40.0,
+                    "last_frame_timestamp": "2026-07-28T12:00:00Z",
+                    "frame_sequence": 9,
+                    "health": "healthy",
+                    "error": "",
+                    "stale": False,
+                    "quality": "live",
+                },
+            },
             "mouth_led": {"state": "idle"},
             "hardware": {
                 "hardware_registry": {
@@ -419,6 +438,32 @@ class PublishedStateAndAPITests(unittest.TestCase):
             99.9,
         )
         self.assertTrue(state["robot_body"]["connected"]["value"])
+        self.assertTrue(state["camera"]["connected"]["value"])
+        self.assertEqual(
+            state["camera"]["owner"]["value"], "bx1-web.service"
+        )
+        self.assertEqual(
+            state["camera"]["resolution"]["value"], "640x480"
+        )
+        for field in (
+            "connected",
+            "owner",
+            "source",
+            "streaming",
+            "preview_available",
+            "resolution",
+            "fps",
+            "frame_age_ms",
+            "last_frame_timestamp",
+            "frame_sequence",
+            "health",
+            "error",
+        ):
+            self.assertIn("timestamp", state["camera"][field])
+            self.assertIn("source", state["camera"][field])
+            self.assertIn("quality", state["camera"][field])
+            self.assertIn("stale", state["camera"][field])
+            self.assertIn("error", state["camera"][field])
 
     def test_read_only_hardware_audio_and_robot_body_apis(self):
         application = ManagementApplication(

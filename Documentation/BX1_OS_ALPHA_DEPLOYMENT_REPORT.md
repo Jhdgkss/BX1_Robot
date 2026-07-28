@@ -2,10 +2,19 @@
 
 ## Status
 
-**v0.4.0 READ-ONLY HARDWARE AND AUDIO RELEASE IMPLEMENTED — NOT DEPLOYED**
+**v0.5.0 SAFE CAMERA PREVIEW RELEASE IMPLEMENTED — NOT DEPLOYED**
 
 No robot connection, file transfer, service operation or deployment was
 performed while implementing this revision.
+
+## v0.5.0 safe camera preview milestone
+
+LEO's BX1 OS Camera page receives only cached JPEG frames from new GET-only
+Robot Body endpoints. Those endpoints reuse the existing shared frame buffer
+and never create another capture instance. The BX1 OS proxy accepts only fixed
+loopback port-8088 endpoints, bounds frame rate and memory, cleans up browser
+disconnects, and exposes Camera state through Core. Raw camera nodes remain
+metadata-only; qcom-venus devices are retained only in Advanced inventory.
 
 ## v0.4.0 hardware and audio milestone
 

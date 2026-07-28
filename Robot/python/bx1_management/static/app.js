@@ -3,6 +3,7 @@ const NAVIGATION = [
   { section: "Manage", id: "system", label: "System", icon: "system" },
   { section: "Manage", id: "services", label: "Services", icon: "services" },
   { section: "Manage", id: "hardware", label: "Hardware", icon: "hardware" },
+  { section: "Manage", id: "camera", label: "Camera", icon: "hardware" },
   { section: "Manage", id: "audio", label: "Audio", icon: "logs" },
   { section: "Manage", id: "brain", label: "Brain", icon: "brain" },
   { section: "Manage", id: "configuration", label: "Configuration", icon: "config" },
@@ -18,6 +19,7 @@ const PAGE_META = {
   system: ["Host platform", "System information", "Operating system, runtime and hardware identity for this BX1 host."],
   services: ["Service orchestration", "Managed services", "A unified home for BX1 OS service state, controls and logs."],
   hardware: ["Device inventory", "Hardware", "Read-only discovery, ownership and health for detected robot devices."],
+  camera: ["Safe live preview", "Camera", "Near-live frames proxied from the Existing Robot Body without reopening the physical camera."],
   audio: ["Audio telemetry", "Audio", "Read-only microphone, speaker, level, STT and TTS observations."],
   brain: ["Intelligence layer", "Brain", "Connection, models, voice and memory will be managed from this workspace."],
   configuration: ["Platform settings", "Configuration", "A searchable, categorised configuration workspace with safe revision controls."],
@@ -32,13 +34,13 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.4.0",
-    tag: "BX1_OS_ALPHA_v0.4.0",
+    version: "0.5.0",
+    tag: "BX1_OS_ALPHA_v0.5.0",
     architecture_only: true,
     capabilities: {},
   },
   robot: {
-    name: "BX1",
+    name: "LEO",
     status: "Qualification",
     mode: "Observer only",
     hostname: "bx1",
@@ -63,7 +65,23 @@ const fallbackData = {
     uptime_seconds: 0,
   },
   services: [],
-  hardware: { inventory: [], diagnostics: { checks: [] } },
+  hardware: { inventory: [], camera_groups: [], raw_cameras: [], diagnostics: { checks: [] } },
+  camera: {
+    connected: false,
+    owner: "bx1-web.service",
+    source: "Existing Robot Body",
+    streaming: false,
+    preview_available: false,
+    resolution: "Unknown",
+    fps: null,
+    frame_age_ms: null,
+    last_frame_timestamp: null,
+    frame_sequence: null,
+    health: "Unavailable",
+    error: "",
+    stale: true,
+    proxy: {},
+  },
   audio: {
     microphones: [],
     speakers: [],
@@ -74,10 +92,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.4.0",
+    current_version: "0.5.0",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_ALPHA_v0.4.0",
+    tag: "BX1_OS_ALPHA_v0.5.0",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -91,6 +109,13 @@ const state = {
   data: fallbackData,
   connected: false,
   telemetryLoading: false,
+  cameraPreview: {
+    token: 0,
+    timer: null,
+    objectUrl: "",
+    mode: "idle",
+    controller: null,
+  },
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -331,6 +356,12 @@ function deviceCard(device) {
     .slice(0, 4)
     .map(([key, value]) => `<div><span>${esc(key.replaceAll("_", " "))}</span><strong>${display(value)}</strong></div>`)
     .join("");
+  const cameraFacts = device.category === "camera" ? `
+      <div><span>Preview</span><strong>${details.preview_available ? "Available" : "Unavailable"}</strong></div>
+      <div><span>Stream</span><strong>${details.streaming ? "Streaming" : "Idle"}</strong></div>
+      <div><span>Resolution</span><strong>${display(details.resolution, "Unknown")}</strong></div>
+      <div><span>Frame age</span><strong>${details.frame_age_ms == null ? "Unavailable" : `${Math.round(details.frame_age_ms)} ms`}</strong></div>
+    ` : "";
   return `<article class="hardware-item device-card">
     <div class="device-card-top">
       <span class="metric-icon">${icon(device.category === "camera" ? "hardware" : "diagnostics")}</span>
@@ -343,13 +374,23 @@ function deviceCard(device) {
       <div><span>Source</span><strong>${display(device.source, "Unknown")}</strong></div>
       <div><span>Last update</span><strong>${esc(formatTimestamp(device.last_seen))}</strong></div>
       <div><span>Health</span><strong>${display(health.reason, health.state)}</strong></div>
+      ${cameraFacts}
       ${summary}
     </div>
+    ${device.category === "camera"
+      ? `<button class="button small camera-link" type="button" data-page-link="camera">${icon("external")}<span>Open Camera</span></button>`
+      : ""}
   </article>`;
 }
 
 function hardwarePage(data) {
-  const devices = data.hardware.inventory || [];
+  const rawDevices = data.hardware.inventory || [];
+  const cameraGroups = data.hardware.camera_groups || [];
+  const devices = [
+    ...cameraGroups,
+    ...rawDevices.filter(device => device.category !== "camera"),
+  ];
+  const rawCameras = data.hardware.raw_cameras || [];
   const body = data.robot_body || {};
   const content = devices.length
     ? `<div class="hardware-grid">${devices.map(deviceCard).join("")}</div>`
@@ -369,7 +410,81 @@ function hardwarePage(data) {
       ["Owned by Robot Body", devices.filter(item => item.ownership === "bx1-web.service").length],
       ["Permission denied", devices.filter(item => item.health?.state === "permission_denied").length],
     ]), { span: 8, subtitle: "Read-only, non-exclusive, best-effort discovery" })}
-    ${panel("Device inventory", content, { span: 12, subtitle: "No probes, streams, serial writes, mixer writes or control operations" })}
+    ${panel("Device inventory", content, { span: 12, subtitle: "Physical cameras are grouped; no probes, device opens or control operations" })}
+    ${panel("Advanced camera inventory", rawCameras.length
+      ? dataList(rawCameras.map(item => [
+          item.details?.device_node || item.device_id,
+          `${item.name} · ${item.details?.internal_video_device ? "internal encoder/decoder" : "physical camera node"}`,
+          true,
+        ]))
+      : emptyPanel("hardware", "No raw video nodes", "Underlying V4L2 metadata remains available through the Core inventory API."), {
+        span: 12,
+        subtitle: "Includes underlying nodes and internal qcom-venus devices; hidden from the robot-level camera view",
+      })}
+  </div>`;
+}
+
+function cameraValue(camera, key, fallback = null) {
+  return observed(camera?.[key], fallback);
+}
+
+function cameraPage(data) {
+  const camera = data.camera || {};
+  const available = Boolean(cameraValue(camera, "preview_available", false));
+  const stale = Boolean(cameraValue(camera, "stale", true));
+  const status = available ? (cameraValue(camera, "streaming", false) ? "Streaming" : "Idle") : "Offline";
+  return `<div class="grid">
+    ${panel("Live Preview", `
+      <div class="camera-preview" id="cameraPreview" data-state="loading">
+        <img id="cameraPreviewImage" alt="LEO camera preview from Existing Robot Body">
+        <div class="camera-preview-state" id="cameraPreviewState">
+          <span class="camera-spinner"></span>
+          <strong>Connecting to Robot Body frame source</strong>
+          <small>BX1 OS will not open a camera device.</small>
+        </div>
+        <div class="camera-stale-warning ${stale ? "" : "hidden"}" id="cameraStaleWarning">Frame is stale</div>
+      </div>
+      <div class="camera-preview-footer">
+        ${badge("Owned by Robot Body", "info", false)}
+        <span id="cameraConnectionLabel">${available ? "Frame source available" : "Frame source unavailable"}</span>
+        <span>Read-only proxy</span>
+      </div>`, {
+        span: 8,
+        subtitle: "Maximum 640×480 · default 8 FPS · no-store",
+      })}
+    ${panel("Camera Status", dataList([
+      ["Camera", "Logitech UVC 046d:0825"],
+      ["Owner", cameraValue(camera, "owner", "bx1-web.service")],
+      ["Source", cameraValue(camera, "source", "Existing Robot Body")],
+      ["State", status],
+      ["Resolution", cameraValue(camera, "resolution", "Unknown")],
+      ["Connection", cameraValue(camera, "connected", false) ? "Connected" : "Unavailable"],
+      ["BX1 OS access", "Read-only proxy"],
+    ]), { span: 4, aside: badge("Owned by Robot Body", "info", false) })}
+    ${panel("Stream Telemetry", dataList([
+      ["Estimated FPS", cameraValue(camera, "fps", "Unavailable")],
+      ["Last frame age", cameraValue(camera, "frame_age_ms") == null ? "Unavailable" : `${Math.round(cameraValue(camera, "frame_age_ms"))} ms`],
+      ["Last frame", formatTimestamp(cameraValue(camera, "last_frame_timestamp"))],
+      ["Frame sequence", cameraValue(camera, "frame_sequence", "Unavailable")],
+      ["Health", cameraValue(camera, "health", "Unavailable")],
+      ["Stale", stale ? "Yes" : "No"],
+      ["Error", cameraValue(camera, "error", "None") || "None"],
+    ]), { span: 6 })}
+    ${panel("Device Details", dataList([
+      ["Physical device", "Logitech UVC Camera"],
+      ["USB identity", "046d:0825", true],
+      ["Physical owner", "bx1-web.service", true],
+      ["Browser source", "/api/core/camera/stream", true],
+      ["Fallback source", "/api/core/camera/snapshot", true],
+      ["Queue policy", "Newest frame only"],
+    ]), { span: 6 })}
+    ${panel("Ownership and Safety", `
+      <div class="architecture-note">${icon("diagnostics")}<div>
+        <strong>Robot Body remains the sole capture owner</strong>
+        BX1 OS proxies cached frames over loopback port 8088. It never opens /dev/video0, /dev/video1 or another V4L2 node.
+      </div></div>
+      <div class="page-actions camera-future">${button("Future controlled operation", { disabled: true })}</div>
+    `, { span: 12 })}
   </div>`;
 }
 
@@ -494,7 +609,8 @@ function deploymentPage(data) {
   ];
   const timeline = `
     <div class="timeline">
-      <div class="timeline-item"><strong>BX1 OS Alpha v0.4.0</strong><span>Read-only hardware and audio integration · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.5.0</strong><span>Safe camera preview integration · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.4.0</strong><span>Read-only hardware and audio integration</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.3.0</strong><span>Core telemetry and plugin architecture</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.2.0</strong><span>Management Interface framework</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.1.2</strong><span>Process-isolation qualification correction</span></div>
@@ -559,6 +675,7 @@ const RENDERERS = {
   system: systemPage,
   services: servicesPage,
   hardware: hardwarePage,
+  camera: cameraPage,
   audio: audioPage,
   brain: brainPage,
   configuration: configurationPage,
@@ -597,11 +714,13 @@ function renderPage() {
   $$("[data-bind='version']").forEach(node => { node.textContent = `v${state.data.interface.version}`; });
   renderNavigation();
   bindPrototypeActions();
+  if (state.page === "camera") startCameraPreview();
   $("#workspace").focus({ preventScroll: true });
 }
 
 function navigate(page, push = true) {
   if (!RENDERERS[page]) page = "dashboard";
+  if (state.page === "camera" && page !== "camera") stopCameraPreview();
   state.page = page;
   if (push) history.pushState({ page }, "", page === "dashboard" ? "/" : `/${page}`);
   renderPage();
@@ -618,6 +737,12 @@ function toast(title, detail = "This control is intentionally not implemented in
 }
 
 function bindPrototypeActions() {
+  $$("[data-page-link]").forEach(node => {
+    node.addEventListener("click", event => {
+      event.preventDefault();
+      navigate(node.dataset.pageLink);
+    });
+  });
   $$("[data-core-refresh]").forEach(node => {
     node.addEventListener("click", event => {
       event.preventDefault();
@@ -632,10 +757,117 @@ function bindPrototypeActions() {
   });
 }
 
+function setCameraPreviewState(mode, detail = "") {
+  const viewport = $("#cameraPreview");
+  const message = $("#cameraPreviewState");
+  if (!viewport || !message) return;
+  viewport.dataset.state = mode;
+  const copy = {
+    loading: ["Connecting to Robot Body frame source", "BX1 OS will not open a camera device."],
+    streaming: ["Near-live preview", "Frames are proxied from Existing Robot Body."],
+    offline: ["Camera preview unavailable", detail || "Robot Body has not supplied a cached frame."],
+    paused: ["Preview paused", "The page is hidden; the upstream connection has been released."],
+  }[mode] || ["Preview unavailable", detail];
+  message.innerHTML = `${mode === "loading" ? '<span class="camera-spinner"></span>' : ""}<strong>${esc(copy[0])}</strong><small>${esc(copy[1])}</small>`;
+}
+
+function releaseCameraObjectUrl() {
+  if (state.cameraPreview.objectUrl) {
+    URL.revokeObjectURL(state.cameraPreview.objectUrl);
+    state.cameraPreview.objectUrl = "";
+  }
+}
+
+function stopCameraPreview(paused = false) {
+  state.cameraPreview.token += 1;
+  if (state.cameraPreview.timer) clearTimeout(state.cameraPreview.timer);
+  state.cameraPreview.timer = null;
+  if (state.cameraPreview.controller) state.cameraPreview.controller.abort();
+  state.cameraPreview.controller = null;
+  releaseCameraObjectUrl();
+  const image = $("#cameraPreviewImage");
+  if (image) {
+    image.onload = null;
+    image.onerror = null;
+    image.removeAttribute("src");
+  }
+  state.cameraPreview.mode = paused ? "paused" : "idle";
+  if (paused) setCameraPreviewState("paused");
+}
+
+async function runSnapshotFallback(token) {
+  if (token !== state.cameraPreview.token || state.page !== "camera" || document.hidden) return;
+  state.cameraPreview.mode = "snapshot";
+  const controller = new AbortController();
+  state.cameraPreview.controller = controller;
+  const requestTimeout = setTimeout(() => controller.abort(), 2200);
+  try {
+    const response = await fetch(`/api/core/camera/snapshot?t=${Date.now()}`, {
+      cache: "no-store",
+      signal: controller.signal,
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const blob = await response.blob();
+    if (!blob.type.startsWith("image/jpeg")) throw new Error("Invalid frame");
+    if (token !== state.cameraPreview.token) return;
+    releaseCameraObjectUrl();
+    state.cameraPreview.objectUrl = URL.createObjectURL(blob);
+    const image = $("#cameraPreviewImage");
+    if (!image) return;
+    image.src = state.cameraPreview.objectUrl;
+    setCameraPreviewState("streaming");
+  } catch (error) {
+    if (token === state.cameraPreview.token) setCameraPreviewState("offline", error.message);
+  } finally {
+    clearTimeout(requestTimeout);
+    if (state.cameraPreview.controller === controller) {
+      state.cameraPreview.controller = null;
+    }
+    if (token === state.cameraPreview.token && state.page === "camera" && !document.hidden) {
+      state.cameraPreview.timer = setTimeout(() => runSnapshotFallback(token), 400);
+    }
+  }
+}
+
+function startCameraPreview() {
+  stopCameraPreview(document.hidden);
+  if (document.hidden || state.page !== "camera") return;
+  const image = $("#cameraPreviewImage");
+  if (!image) return;
+  const token = state.cameraPreview.token;
+  state.cameraPreview.mode = "mjpeg";
+  setCameraPreviewState("loading");
+  image.onload = () => {
+    if (token === state.cameraPreview.token) setCameraPreviewState("streaming");
+  };
+  image.onerror = () => {
+    if (token !== state.cameraPreview.token) return;
+    image.onload = null;
+    image.onerror = null;
+    image.removeAttribute("src");
+    runSnapshotFallback(token);
+  };
+  image.src = `/api/core/camera/stream?fps=8&t=${Date.now()}`;
+}
+
+function updateCameraPageTelemetry() {
+  if (state.page !== "camera") return;
+  const camera = state.data.camera || {};
+  const stale = Boolean(cameraValue(camera, "stale", true));
+  const warning = $("#cameraStaleWarning");
+  if (warning) warning.classList.toggle("hidden", !stale);
+  const label = $("#cameraConnectionLabel");
+  if (label) {
+    label.textContent = cameraValue(camera, "preview_available", false)
+      ? "Frame source available"
+      : "Frame source unavailable";
+  }
+}
+
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -647,13 +879,13 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     interface: {
       id: management.id || "bx1-os-management",
       name: management.name || "BX1 OS Management",
-      version: deployment.version || "0.4.0",
-      tag: deployment.tag || "BX1_OS_ALPHA_v0.4.0",
+      version: deployment.version || "0.5.0",
+      tag: deployment.tag || "BX1_OS_ALPHA_v0.5.0",
       architecture_only: true,
       capabilities: management.capabilities || {},
     },
     robot: {
-      name: robot.name || "BX1",
+      name: robot.name || "LEO",
       status: healthPayload.state || robot.state || "unknown",
       mode: robot.mode || "observer_only",
       hostname: system.hostname,
@@ -683,7 +915,15 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     services: servicesPayload.services || [],
     hardware: {
       inventory: observed(hardwarePayload.hardware?.inventory, []),
+      camera_groups: observed(cameraPayload.devices, []),
+      raw_cameras: observed(hardwarePayload.hardware?.inventory, []).filter(
+        device => device.category === "camera"
+      ),
       diagnostics: observed(hardwarePayload.hardware?.diagnostics, { checks: [] }),
+    },
+    camera: {
+      ...(cameraPayload.camera || {}),
+      proxy: cameraPayload.proxy || {},
     },
     audio: {
       microphones: observed(audioPayload.devices?.microphones, []),
@@ -726,18 +966,20 @@ async function loadCoreTelemetry() {
       "/api/core/hardware",
       "/api/core/audio",
       "/api/core/robot-body",
+      "/api/core/camera",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera);
     state.connected = true;
-    renderPage();
+    if (state.page === "camera") updateCameraPageTelemetry();
+    else renderPage();
   } catch (error) {
     state.connected = false;
     toast("Using interface preview", "BX1 OS Core telemetry is not available.");
@@ -760,9 +1002,16 @@ function init() {
   $("#mobileMenu").addEventListener("click", openMobileNav);
   $("#sidebarScrim").addEventListener("click", closeMobileNav);
   window.addEventListener("popstate", () => {
+    if (state.page === "camera") stopCameraPreview();
     state.page = routeFromLocation();
     renderPage();
   });
+  document.addEventListener("visibilitychange", () => {
+    if (state.page !== "camera") return;
+    if (document.hidden) stopCameraPreview(true);
+    else startCameraPreview();
+  });
+  window.addEventListener("beforeunload", () => stopCameraPreview());
   document.addEventListener("keydown", event => {
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "k") {
       event.preventDefault();

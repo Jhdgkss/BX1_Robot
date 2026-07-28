@@ -1,8 +1,9 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS Alpha v0.4.0 read-only hardware qualification",
-  "bx1_os_release_version": "0.4.0",
-  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.4.0",
+  "app_version": "BX1 OS Alpha v0.5.0 safe camera preview qualification",
+  "bx1_os_release_version": "0.5.0",
+  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.5.0",
+  "robot_name": "LEO",
   "management_interface": {
     "enabled": true,
     "architecture_only": true,
@@ -20,6 +21,18 @@
     "timeout_seconds": 0.5,
     "exclusive_access": false,
     "device_control": false
+  },
+  "camera_proxy": {
+    "enabled": true,
+    "observer_only": true,
+    "source": "Existing Robot Body",
+    "timeout_seconds": 1.0,
+    "default_fps": 8,
+    "maximum_fps": 15,
+    "maximum_frame_bytes": 2097152,
+    "snapshot_refresh_ms": 400,
+    "device_access": false,
+    "settings_control": false
   },
   "qualification_mode": true,
   "observer_only": true,

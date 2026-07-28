@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.4.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.4.0"
+RELEASE_VERSION = "0.5.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.5.0"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -31,9 +31,7 @@ PRESERVED_PATHS = [
     "backups/",
 ]
 
-ROOT_STARTUP_FILES = [
-    "main.py",
-]
+ROOT_STARTUP_FILES: List[str] = []
 
 TOOL_FILES = [
     "build_bx1_release.py",
@@ -42,7 +40,6 @@ TOOL_FILES = [
     "rollback_bx1_os.sh",
     "rollback_bx1_os.py",
     "qualify_bx1_alpha.py",
-    "run_robot_body.sh",
     "run_bx1_os_management.sh",
     "check_web_health.sh",
     "test_runtime_integration.py",
@@ -55,6 +52,7 @@ TOOL_FILES = [
     "test_management_interface.py",
     "test_bx1_core_telemetry.py",
     "test_hardware_audio_integration.py",
+    "test_camera_preview_integration.py",
 ]
 
 DOCUMENTATION_FILES = [
@@ -77,6 +75,9 @@ DOCUMENTATION_FILES = [
     "BX1_OS_AUDIO_INTEGRATION.md",
     "BX1_OS_ALPHA_V0_4_0_RELEASE_NOTES.md",
     "BX1_OS_ALPHA_V0_4_0_VALIDATION_REPORT.md",
+    "BX1_OS_CAMERA_INTEGRATION.md",
+    "BX1_OS_ALPHA_V0_5_0_RELEASE_NOTES.md",
+    "BX1_OS_ALPHA_V0_5_0_VALIDATION_REPORT.md",
 ]
 
 

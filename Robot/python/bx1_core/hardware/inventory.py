@@ -82,6 +82,11 @@ class ReadOnlyHardwareInventory:
         cameras = self._safe(
             "camera", lambda: self.camera.discover(body), []
         )
+        camera_groups = self._safe(
+            "camera_groups",
+            lambda: self.camera.summarise(cameras, body),
+            [],
+        )
         serial = self._safe(
             "serial", lambda: self.serial.discover(body), []
         )
@@ -153,6 +158,7 @@ class ReadOnlyHardwareInventory:
                 "telemetry": audio_telemetry,
             },
             "camera": [item.as_dict() for item in cameras],
+            "camera_groups": camera_groups,
             "serial": [item.as_dict() for item in serial],
             "mcu": mcu.as_dict() if mcu else {},
             "imu": imu.as_dict() if imu else {},

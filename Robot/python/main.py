@@ -55,7 +55,7 @@ from bx1_core import (
     CompatibilityServiceAdapter,
 )
 from bx1_robot_client import BX1BrainClient, BrainClientConfig, now_iso
-from camera_io import CameraCapture, CameraConfig
+from camera_io import CameraCapture, CameraConfig, jpeg_dimensions
 from hardware_bridge import BX1HardwareBridge, ObserverOnlyHardwareBridge
 from hardware_doctor import BX1HardwareDoctor
 from location_io import LocationProvider
@@ -1075,6 +1075,9 @@ class BX1RobotBodyService:
         self.latest_camera_frame_at = ""
         self.latest_camera_frame_mono = 0.0
         self.latest_camera_frame_source = ""
+        self.camera_frame_sequence = 0
+        self.camera_frame_times = deque(maxlen=32)
+        self.camera_preview_streams = 0
         self.visual_awareness_lock = threading.Lock()
         self.visual_last_face_seen_mono = 0.0
         self.visual_previous_present: Optional[bool] = None
@@ -3620,11 +3623,104 @@ class BX1RobotBodyService:
     def cache_camera_frame(self, jpeg: bytes, source: str = "camera") -> None:
         if not jpeg:
             return
+        captured_mono = time.monotonic()
         with self.camera_frame_lock:
             self.latest_camera_jpeg = bytes(jpeg)
             self.latest_camera_frame_at = now_iso()
-            self.latest_camera_frame_mono = time.monotonic()
+            self.latest_camera_frame_mono = captured_mono
             self.latest_camera_frame_source = str(source or "camera")
+            self.camera_frame_sequence += 1
+            self.camera_frame_times.append(captured_mono)
+
+    def get_cached_camera_frame(self) -> Dict[str, Any]:
+        """Copy the latest Robot Body-owned frame without touching the camera."""
+        with self.camera_frame_lock:
+            jpeg = bytes(self.latest_camera_jpeg)
+            captured_at = str(self.latest_camera_frame_at or "")
+            captured_mono = float(self.latest_camera_frame_mono or 0.0)
+            source = str(self.latest_camera_frame_source or "camera")
+            sequence = int(self.camera_frame_sequence)
+        if not jpeg:
+            raise RuntimeError("No cached Robot Body camera frame is available")
+        age_ms = max(
+            0.0,
+            (time.monotonic() - captured_mono) * 1000.0,
+        )
+        width, height = jpeg_dimensions(jpeg)
+        return {
+            "jpeg": jpeg,
+            "timestamp": captured_at,
+            "source": source,
+            "sequence": sequence,
+            "age_ms": round(age_ms, 1),
+            "width": width,
+            "height": height,
+        }
+
+    def camera_preview_stream_opened(self) -> None:
+        with self.camera_frame_lock:
+            self.camera_preview_streams += 1
+
+    def camera_preview_stream_closed(self) -> None:
+        with self.camera_frame_lock:
+            self.camera_preview_streams = max(
+                0, self.camera_preview_streams - 1
+            )
+
+    def get_camera_preview_status(self) -> Dict[str, Any]:
+        with self.camera_frame_lock:
+            jpeg = bytes(self.latest_camera_jpeg)
+            captured_at = str(self.latest_camera_frame_at or "")
+            captured_mono = float(self.latest_camera_frame_mono or 0.0)
+            source = str(self.latest_camera_frame_source or "")
+            sequence = int(self.camera_frame_sequence)
+            times = list(self.camera_frame_times)
+            streams = int(self.camera_preview_streams)
+        age_ms = (
+            max(0.0, (time.monotonic() - captured_mono) * 1000.0)
+            if captured_mono
+            else None
+        )
+        estimated_fps = (
+            (len(times) - 1) / max(0.001, times[-1] - times[0])
+            if len(times) > 1
+            else 0.0
+        )
+        width, height = jpeg_dimensions(jpeg)
+        stale_after_ms = max(
+            1000.0,
+            float(self.cfg.get("camera_preview_stale_after_s", 5.0))
+            * 1000.0,
+        )
+        stale = age_ms is None or age_ms > stale_after_ms
+        return {
+            "connected": bool(jpeg),
+            "owner": "bx1-web.service",
+            "source": "Existing Robot Body",
+            "streaming": streams > 0,
+            "preview_available": bool(jpeg),
+            "resolution": (
+                "%sx%s" % (width, height) if width and height else "unknown"
+            ),
+            "width": width,
+            "height": height,
+            "fps": round(min(15.0, max(0.0, estimated_fps)), 2),
+            "frame_age_ms": round(age_ms, 1) if age_ms is not None else None,
+            "last_frame_timestamp": captured_at,
+            "frame_sequence": sequence,
+            "frame_source": source,
+            "active_preview_streams": streams,
+            "health": (
+                "healthy" if jpeg and not stale else "warning" if jpeg else "unavailable"
+            ),
+            "error": "" if jpeg else "no_cached_frame",
+            "stale": stale,
+            "quality": "live" if jpeg and not stale else "stale" if jpeg else "unavailable",
+            "capture_requested": False,
+            "camera_opened": False,
+            "max_preview_fps": 15,
+            "default_preview_fps": 8,
+        }
 
     def get_camera_snapshot_jpeg(self, max_age_s: Optional[float] = None) -> bytes:
         """Return the cached camera frame, or capture a new frame when requested.
@@ -5238,6 +5334,7 @@ class BX1RobotBodyService:
             "mouth_audio": dict(self.mouth_audio_runtime),
             "chat_bridge": self.get_chat_bridge_settings(),
             "vision_awareness": self.get_visual_awareness_settings(),
+            "camera_preview": self.get_camera_preview_status(),
             "performance": self.get_performance_snapshot(),
             "last_reply": {
                 "available": bool(self.last_reply_text),

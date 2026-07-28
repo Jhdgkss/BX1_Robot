@@ -120,6 +120,7 @@ class RobotBodyClient:
         mic = self._mapping(status.get("mic"))
         voice_runtime = self._mapping(status.get("voice_runtime"))
         vision = self._mapping(status.get("vision_awareness"))
+        camera_preview = self._mapping(status.get("camera_preview"))
         hardware = self._mapping(status.get("hardware"))
         mic_level = self._mapping(status.get("mic_level")).get("level", {})
         faults = self._faults(state, doctor, status.get("events"))
@@ -198,7 +199,37 @@ class RobotBodyClient:
                 "state": self._first(
                     state, (("camera",), ("camera_state",))
                 )
-                or "unknown",
+                or (
+                    "online"
+                    if camera_preview.get("preview_available")
+                    else "unknown"
+                ),
+                "preview": self._select(
+                    camera_preview,
+                    (
+                        "connected",
+                        "owner",
+                        "source",
+                        "streaming",
+                        "preview_available",
+                        "resolution",
+                        "width",
+                        "height",
+                        "fps",
+                        "frame_age_ms",
+                        "last_frame_timestamp",
+                        "frame_sequence",
+                        "frame_source",
+                        "health",
+                        "error",
+                        "stale",
+                        "quality",
+                        "capture_requested",
+                        "camera_opened",
+                        "max_preview_fps",
+                        "default_preview_fps",
+                    ),
+                ),
             },
             "mouth_led": self._component(state, doctor, "mouth"),
             "hardware": self._select(

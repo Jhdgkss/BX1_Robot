@@ -41,6 +41,8 @@ class HardwarePlugin(CorePlugin):
         )
         quality = str(result.get("quality", "unavailable"))
         body = self._mapping(result.get("robot_body"))
+        body_camera = self._mapping(body.get("camera"))
+        camera_preview = self._mapping(body_camera.get("preview"))
         audio = self._mapping(result.get("audio"))
         audio_telemetry = self._mapping(audio.get("telemetry"))
         state_values = {
@@ -76,6 +78,12 @@ class HardwarePlugin(CorePlugin):
             ),
             "hardware.camera": observation(
                 result.get("camera", []),
+                timestamp=timestamp,
+                source=source,
+                quality=quality,
+            ),
+            "hardware.camera_groups": observation(
+                result.get("camera_groups", []),
                 timestamp=timestamp,
                 source=source,
                 quality=quality,
@@ -241,6 +249,116 @@ class HardwarePlugin(CorePlugin):
                 source="Existing Robot Body",
                 quality="proxied" if body.get("connected") else "unavailable",
                 stale=not bool(body.get("connected")),
+            ),
+            "camera.connected": observation(
+                bool(
+                    body.get("connected")
+                    and camera_preview.get("connected")
+                ),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+                error=str(camera_preview.get("error", "")),
+            ),
+            "camera.owner": observation(
+                camera_preview.get("owner", "bx1-web.service"),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality="observed",
+                stale=not bool(body.get("connected")),
+            ),
+            "camera.source": observation(
+                camera_preview.get(
+                    "source", "Existing Robot Body"
+                ),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality="observed",
+                stale=not bool(body.get("connected")),
+            ),
+            "camera.streaming": observation(
+                bool(camera_preview.get("streaming")),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.preview_available": observation(
+                bool(camera_preview.get("preview_available")),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.resolution": observation(
+                camera_preview.get("resolution", "unknown"),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.fps": observation(
+                camera_preview.get("fps", 0.0),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.frame_age_ms": observation(
+                camera_preview.get("frame_age_ms"),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.last_frame_timestamp": observation(
+                camera_preview.get("last_frame_timestamp", ""),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.frame_sequence": observation(
+                camera_preview.get("frame_sequence", 0),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+            ),
+            "camera.health": observation(
+                camera_preview.get("health", "unavailable"),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality=str(
+                    camera_preview.get("quality", "unavailable")
+                ),
+                stale=bool(camera_preview.get("stale", True)),
+                error=str(camera_preview.get("error", "")),
+            ),
+            "camera.error": observation(
+                camera_preview.get("error", ""),
+                timestamp=timestamp,
+                source="Existing Robot Body",
+                quality="observed",
+                stale=not bool(body.get("connected")),
+                error=str(camera_preview.get("error", "")),
             ),
         }
         context.state.set_many(

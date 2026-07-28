@@ -1,4 +1,4 @@
-# BX1 OS Alpha v0.4.0 Side-by-Side Deployment Guide
+# BX1 OS Alpha v0.5.0 Side-by-Side Deployment Guide
 
 ## Scope and invariant
 
@@ -66,15 +66,22 @@ Qualification mode:
 - replaces the legacy hardware bridge with a non-owning bridge;
 - blocks servo, wheel, LED, GPIO and other actuator commands;
 - disables hardware startup application and servo homing;
-- disables camera, microphone, speech, autonomous expression and idle life;
+- disables direct camera capture, microphone, speech, autonomous expression and
+  idle life;
 - disables kiosk startup;
 - uses the new installation's `runtime/`, `logs/`, `cache/` and `runtime/tmp/`;
 - uses `/run/bx1-os-alpha/service.pid`; and
 - reports observer isolation through `/api/status`.
 
-The systemd unit also uses a private device namespace. Enabling camera or
-microphone later therefore requires a separately reviewed configuration and
-unit change; it is not part of Alpha qualification.
+The systemd unit also uses a private device namespace. v0.5.0 camera preview is
+not direct camera access: it proxies cached frames from fixed Robot Body GET
+endpoints on loopback port 8088. The Alpha service still cannot see or open
+V4L2 nodes. Enabling direct camera or microphone access requires a separately
+reviewed configuration and unit change; it is not part of Alpha qualification.
+The Alpha installer does not add those GET endpoints to the protected live
+installation. If the current Robot Body release does not provide them, schedule
+a separate reviewed Body update; the BX1 OS preview will remain safely Offline
+until that prerequisite is met.
 
 ## Build
 
@@ -96,12 +103,12 @@ Official staging packages should be built from a reviewed, clean commit.
 
 ## Transfer and verify
 
-v0.4.0 uses the release basename
-`bx1-os-alpha-20260728_v0_4_0`. From the repository root:
+v0.5.0 uses the release basename
+`bx1-os-alpha-20260728_v0_5_0`. From the repository root:
 
 ```bash
-scp Deployment/bx1-os-alpha-20260728_v0_4_0.tar.gz \
-  Deployment/bx1-os-alpha-20260728_v0_4_0.tar.gz.sha256 \
+scp Deployment/bx1-os-alpha-20260728_v0_5_0.tar.gz \
+  Deployment/bx1-os-alpha-20260728_v0_5_0.tar.gz.sha256 \
   arduino@100.72.130.12:/home/arduino/
 ```
 
@@ -109,11 +116,11 @@ On the robot:
 
 ```bash
 cd /home/arduino
-sha256sum -c bx1-os-alpha-20260728_v0_4_0.tar.gz.sha256
-BX1_STAGE="$(mktemp -d /home/arduino/bx1-os-alpha-v0.4.0-staging.XXXXXX)"
-tar -xzf bx1-os-alpha-20260728_v0_4_0.tar.gz \
+sha256sum -c bx1-os-alpha-20260728_v0_5_0.tar.gz.sha256
+BX1_STAGE="$(mktemp -d /home/arduino/bx1-os-alpha-v0.5.0-staging.XXXXXX)"
+tar -xzf bx1-os-alpha-20260728_v0_5_0.tar.gz \
   -C "$BX1_STAGE"
-cd "$BX1_STAGE/bx1-os-alpha-20260728_v0_4_0"
+cd "$BX1_STAGE/bx1-os-alpha-20260728_v0_5_0"
 ```
 
 ## Read-only dry run

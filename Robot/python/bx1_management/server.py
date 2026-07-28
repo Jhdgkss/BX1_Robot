@@ -18,10 +18,15 @@ if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from bx1_core import BX1Core, BootstrapResult, bootstrap_runtime
+from bx1_core.hardware import (
+    CameraFrame,
+    CameraProxyError,
+    RobotBodyCameraClient,
+)
 
 
-RELEASE_VERSION = "0.4.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.4.0"
+RELEASE_VERSION = "0.5.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.5.0"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -32,6 +37,7 @@ SPA_ROUTES = {
     "/about",
     "/audio",
     "/brain",
+    "/camera",
     "/configuration",
     "/dashboard",
     "/deployment",
@@ -77,6 +83,7 @@ class ManagementApplication:
         *,
         bootstrap: Optional[BootstrapResult] = None,
         core: Optional[BX1Core] = None,
+        camera_client: Optional[RobotBodyCameraClient] = None,
         started_at: Optional[float] = None,
     ) -> None:
         self.config = dict(config)
@@ -89,6 +96,15 @@ class ManagementApplication:
         self.started_at = time.time() if started_at is None else float(started_at)
         self.bootstrap = bootstrap or bootstrap_runtime(self.config)
         self.capabilities = InterfaceCapabilities()
+        camera_config = dict(self.config.get("camera_proxy", {}))
+        self.camera_client = camera_client or RobotBodyCameraClient(
+            timeout=float(camera_config.get("timeout_seconds", 1.0)),
+            max_frame_bytes=int(
+                camera_config.get("maximum_frame_bytes", 2 * 1024 * 1024)
+            ),
+            default_fps=float(camera_config.get("default_fps", 8.0)),
+            max_fps=float(camera_config.get("maximum_fps", 15.0)),
+        )
         self.core = core or BX1Core(
             self.config,
             install_root=Path(
@@ -104,7 +120,7 @@ class ManagementApplication:
                 "management.capabilities": self.capabilities.as_dict(),
                 "management.port": int(self.config.get("web_port", 8089)),
                 "management.existing_ui_port": 8088,
-                "robot.name": str(self.config.get("robot_name", "BX1")),
+                "robot.name": str(self.config.get("robot_name", "LEO")),
             },
             source="management.registration",
         )
@@ -180,7 +196,7 @@ class ManagementApplication:
                 ),
             },
             "robot": {
-                "name": robot.get("name", "BX1"),
+                "name": robot.get("name", "LEO"),
                 "status": robot.get("state", "unknown"),
                 "mode": robot.get("mode", "observer_only"),
                 "hostname": system.get("hostname", "Unknown"),
@@ -255,6 +271,48 @@ class ManagementApplication:
 
     def core_robot_body_health(self) -> Dict[str, Any]:
         return self.core.robot_body_health_snapshot()
+
+    def core_camera(self) -> Dict[str, Any]:
+        payload = self.core.camera_snapshot()
+        proxy = self.camera_client.status()
+        cpu = self._cpu_percent()
+        proxy["performance_state"] = (
+            "degraded_cpu" if cpu is not None and cpu >= 85.0 else "normal"
+        )
+        proxy["effective_fps_limit"] = (
+            min(5.0, float(proxy.get("maximum_fps", 15.0)))
+            if cpu is not None and cpu >= 85.0
+            else float(proxy.get("maximum_fps", 15.0))
+        )
+        proxy["cpu_percent"] = cpu
+        payload["proxy"] = proxy
+        return payload
+
+    def camera_frame(self) -> CameraFrame:
+        return self.camera_client.snapshot()
+
+    def relay_camera_stream(
+        self,
+        *,
+        on_open: Any,
+        writer: Any,
+        fps: Optional[float],
+    ) -> Dict[str, Any]:
+        cpu = self._cpu_percent()
+        if cpu is not None and cpu >= 85.0:
+            fps = min(5.0, 5.0 if fps is None else float(fps))
+        return self.camera_client.relay_stream(
+            on_open=on_open,
+            writer=writer,
+            fps=fps,
+        )
+
+    def _cpu_percent(self) -> Optional[float]:
+        value = self.core.state.get("system.cpu")
+        try:
+            return None if value is None else float(value)
+        except (TypeError, ValueError):
+            return None
 
     def _service_projection(self) -> list[Dict[str, Any]]:
         bx1 = self.bootstrap.bx1
@@ -345,7 +403,7 @@ class ManagementServer:
         static_root = self.static_root
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "BX1OSManagement/0.4"
+            server_version = "BX1OSManagement/0.5"
 
             def log_message(self, fmt: str, *args: Any) -> None:
                 if os.environ.get("BX1_MANAGEMENT_HTTP_LOG") == "1":
@@ -358,6 +416,7 @@ class ManagementServer:
                 content_type: str,
                 *,
                 cache: str = "no-store",
+                extra_headers: Optional[Mapping[str, str]] = None,
             ) -> None:
                 self.send_response(status)
                 self.send_header("Content-Type", content_type)
@@ -366,6 +425,8 @@ class ManagementServer:
                 self.send_header("X-Content-Type-Options", "nosniff")
                 self.send_header("X-Frame-Options", "SAMEORIGIN")
                 self.send_header("Referrer-Policy", "no-referrer")
+                for name, value in (extra_headers or {}).items():
+                    self.send_header(str(name), str(value))
                 self.end_headers()
                 self.wfile.write(body)
 
@@ -435,6 +496,88 @@ class ManagementServer:
                         application.core_robot_body_health(),
                     )
                     return
+                if path == "/api/core/camera":
+                    self._json(HTTPStatus.OK, application.core_camera())
+                    return
+                if path == "/api/core/camera/snapshot":
+                    try:
+                        frame = application.camera_frame()
+                    except CameraProxyError as exc:
+                        self._json(
+                            exc.status,
+                            {
+                                "ok": False,
+                                "error": exc.error,
+                                "source": "Existing Robot Body",
+                            },
+                        )
+                        return
+                    headers = {
+                        "X-BX1-Frame-Sequence": str(frame.sequence),
+                        "X-BX1-Frame-Timestamp": frame.timestamp,
+                        "X-BX1-Frame-Age-Ms": str(
+                            "" if frame.age_ms is None else frame.age_ms
+                        ),
+                        "X-BX1-Frame-Resolution": frame.resolution,
+                        "X-BX1-Camera-Owner": "bx1-web.service",
+                    }
+                    self._send(
+                        HTTPStatus.OK,
+                        frame.jpeg,
+                        "image/jpeg",
+                        extra_headers=headers,
+                    )
+                    return
+                if path == "/api/core/camera/stream":
+                    query = parse_qs(request.query)
+                    raw_fps = query.get("fps", [None])[0]
+                    try:
+                        fps = None if raw_fps is None else float(raw_fps)
+                    except ValueError:
+                        self._json(
+                            HTTPStatus.BAD_REQUEST,
+                            {"ok": False, "error": "invalid_fps"},
+                        )
+                        return
+                    opened = False
+
+                    def open_stream(content_type: str) -> None:
+                        nonlocal opened
+                        self.send_response(HTTPStatus.OK)
+                        self.send_header("Content-Type", content_type)
+                        self.send_header("Cache-Control", "no-store")
+                        self.send_header("Pragma", "no-cache")
+                        self.send_header("Connection", "close")
+                        self.send_header(
+                            "X-BX1-Camera-Owner", "bx1-web.service"
+                        )
+                        self.send_header(
+                            "X-BX1-Camera-Access", "read-only-proxy"
+                        )
+                        self.end_headers()
+                        opened = True
+
+                    def write_stream(chunk: bytes) -> None:
+                        self.wfile.write(chunk)
+                        self.wfile.flush()
+
+                    try:
+                        application.relay_camera_stream(
+                            on_open=open_stream,
+                            writer=write_stream,
+                            fps=fps,
+                        )
+                    except CameraProxyError as exc:
+                        if not opened:
+                            self._json(
+                                exc.status,
+                                {
+                                    "ok": False,
+                                    "error": exc.error,
+                                    "source": "Existing Robot Body",
+                                },
+                            )
+                    return
                 if path == "/api/management/bootstrap":
                     self._json(HTTPStatus.OK, application.bootstrap_payload())
                     return
@@ -472,7 +615,7 @@ class ManagementServer:
                     {
                         "ok": False,
                         "error": "architecture_only",
-                        "detail": "BX1 OS Alpha v0.4.0 is read-only",
+                        "detail": "BX1 OS Alpha v0.5.0 is read-only",
                     },
                 )
 

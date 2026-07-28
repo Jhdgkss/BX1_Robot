@@ -615,6 +615,82 @@ tbody tr:last-child td { border-bottom: 0; }
 .architecture-note svg { flex: 0 0 18px; color: var(--accent); }
 .architecture-note strong { display: block; color: var(--text); margin-bottom: 2px; }
 
+.camera-preview {
+  position: relative;
+  overflow: hidden;
+  width: 100%;
+  aspect-ratio: 4 / 3;
+  max-height: 640px;
+  display: grid;
+  place-items: center;
+  background:
+    radial-gradient(circle at 50% 45%, rgba(85, 219, 199, .08), transparent 42%),
+    #070d12;
+  border: 1px solid var(--border-strong);
+  border-radius: 12px;
+}
+.camera-preview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  opacity: 0;
+  transition: opacity 180ms ease;
+}
+.camera-preview[data-state="streaming"] img { opacity: 1; }
+.camera-preview-state {
+  z-index: 2;
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  padding: 20px;
+  color: var(--muted);
+  text-align: center;
+  pointer-events: none;
+}
+.camera-preview[data-state="streaming"] .camera-preview-state {
+  opacity: 0;
+}
+.camera-preview-state strong { color: var(--text-soft); font-size: 13px; }
+.camera-preview-state small { font-size: 11px; }
+.camera-spinner {
+  width: 24px;
+  height: 24px;
+  margin-bottom: 4px;
+  border: 2px solid rgba(85, 219, 199, .18);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: camera-spin 850ms linear infinite;
+}
+@keyframes camera-spin { to { transform: rotate(360deg); } }
+.camera-stale-warning {
+  position: absolute;
+  z-index: 3;
+  top: 12px;
+  right: 12px;
+  padding: 6px 9px;
+  color: var(--amber);
+  background: rgba(25, 18, 7, .9);
+  border: 1px solid rgba(237, 181, 82, .35);
+  border-radius: 7px;
+  font-size: 11px;
+  font-weight: 650;
+}
+.camera-stale-warning.hidden { display: none; }
+.camera-preview-footer {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 11px;
+}
+.camera-preview-footer > span:last-child { margin-left: auto; }
+.camera-future { margin-top: 14px; }
+.camera-link { margin-top: 14px; }
+
 .toast-region { position: fixed; z-index: 100; right: 20px; bottom: 20px; display: grid; gap: 8px; }
 .toast {
   width: min(360px, calc(100vw - 40px));

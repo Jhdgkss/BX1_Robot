@@ -206,4 +206,13 @@ class BX1Core:
             ),
         }
 
+    def camera_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.camera.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "camera": self.state.snapshot("camera"),
+            "devices": self.state.get("hardware.camera_groups", {}),
+        }
+
 __all__ = ["BX1Core"]

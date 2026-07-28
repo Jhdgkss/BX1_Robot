@@ -4,6 +4,7 @@ import json
 import html
 import re
 import threading
+import time
 import traceback
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +14,7 @@ from urllib.parse import parse_qs, urlparse
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
     allow_reuse_address = True
+    daemon_threads = True
 
 
 INDEX_HTML = r'''
@@ -342,6 +344,120 @@ class WebControlServer:
             def _json(self, status: int, data: Dict[str, Any]) -> None:
                 self._send(status, json.dumps(data, ensure_ascii=False).encode("utf-8"), "application/json; charset=utf-8")
 
+            def _camera_snapshot(self, frame: Dict[str, Any]) -> None:
+                body = bytes(frame.get("jpeg", b""))
+                self.send_response(200)
+                self.send_header("Content-Type", "image/jpeg")
+                self.send_header("Content-Length", str(len(body)))
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Pragma", "no-cache")
+                self.send_header(
+                    "X-BX1-Frame-Sequence",
+                    str(int(frame.get("sequence", 0))),
+                )
+                self.send_header(
+                    "X-BX1-Frame-Timestamp",
+                    str(frame.get("timestamp", "")),
+                )
+                self.send_header(
+                    "X-BX1-Frame-Age-Ms",
+                    str(frame.get("age_ms", "")),
+                )
+                self.send_header(
+                    "X-BX1-Frame-Resolution",
+                    "%sx%s"
+                    % (
+                        frame.get("width") or 0,
+                        frame.get("height") or 0,
+                    ),
+                )
+                self.end_headers()
+                self.wfile.write(body)
+
+            def _camera_stream(self, query: str) -> None:
+                try:
+                    first = service.get_cached_camera_frame()
+                except Exception as exc:
+                    self._json(
+                        503,
+                        {"ok": False, "error": str(exc)},
+                    )
+                    return
+                values = parse_qs(query or "")
+                try:
+                    requested_fps = float(
+                        (values.get("fps") or ["8"])[0]
+                    )
+                except (TypeError, ValueError):
+                    requested_fps = 8.0
+                fps = max(1.0, min(15.0, requested_fps))
+                interval = 1.0 / fps
+                self.send_response(200)
+                self.send_header(
+                    "Content-Type",
+                    "multipart/x-mixed-replace; boundary=frame",
+                )
+                self.send_header("Cache-Control", "no-store")
+                self.send_header("Pragma", "no-cache")
+                self.send_header("Connection", "close")
+                self.send_header("X-Accel-Buffering", "no")
+                self.send_header("X-BX1-Preview-FPS", str(round(fps, 2)))
+                self.end_headers()
+                opened = getattr(
+                    service, "camera_preview_stream_opened", None
+                )
+                closed = getattr(
+                    service, "camera_preview_stream_closed", None
+                )
+                if callable(opened):
+                    opened()
+                pending = first
+                try:
+                    while True:
+                        frame = pending
+                        pending = None
+                        if frame is None:
+                            try:
+                                frame = service.get_cached_camera_frame()
+                            except Exception:
+                                time.sleep(interval)
+                                continue
+                        sequence = int(frame.get("sequence", 0))
+                        jpeg = bytes(frame.get("jpeg", b""))
+                        if not jpeg:
+                            time.sleep(interval)
+                            continue
+                        timestamp = (
+                            str(frame.get("timestamp", ""))
+                            .replace("\r", "")
+                            .replace("\n", "")
+                        )
+                        part = (
+                            b"--frame\r\n"
+                            b"Content-Type: image/jpeg\r\n"
+                            + (
+                                "Content-Length: %s\r\n"
+                                "X-BX1-Frame-Sequence: %s\r\n"
+                                "X-BX1-Frame-Timestamp: %s\r\n\r\n"
+                                % (len(jpeg), sequence, timestamp)
+                            ).encode("ascii", errors="replace")
+                            + jpeg
+                            + b"\r\n"
+                        )
+                        self.wfile.write(part)
+                        self.wfile.flush()
+                        time.sleep(interval)
+                except (
+                    BrokenPipeError,
+                    ConnectionResetError,
+                    ConnectionAbortedError,
+                    OSError,
+                ):
+                    return
+                finally:
+                    if callable(closed):
+                        closed()
+
             def _read_json(self) -> Dict[str, Any]:
                 length = int(self.headers.get("Content-Length", "0") or "0")
                 raw = self.rfile.read(length) if length else b"{}"
@@ -368,6 +484,20 @@ class WebControlServer:
                         self._send(200, body, "image/jpeg")
                     except Exception as exc:
                         self._json(503, {"ok": False, "error": str(exc)})
+                    return
+                if path == "/api/camera/snapshot":
+                    try:
+                        self._camera_snapshot(
+                            service.get_cached_camera_frame()
+                        )
+                    except Exception as exc:
+                        self._json(
+                            503,
+                            {"ok": False, "error": str(exc)},
+                        )
+                    return
+                if path == "/api/camera/stream":
+                    self._camera_stream(parsed.query)
                     return
                 if path == "/api/mic_level":
                     self._json(200, service.web_mic_level())
