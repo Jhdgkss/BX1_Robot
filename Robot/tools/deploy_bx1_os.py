@@ -26,8 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.3.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.3.0"
+RELEASE_VERSION = "0.4.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.4.0"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -302,7 +302,7 @@ class SideBySideDeployer:
             self.release.get("release_version") != RELEASE_VERSION
             or self.release.get("release_tag") != RELEASE_TAG
         ):
-            raise DeploymentError("release manifest version/tag is not BX1 OS Alpha v0.3.0")
+            raise DeploymentError("release manifest version/tag is not BX1 OS Alpha v0.4.0")
         if self.release.get("target_service") != DEFAULT_SERVICE:
             raise DeploymentError("release manifest does not target bx1-os-alpha.service")
         if canonical(Path(self.release.get("default_install_root", ""))) != canonical(

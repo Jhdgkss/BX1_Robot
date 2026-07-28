@@ -20,8 +20,8 @@ if __package__ in {None, ""}:
 from bx1_core import BX1Core, BootstrapResult, bootstrap_runtime
 
 
-RELEASE_VERSION = "0.3.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.3.0"
+RELEASE_VERSION = "0.4.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.4.0"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -30,6 +30,7 @@ DEFAULT_CONFIG = Path(
 SPA_ROUTES = {
     "/",
     "/about",
+    "/audio",
     "/brain",
     "/configuration",
     "/dashboard",
@@ -75,6 +76,7 @@ class ManagementApplication:
         config: Mapping[str, Any],
         *,
         bootstrap: Optional[BootstrapResult] = None,
+        core: Optional[BX1Core] = None,
         started_at: Optional[float] = None,
     ) -> None:
         self.config = dict(config)
@@ -87,7 +89,7 @@ class ManagementApplication:
         self.started_at = time.time() if started_at is None else float(started_at)
         self.bootstrap = bootstrap or bootstrap_runtime(self.config)
         self.capabilities = InterfaceCapabilities()
-        self.core = BX1Core(
+        self.core = core or BX1Core(
             self.config,
             install_root=Path(
                 self.config.get("install_root", "/home/arduino/BX1_OS")
@@ -236,6 +238,24 @@ class ManagementApplication:
     def core_system(self) -> Dict[str, Any]:
         return self.core.system_snapshot()
 
+    def core_hardware(self) -> Dict[str, Any]:
+        return self.core.hardware_snapshot()
+
+    def core_hardware_inventory(self) -> Dict[str, Any]:
+        return self.core.hardware_inventory_snapshot()
+
+    def core_audio(self) -> Dict[str, Any]:
+        return self.core.audio_snapshot()
+
+    def core_audio_devices(self) -> Dict[str, Any]:
+        return self.core.audio_devices_snapshot()
+
+    def core_robot_body(self) -> Dict[str, Any]:
+        return self.core.robot_body_snapshot()
+
+    def core_robot_body_health(self) -> Dict[str, Any]:
+        return self.core.robot_body_health_snapshot()
+
     def _service_projection(self) -> list[Dict[str, Any]]:
         bx1 = self.bootstrap.bx1
         services = [
@@ -325,7 +345,7 @@ class ManagementServer:
         static_root = self.static_root
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "BX1OSManagement/0.3"
+            server_version = "BX1OSManagement/0.4"
 
             def log_message(self, fmt: str, *args: Any) -> None:
                 if os.environ.get("BX1_MANAGEMENT_HTTP_LOG") == "1":
@@ -387,6 +407,34 @@ class ManagementServer:
                 if path == "/api/core/system":
                     self._json(HTTPStatus.OK, application.core_system())
                     return
+                if path == "/api/core/hardware":
+                    self._json(HTTPStatus.OK, application.core_hardware())
+                    return
+                if path == "/api/core/hardware/inventory":
+                    self._json(
+                        HTTPStatus.OK,
+                        application.core_hardware_inventory(),
+                    )
+                    return
+                if path == "/api/core/audio":
+                    self._json(HTTPStatus.OK, application.core_audio())
+                    return
+                if path == "/api/core/audio/devices":
+                    self._json(
+                        HTTPStatus.OK, application.core_audio_devices()
+                    )
+                    return
+                if path == "/api/core/robot-body":
+                    self._json(
+                        HTTPStatus.OK, application.core_robot_body()
+                    )
+                    return
+                if path == "/api/core/robot-body/health":
+                    self._json(
+                        HTTPStatus.OK,
+                        application.core_robot_body_health(),
+                    )
+                    return
                 if path == "/api/management/bootstrap":
                     self._json(HTTPStatus.OK, application.bootstrap_payload())
                     return
@@ -412,7 +460,7 @@ class ManagementServer:
                     {"ok": False, "error": "route_not_found"},
                 )
 
-            def do_POST(self) -> None:  # noqa: N802
+            def _reject_write(self) -> None:
                 length = min(
                     max(0, int(self.headers.get("Content-Length", "0") or "0")),
                     1024 * 1024,
@@ -424,9 +472,21 @@ class ManagementServer:
                     {
                         "ok": False,
                         "error": "architecture_only",
-                        "detail": "Management actions are not implemented in v0.3.0",
+                        "detail": "BX1 OS Alpha v0.4.0 is read-only",
                     },
                 )
+
+            def do_POST(self) -> None:  # noqa: N802
+                self._reject_write()
+
+            def do_PUT(self) -> None:  # noqa: N802
+                self._reject_write()
+
+            def do_PATCH(self) -> None:  # noqa: N802
+                self._reject_write()
+
+            def do_DELETE(self) -> None:  # noqa: N802
+                self._reject_write()
 
         return ReusableThreadingHTTPServer((self.host, self.port), Handler)
 

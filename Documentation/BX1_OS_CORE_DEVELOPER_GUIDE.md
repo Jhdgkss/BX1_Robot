@@ -62,6 +62,12 @@ an injected provider so tests can be deterministic.
 Do not add direct OS or hardware queries to `bx1_management`. Put observation
 inside a plugin and let the browser read a Core API projection.
 
+Hardware adapters belong under `Robot/python/bx1_core/hardware/` and return the
+shared `DeviceRecord` contract. Use `HardwareEnvironment` for bounded metadata
+reads and `ReadOnlyHardwareInventory._safe()` for fault isolation. The complete
+adapter rules, state envelope and detection/observation/control distinction are
+documented in `BX1_OS_HARDWARE_INTEGRATION.md`.
+
 ## State and events
 
 Use dotted paths:
@@ -101,6 +107,7 @@ From the repository root:
 ```powershell
 python Robot/tools/test_bx1_core_telemetry.py
 python Robot/tools/test_management_interface.py
+python Robot/tools/test_hardware_audio_integration.py
 python Robot/tools/test_core_services.py
 ```
 
@@ -112,4 +119,3 @@ evidence, shutdown and JSON encoding.
 Before a release, also run the deployment, phase-one, observer canary, compile,
 JSON, shell syntax, manifest and archive checks documented in
 `DEPLOYMENT_GUIDE.md`.
-

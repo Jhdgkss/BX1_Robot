@@ -476,6 +476,20 @@ tbody tr:last-child td { border-bottom: 0; }
 .hardware-item .metric-icon { margin-bottom: 18px; }
 .hardware-item strong { display: block; font-size: 13px; }
 .hardware-item small { display: block; margin-top: 4px; color: var(--muted); }
+.device-card { align-items: stretch; gap: 9px; }
+.device-card .metric-icon { margin-bottom: 0; }
+.device-card-top { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.device-facts { display: grid; gap: 7px; margin-top: 4px; }
+.device-facts > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 7px;
+  font-size: 11px;
+}
+.device-facts span { color: var(--muted); text-transform: capitalize; }
+.device-facts strong { font-size: 11px; text-align: right; overflow-wrap: anywhere; }
 
 .split-layout { display: grid; grid-template-columns: 230px minmax(0, 1fr); min-height: 570px; }
 .category-list { padding: 10px; border-right: 1px solid var(--border); }

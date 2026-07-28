@@ -25,6 +25,7 @@ class BX1Core:
         *,
         install_root: Optional[Path] = None,
         service_provider: Optional[ServiceProvider] = None,
+        plugin_metadata: Optional[Mapping[str, Any]] = None,
         update_interval: Optional[float] = None,
         clock: Callable[[], float] = time.time,
         monotonic_clock: Callable[[], float] = time.monotonic,
@@ -62,6 +63,7 @@ class BX1Core:
             started_at=self.started_at,
             clock=clock,
             monotonic_clock=monotonic_clock,
+            metadata=dict(plugin_metadata or {}),
         )
         self.plugins = PluginRegistry(context)
         self.services = CoreServiceRegistry(
@@ -145,6 +147,63 @@ class BX1Core:
             "system": self.state.snapshot("system"),
             "network": self.state.snapshot("network"),
             "robot": self.state.snapshot("robot"),
+        }
+
+    def hardware_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.hardware.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "hardware": self.state.snapshot("hardware"),
+        }
+
+    def hardware_inventory_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.hardware.inventory.api.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "inventory": self.state.get("hardware.inventory", {}),
+            "diagnostics": self.state.get("hardware.diagnostics", {}),
+        }
+
+    def audio_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.audio.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "audio": self.state.snapshot("audio"),
+            "devices": self.state.snapshot("hardware.audio"),
+        }
+
+    def audio_devices_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.audio.devices.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "microphones": self.state.get(
+                "hardware.audio.microphones", {}
+            ),
+            "speakers": self.state.get("hardware.audio.speakers", {}),
+        }
+
+    def robot_body_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.robot_body.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "robot_body": self.state.snapshot("robot_body"),
+        }
+
+    def robot_body_health_snapshot(self) -> Dict[str, Any]:
+        return {
+            "schema": "bx1.core.robot_body.health.v1",
+            "generated_at": self.clock(),
+            "revision": self.state.revision,
+            "connected": self.state.get("robot_body.connected", {}),
+            "health": self.state.get("robot_body.health", {}),
+            "active_faults": self.state.get(
+                "robot_body.active_faults", {}
+            ),
         }
 
 __all__ = ["BX1Core"]

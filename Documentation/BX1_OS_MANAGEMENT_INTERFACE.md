@@ -36,6 +36,14 @@ The browser requests `/api/core/state`, `/api/core/health`,
 The v0.2.0 bootstrap endpoint remains as a compatibility projection generated
 from Core state; it is no longer a dashboard data source.
 
+## v0.4.0 hardware and audio integration
+
+The Hardware, Audio and Diagnostics pages render BX1 Core observations. The
+browser polls the new read-only hardware/audio/Robot Body endpoints every five
+seconds. Device cards expose presence, state, ownership, source, last update,
+health and safe details. Audio control surfaces are disabled and labelled
+`Future controlled operation`.
+
 ## Folder structure
 
 ```text
@@ -48,7 +56,7 @@ Robot/
       static/
         index.html
         styles.css
-      app.js
+        app.js
     bx1_core/
       core.py
       state.py
@@ -100,6 +108,12 @@ POST requests in this milestone.
 | `/api/core/plugins` | Discovered plugin inventory |
 | `/api/core/services` | Core service projection |
 | `/api/core/system` | System, network and robot projection |
+| `/api/core/hardware` | Hardware state projection |
+| `/api/core/hardware/inventory` | Device inventory and diagnostics |
+| `/api/core/audio` | Audio state and devices |
+| `/api/core/audio/devices` | Microphone and speaker inventory |
+| `/api/core/robot-body` | Sanitised existing Robot Body telemetry |
+| `/api/core/robot-body/health` | Existing Robot Body health |
 
 The page routes are:
 
@@ -108,6 +122,7 @@ The page routes are:
 /system
 /services
 /hardware
+/audio
 /brain
 /configuration
 /logs
@@ -158,6 +173,7 @@ Port 18089 is used only for local development. The installed Alpha service uses
 ```powershell
 python -m unittest Robot/tools/test_management_interface.py -v
 python -m unittest Robot/tools/test_bx1_core_telemetry.py -v
+python -m unittest Robot/tools/test_hardware_audio_integration.py -v
 python -m unittest Robot/tools/test_deployment_system.py -v
 ```
 

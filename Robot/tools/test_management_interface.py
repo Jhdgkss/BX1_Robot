@@ -70,7 +70,7 @@ class ManagementApplicationTests(unittest.TestCase):
 
     def test_bootstrap_payload_contains_framework_sections_without_controls(self):
         payload = ManagementApplication(qualification_config()).bootstrap_payload()
-        self.assertEqual(payload["interface"]["version"], "0.3.0")
+        self.assertEqual(payload["interface"]["version"], "0.4.0")
         self.assertIn("system", payload)
         self.assertIn("services", payload)
         self.assertIn("deployment", payload)
@@ -119,6 +119,12 @@ class ManagementHTTPTests(unittest.TestCase):
             ("/api/core/plugins", "application/json"),
             ("/api/core/services", "application/json"),
             ("/api/core/system", "application/json"),
+            ("/api/core/hardware", "application/json"),
+            ("/api/core/hardware/inventory", "application/json"),
+            ("/api/core/audio", "application/json"),
+            ("/api/core/audio/devices", "application/json"),
+            ("/api/core/robot-body", "application/json"),
+            ("/api/core/robot-body/health", "application/json"),
         ):
             with self.subTest(path=path):
                 status, actual_type, body = self.get(path)
@@ -180,6 +186,7 @@ class ManagementAssetTests(unittest.TestCase):
             "System",
             "Services",
             "Hardware",
+            "Audio",
             "Brain",
             "Configuration",
             "Logs",
@@ -232,6 +239,9 @@ class ManagementAssetTests(unittest.TestCase):
         self.assertIn('"/api/core/plugins"', self.javascript)
         self.assertIn('"/api/core/services"', self.javascript)
         self.assertIn('"/api/core/system"', self.javascript)
+        self.assertIn('"/api/core/hardware"', self.javascript)
+        self.assertIn('"/api/core/audio"', self.javascript)
+        self.assertIn('"/api/core/robot-body"', self.javascript)
         self.assertNotIn('fetch("/api/management/bootstrap"', self.javascript)
         server_source = (
             PYTHON_ROOT / "bx1_management" / "server.py"

@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.3.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.3.0"
+RELEASE_VERSION = "0.4.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.4.0"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -54,6 +54,7 @@ TOOL_FILES = [
     "test_deployment_system.py",
     "test_management_interface.py",
     "test_bx1_core_telemetry.py",
+    "test_hardware_audio_integration.py",
 ]
 
 DOCUMENTATION_FILES = [
@@ -72,6 +73,10 @@ DOCUMENTATION_FILES = [
     "BX1_OS_CORE.md",
     "BX1_OS_CORE_DEVELOPER_GUIDE.md",
     "BX1_OS_ALPHA_V0_3_0_RELEASE_NOTES.md",
+    "BX1_OS_HARDWARE_INTEGRATION.md",
+    "BX1_OS_AUDIO_INTEGRATION.md",
+    "BX1_OS_ALPHA_V0_4_0_RELEASE_NOTES.md",
+    "BX1_OS_ALPHA_V0_4_0_VALIDATION_REPORT.md",
 ]
 
 

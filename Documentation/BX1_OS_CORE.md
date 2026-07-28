@@ -3,7 +3,8 @@
 ## Purpose
 
 BX1 OS Core is the read-only state and telemetry authority introduced in Alpha
-v0.3.0. Plugins observe their assigned subsystem, publish state into one
+v0.3.0 and extended with safe hardware observation in v0.4.0. Plugins observe
+their assigned subsystem, publish state into one
 thread-safe database, and report health through one lifecycle contract. The
 Management Interface consumes only Core API projections.
 
@@ -18,7 +19,7 @@ flowchart LR
     network[Network Plugin]
     deployment[Deployment Plugin]
     brain[Brain Placeholder]
-    hardware[Hardware Placeholder]
+    hardware[Hardware Inventory]
     state[(State Store)]
     events[Event Bus]
     telemetry[Telemetry Publisher]
@@ -72,7 +73,9 @@ predictable document before every adapter is implemented.
 | `network` | Network plugin | IP, state, future signal |
 | `robot` | System plugin | mode, state, enabled |
 | `brain` | Brain placeholder | connected, model, speaking, listening, thinking |
-| `hardware` | Hardware placeholder | camera, microphone, speaker, IMU, servos, motors |
+| `hardware` | Hardware observer | inventory, audio, camera, serial, MCU, IMU, display |
+| `robot_body` | Robot Body adapter | connection, version, health, faults, safe telemetry |
+| `audio` | Hardware observer | levels, ownership, STT and TTS state |
 | `deployment` | Deployment plugin | version, tag, branch, commit, build date |
 | `services` | Core service projection | observed service list |
 | `management` | Management registration | interface identity, ports, capabilities |
@@ -115,6 +118,12 @@ not implemented in this milestone.
 | `/api/core/plugins` | `bx1.core.plugins.v1` | Discovered plugin inventory |
 | `/api/core/services` | `bx1.core.services.v1` | Core-owned service projection |
 | `/api/core/system` | `bx1.core.system.v1` | System, network and robot projection |
+| `/api/core/hardware` | `bx1.core.hardware.v1` | Hardware state projections |
+| `/api/core/hardware/inventory` | `bx1.core.hardware.inventory.api.v1` | Device inventory and diagnostics |
+| `/api/core/audio` | `bx1.core.audio.v1` | Audio state and devices |
+| `/api/core/audio/devices` | `bx1.core.audio.devices.v1` | Microphone and speaker inventory |
+| `/api/core/robot-body` | `bx1.core.robot_body.v1` | Sanitised production telemetry |
+| `/api/core/robot-body/health` | `bx1.core.robot_body.health.v1` | Production health projection |
 
 All POST requests remain fail-closed. `/api/status` remains only for the
 side-by-side deployment qualifier, while `/api/management/bootstrap` is a
@@ -129,6 +138,7 @@ compatibility endpoint for dashboard data.
   service.
 - The Deployment plugin reads only reviewed release metadata.
 - The Brain placeholder opens no connection.
-- The Hardware placeholder opens no device and reports ownership as false.
+- The Hardware plugin opens no device. It reads system metadata and proxies
+  allowlisted GET data from the existing Robot Body on loopback port 8088.
 - No plugin reads secrets or publishes process environments.
 - No Core endpoint writes state, controls a service or requests hardware.

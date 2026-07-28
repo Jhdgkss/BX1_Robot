@@ -1,8 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS Alpha v0.3.0 Core telemetry qualification",
-  "bx1_os_release_version": "0.3.0",
-  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.3.0",
+  "app_version": "BX1 OS Alpha v0.4.0 read-only hardware qualification",
+  "bx1_os_release_version": "0.4.0",
+  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.4.0",
   "management_interface": {
     "enabled": true,
     "architecture_only": true,
@@ -12,6 +12,14 @@
     "enabled": true,
     "observer_only": true,
     "update_interval_seconds": 2.0
+  },
+  "hardware_observer": {
+    "enabled": true,
+    "observer_only": true,
+    "robot_body_url": "http://127.0.0.1:8088",
+    "timeout_seconds": 0.5,
+    "exclusive_access": false,
+    "device_control": false
   },
   "qualification_mode": true,
   "observer_only": true,

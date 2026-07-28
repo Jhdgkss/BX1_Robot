@@ -2,10 +2,18 @@
 
 ## Status
 
-**v0.3.0 BX1 OS CORE RELEASE IN DEVELOPMENT**
+**v0.4.0 READ-ONLY HARDWARE AND AUDIO RELEASE IMPLEMENTED — NOT DEPLOYED**
 
 No robot connection, file transfer, service operation or deployment was
 performed while implementing this revision.
+
+## v0.4.0 hardware and audio milestone
+
+BX1 OS now discovers hardware through failure-isolated, metadata-only adapters
+and proxies sanitised telemetry from allowlisted Existing Robot Body GET
+endpoints. The Hardware, Audio and Diagnostics pages consume only Core state.
+No device node is opened, no service is changed, and no hardware or audio
+control path was added.
 
 ## v0.3.0 Core milestone
 

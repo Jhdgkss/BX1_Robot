@@ -3,6 +3,7 @@ const NAVIGATION = [
   { section: "Manage", id: "system", label: "System", icon: "system" },
   { section: "Manage", id: "services", label: "Services", icon: "services" },
   { section: "Manage", id: "hardware", label: "Hardware", icon: "hardware" },
+  { section: "Manage", id: "audio", label: "Audio", icon: "logs" },
   { section: "Manage", id: "brain", label: "Brain", icon: "brain" },
   { section: "Manage", id: "configuration", label: "Configuration", icon: "config" },
   { section: "Observe", id: "logs", label: "Logs", icon: "logs" },
@@ -16,7 +17,8 @@ const PAGE_META = {
   dashboard: ["Command centre", "System overview", "A high-level view of BX1 OS, its resources and connected systems."],
   system: ["Host platform", "System information", "Operating system, runtime and hardware identity for this BX1 host."],
   services: ["Service orchestration", "Managed services", "A unified home for BX1 OS service state, controls and logs."],
-  hardware: ["Device inventory", "Hardware", "The future inventory and health surface for every onboard device."],
+  hardware: ["Device inventory", "Hardware", "Read-only discovery, ownership and health for detected robot devices."],
+  audio: ["Audio telemetry", "Audio", "Read-only microphone, speaker, level, STT and TTS observations."],
   brain: ["Intelligence layer", "Brain", "Connection, models, voice and memory will be managed from this workspace."],
   configuration: ["Platform settings", "Configuration", "A searchable, categorised configuration workspace with safe revision controls."],
   logs: ["System events", "Logs", "Live, filterable BX1 OS logs will appear here without mixing with the legacy UI."],
@@ -30,8 +32,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.3.0",
-    tag: "BX1_OS_ALPHA_v0.3.0",
+    version: "0.4.0",
+    tag: "BX1_OS_ALPHA_v0.4.0",
     architecture_only: true,
     capabilities: {},
   },
@@ -61,11 +63,21 @@ const fallbackData = {
     uptime_seconds: 0,
   },
   services: [],
+  hardware: { inventory: [], diagnostics: { checks: [] } },
+  audio: {
+    microphones: [],
+    speakers: [],
+    input: {},
+    output: {},
+    stt: {},
+    tts: {},
+  },
+  robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.3.0",
+    current_version: "0.4.0",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_ALPHA_v0.3.0",
+    tag: "BX1_OS_ALPHA_v0.4.0",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -100,6 +112,24 @@ const formatPercent = (value) =>
   value === null || value === undefined ? null : `${Number(value).toFixed(1)}%`;
 const formatTemperature = (value) =>
   value === null || value === undefined ? null : `${Number(value).toFixed(1)} °C`;
+const observed = (item, fallback = null) =>
+  item && typeof item === "object" && Object.prototype.hasOwnProperty.call(item, "value")
+    ? item.value
+    : item ?? fallback;
+const observedMeta = (item) => ({
+  source: item?.source || "Unknown",
+  timestamp: item?.timestamp || null,
+  quality: item?.quality || "unknown",
+  stale: Boolean(item?.stale),
+});
+const formatTimestamp = (value) => {
+  if (!value) return "Never";
+  const numeric = Number(value);
+  const parsed = Number.isFinite(numeric)
+    ? new Date(numeric * 1000)
+    : new Date(String(value));
+  return Number.isNaN(parsed.getTime()) ? "Unavailable" : parsed.toLocaleString();
+};
 
 function routeFromLocation() {
   const route = location.pathname.replace(/^\/+|\/+$/g, "");
@@ -269,24 +299,127 @@ function servicesPage(data) {
   </div>`;
 }
 
-function hardwarePage() {
-  const devices = [
-    ["Camera", "Vision device discovery", "hardware", "blue"],
-    ["Microphone", "Input device and levels", "logs", "purple"],
-    ["Speaker", "Output device and volume", "services", ""],
-    ["IMU", "Orientation and motion", "diagnostics", "amber"],
-    ["Motors", "Drive state and safety", "config", "amber"],
-    ["Servos", "Joint state and limits", "hardware", "blue"],
-    ["Battery", "Power and charge health", "system", ""],
-    ["Touchscreen", "Display and kiosk state", "grid", "purple"],
-  ];
-  return `<div class="grid">${panel("Device inventory", `
-    <div class="hardware-grid">${devices.map(([name, text, iconName, tone]) => `
-      <article class="hardware-item">
-        <span class="metric-icon ${tone}">${icon(iconName)}</span>
-        <strong>${esc(name)}</strong><small>${esc(text)}</small>
-        <div style="margin-top:13px">${badge("Adapter pending", "warn")}</div>
-      </article>`).join("")}</div>`, { span: 12, subtitle: "No physical device is accessed by this framework" })}
+function deviceTone(state) {
+  if (["online", "detected"].includes(state)) return "good";
+  if (["offline", "permission_denied"].includes(state)) return "bad";
+  if (["busy", "owned_elsewhere", "unsupported", "adapter_pending"].includes(state)) return "warn";
+  return "info";
+}
+
+function deviceStateLabel(device) {
+  if (device.ownership === "bx1-web.service") return "Owned by Robot Body";
+  const labels = {
+    online: "Online",
+    offline: "Offline",
+    detected: "Detected",
+    busy: "Busy",
+    owned_elsewhere: "Busy",
+    permission_denied: "Permission denied",
+    unsupported: "Unsupported",
+    adapter_pending: "Adapter pending",
+    unavailable: "Unavailable",
+    unknown: "Unknown",
+  };
+  return labels[device.health?.state] || "Unknown";
+}
+
+function deviceCard(device) {
+  const health = device.health || {};
+  const details = device.details || {};
+  const summary = Object.entries(details)
+    .filter(([, value]) => ["string", "number", "boolean"].includes(typeof value))
+    .slice(0, 4)
+    .map(([key, value]) => `<div><span>${esc(key.replaceAll("_", " "))}</span><strong>${display(value)}</strong></div>`)
+    .join("");
+  return `<article class="hardware-item device-card">
+    <div class="device-card-top">
+      <span class="metric-icon">${icon(device.category === "camera" ? "hardware" : "diagnostics")}</span>
+      ${badge(deviceStateLabel(device), deviceTone(health.state), false)}
+    </div>
+    <strong>${esc(device.name || device.device_id)}</strong>
+    <small>${esc(device.category || "unknown")} · ${device.present ? "Present" : "Not detected"}</small>
+    <div class="device-facts">
+      <div><span>Owner</span><strong>${display(device.ownership, "Unknown")}</strong></div>
+      <div><span>Source</span><strong>${display(device.source, "Unknown")}</strong></div>
+      <div><span>Last update</span><strong>${esc(formatTimestamp(device.last_seen))}</strong></div>
+      <div><span>Health</span><strong>${display(health.reason, health.state)}</strong></div>
+      ${summary}
+    </div>
+  </article>`;
+}
+
+function hardwarePage(data) {
+  const devices = data.hardware.inventory || [];
+  const body = data.robot_body || {};
+  const content = devices.length
+    ? `<div class="hardware-grid">${devices.map(deviceCard).join("")}</div>`
+    : emptyPanel("hardware", "No devices detected", "Observers completed safely without opening any device. Missing optional hardware is not a global OS fault.");
+  return `<div class="grid">
+    ${panel("Observer posture", dataList([
+      ["Robot Body API", body.connected ? "Connected" : "Unavailable"],
+      ["Robot Body version", body.version],
+      ["Ownership taken", "No"],
+      ["Device nodes opened", "No"],
+      ["Control", "Blocked"],
+    ]), { span: 4, subtitle: "Source: Existing Robot Body and system metadata" })}
+    ${panel("Inventory summary", dataList([
+      ["Devices reported", devices.length],
+      ["Online", devices.filter(item => item.health?.state === "online").length],
+      ["Detected", devices.filter(item => item.health?.state === "detected").length],
+      ["Owned by Robot Body", devices.filter(item => item.ownership === "bx1-web.service").length],
+      ["Permission denied", devices.filter(item => item.health?.state === "permission_denied").length],
+    ]), { span: 8, subtitle: "Read-only, non-exclusive, best-effort discovery" })}
+    ${panel("Device inventory", content, { span: 12, subtitle: "No probes, streams, serial writes, mixer writes or control operations" })}
+  </div>`;
+}
+
+function audioDeviceTable(devices, category) {
+  if (!devices.length) return emptyPanel(
+    "logs",
+    `No ${category.toLowerCase()} devices detected`,
+    "ALSA or Robot Body metadata was unavailable. No device was opened."
+  );
+  return `<div class="table-wrap"><table>
+    <thead><tr><th>Device</th><th>Path</th><th>Status</th><th>Owner</th><th>Format</th><th>Last update</th></tr></thead>
+    <tbody>${devices.map(device => `<tr>
+      <td><span class="service-name">${esc(device.name)}</span><small>${device.details?.default ? "Default" : ""}</small></td>
+      <td class="mono">${display(device.details?.alsa_device, "Unavailable")}</td>
+      <td>${badge(deviceStateLabel(device), deviceTone(device.health?.state), false)}</td>
+      <td>${display(device.ownership, "Unknown")}</td>
+      <td>${display(device.details?.current_format, "Metadata unavailable")} · ${display(device.details?.sample_rate, "—")} Hz · ${display(device.details?.channels, "—")} ch</td>
+      <td>${esc(formatTimestamp(device.last_seen))}</td>
+    </tr>`).join("")}</tbody>
+  </table></div>`;
+}
+
+function audioPage(data) {
+  const audio = data.audio || {};
+  const input = audio.input || {};
+  const output = audio.output || {};
+  const microphones = audio.microphones || [];
+  const speakers = audio.speakers || [];
+  return `<div class="grid">
+    ${panel("Overview", dataList([
+      ["Microphone owner", observed(input.owner, "Unknown")],
+      ["Speaker owner", observed(output.owner, "Unknown")],
+      ["STT state", observed(audio.stt?.state, "Unknown")],
+      ["TTS state", observed(audio.tts?.state, "Unknown")],
+      ["Control", "Blocked — observer only"],
+    ]), { span: 4, subtitle: "Source: Existing Robot Body" })}
+    ${panel("Levels", dataList([
+      ["RMS", observed(input.level_rms, "Measurement unavailable while owned")],
+      ["Peak", observed(input.level_peak, "Measurement unavailable while owned")],
+      ["Noise floor", observed(input.noise_floor, "Measurement unavailable while owned")],
+      ["Measurement", observed(input.measurement_state, "Unavailable")],
+      ["Quality", observedMeta(input.level_rms).quality],
+      ["Last sample", formatTimestamp(observed(input.last_sample_timestamp))],
+      ["Core update", formatTimestamp(observedMeta(input.level_rms).timestamp)],
+    ]), { span: 8, subtitle: "Proxied only; BX1 OS never seizes the microphone" })}
+    ${panel("Microphones", audioDeviceTable(microphones, "Microphone"), { span: 12, aside: badge(`${microphones.length} observed`, "info", false) })}
+    ${panel("Speakers", audioDeviceTable(speakers, "Speaker"), { span: 12, aside: badge(`${speakers.length} observed`, "info", false) })}
+    ${panel("DSP", emptyPanel("logs", "Read-only metadata", "DSP configuration and live spectral controls are not exposed in this release."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
+    ${panel("Wake Word and STT", emptyPanel("brain", "Owned by Robot Body", "Wake-word and transcription state is observed through the existing API."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
+    ${panel("TTS", emptyPanel("services", "Owned by Robot Body", "Playback configuration is reported without changing volume, mute or device selection."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
   </div>`;
 }
 
@@ -361,7 +494,8 @@ function deploymentPage(data) {
   ];
   const timeline = `
     <div class="timeline">
-      <div class="timeline-item"><strong>BX1 OS Alpha v0.3.0</strong><span>Core telemetry and plugin architecture · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.4.0</strong><span>Read-only hardware and audio integration · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.3.0</strong><span>Core telemetry and plugin architecture</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.2.0</strong><span>Management Interface framework</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.1.2</strong><span>Process-isolation qualification correction</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.1.1</strong><span>Side-by-side deployment foundation</span></div>
@@ -374,22 +508,23 @@ function deploymentPage(data) {
   </div>`;
 }
 
-function diagnosticsPage() {
+function diagnosticsPage(data) {
+  const coreChecks = data.hardware.diagnostics?.checks || [];
   const checks = [
-    ["Management interface", "Ready", "Framework and static assets are serving"],
-    ["Observer isolation", "Active", "Hardware ownership remains blocked"],
-    ["Existing Robot UI", "Protected", "Port 8088 is outside this application"],
-    ["Physical hardware", "Not accessed", "No diagnostic adapters enabled"],
+    { name: "Management interface", passed: true, detail: "Port 8089 read-only API is serving" },
+    { name: "Observer isolation", passed: true, detail: "Hardware ownership and control remain blocked" },
+    { name: "Existing Robot UI protected", passed: true, detail: "Port 8088 is queried with allowlisted GET requests only" },
+    ...coreChecks,
   ];
-  const rows = checks.map(([name, status, detail]) => `
+  const rows = checks.map(check => `
     <div class="health-row">
-      <span class="health-check">${icon("check")}</span>
-      <div class="health-copy"><strong>${esc(name)}</strong><small>${esc(detail)}</small></div>
-      ${badge(status, "good", false)}
+      <span class="health-check">${icon(check.passed ? "check" : "diagnostics")}</span>
+      <div class="health-copy"><strong>${esc(check.name)}</strong><small>${esc(check.detail || (check.required ? "Required observer check" : "Optional hardware"))}</small></div>
+      ${badge(check.passed ? "Online" : check.required ? "Unavailable" : "Optional absent", check.passed ? "good" : check.required ? "bad" : "warn", false)}
     </div>`).join("");
   return `<div class="grid">
-    ${panel("Health checks", rows, { span: 8, subtitle: "Architecture-level checks only", aside: badge("4 healthy", "good") })}
-    ${panel("Diagnostic tools", emptyPanel("diagnostics", "Guided diagnostics coming later", "Future tools will remain explicit, auditable and hardware-safe.", button("Run all checks", { prototype: "Run diagnostics", disabled: true })), { span: 4 })}
+    ${panel("Observer health checks", rows, { span: 8, subtitle: "Absent optional hardware does not fault BX1 OS", aside: badge(`${checks.filter(item => item.passed).length}/${checks.length} available`, "info") })}
+    ${panel("Diagnostic tools", emptyPanel("diagnostics", "Observation only", "No diagnostic command opens a device, changes settings or sends a probe.", button("Future controlled operation", { disabled: true })), { span: 4 })}
   </div>`;
 }
 
@@ -424,6 +559,7 @@ const RENDERERS = {
   system: systemPage,
   services: servicesPage,
   hardware: hardwarePage,
+  audio: audioPage,
   brain: brainPage,
   configuration: configurationPage,
   logs: logsPage,
@@ -499,7 +635,7 @@ function bindPrototypeActions() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -511,8 +647,8 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload) {
     interface: {
       id: management.id || "bx1-os-management",
       name: management.name || "BX1 OS Management",
-      version: deployment.version || "0.3.0",
-      tag: deployment.tag || "BX1_OS_ALPHA_v0.3.0",
+      version: deployment.version || "0.4.0",
+      tag: deployment.tag || "BX1_OS_ALPHA_v0.4.0",
       architecture_only: true,
       capabilities: management.capabilities || {},
     },
@@ -545,6 +681,24 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload) {
       uptime_seconds: system.uptime,
     },
     services: servicesPayload.services || [],
+    hardware: {
+      inventory: observed(hardwarePayload.hardware?.inventory, []),
+      diagnostics: observed(hardwarePayload.hardware?.diagnostics, { checks: [] }),
+    },
+    audio: {
+      microphones: observed(audioPayload.devices?.microphones, []),
+      speakers: observed(audioPayload.devices?.speakers, []),
+      input: audioPayload.audio?.input || {},
+      output: audioPayload.audio?.output || {},
+      stt: audioPayload.audio?.stt || {},
+      tts: audioPayload.audio?.tts || {},
+    },
+    robot_body: {
+      connected: observed(robotBodyPayload.robot_body?.connected, false),
+      version: observed(robotBodyPayload.robot_body?.version, "unknown"),
+      health: observed(robotBodyPayload.robot_body?.health, "unavailable"),
+      active_faults: observed(robotBodyPayload.robot_body?.active_faults, []),
+    },
     deployment: {
       current_version: deployment.version,
       commit: deployment.commit,
@@ -569,16 +723,19 @@ async function loadCoreTelemetry() {
       "/api/core/health",
       "/api/core/plugins",
       "/api/core/system",
+      "/api/core/hardware",
+      "/api/core/audio",
+      "/api/core/robot-body",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody);
     state.connected = true;
     renderPage();
   } catch (error) {
