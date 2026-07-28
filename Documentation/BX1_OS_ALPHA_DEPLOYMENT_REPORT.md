@@ -2,10 +2,18 @@
 
 ## Status
 
-**v0.2.0 MANAGEMENT INTERFACE FRAMEWORK IN DEVELOPMENT**
+**v0.3.0 BX1 OS CORE RELEASE IN DEVELOPMENT**
 
 No robot connection, file transfer, service operation or deployment was
 performed while implementing this revision.
+
+## v0.3.0 Core milestone
+
+BX1 OS now owns one thread-safe state database, event bus, plugin registry,
+telemetry publisher and health model. System, Network and Deployment plugins
+publish observations; Brain and Hardware plugins are non-owning placeholders.
+The Management Interface reads only Core API projections. No writable API,
+hardware access or legacy service operation was added.
 
 ## v0.2.0 management milestone
 

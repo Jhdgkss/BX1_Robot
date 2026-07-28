@@ -10,6 +10,8 @@ from .bootstrap import (
 )
 from .diagnostics import DiagnosticsService
 from .config import DEFAULT_CORE_CONFIGURATION, load_core_configuration
+from .core import BX1Core
+from .events import CoreEvent, CoreEventBus, CoreEventType
 from .communication import (
     ClientSession,
     CommandResult,
@@ -26,18 +28,27 @@ from .communication import (
     StateSynchronizer,
     Subscription,
 )
-from .health import HealthMonitor
+from .health import (
+    HealthMonitor,
+    HealthState,
+    PluginHealth,
+    aggregate_plugin_health,
+)
 from .logging_service import LogLevel, LogRecord, LoggingService, ServiceLogger
 from .root import BX1, create_bx1
+from .registry import CoreServiceRegistry, PluginRegistry
 from .scheduler import ScheduledTask, SchedulerService
 from .service_registry import (
     ServiceLifecycleState,
     ServiceRegistration,
     ServiceRegistry,
 )
+from .state import DEFAULT_STATE, StateChange, StateStore
+from .telemetry import TelemetryPublisher
 
 __all__ = [
     "BX1",
+    "BX1Core",
     "ALPHA_REQUIRED_SERVICES",
     "BootstrapError",
     "BootstrapResult",
@@ -48,7 +59,12 @@ __all__ = [
     "CompatibilityServiceAdapter",
     "DEFAULT_CORE_CONFIGURATION",
     "DiagnosticsService",
+    "CoreEvent",
+    "CoreEventBus",
+    "CoreEventType",
+    "CoreServiceRegistry",
     "HealthMonitor",
+    "HealthState",
     "LogLevel",
     "LogRecord",
     "LoggingService",
@@ -58,6 +74,8 @@ __all__ = [
     "MessageStatus",
     "MessageValidationError",
     "ProtocolVersion",
+    "PluginHealth",
+    "PluginRegistry",
     "ScheduledTask",
     "SchedulerService",
     "ServiceLifecycleState",
@@ -68,7 +86,12 @@ __all__ = [
     "SessionManager",
     "SessionState",
     "StateSynchronizer",
+    "StateChange",
+    "StateStore",
     "Subscription",
+    "TelemetryPublisher",
+    "DEFAULT_STATE",
+    "aggregate_plugin_health",
     "bootstrap_runtime",
     "create_bx1",
     "load_core_configuration",

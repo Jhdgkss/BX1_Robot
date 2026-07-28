@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.2.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.2.0"
+RELEASE_VERSION = "0.3.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.3.0"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -53,6 +53,7 @@ TOOL_FILES = [
     "test_hardware_freshness.py",
     "test_deployment_system.py",
     "test_management_interface.py",
+    "test_bx1_core_telemetry.py",
 ]
 
 DOCUMENTATION_FILES = [
@@ -68,6 +69,9 @@ DOCUMENTATION_FILES = [
     "BX1_OS_ALPHA_V0_1_2_RELEASE_NOTES.md",
     "BX1_OS_MANAGEMENT_INTERFACE.md",
     "BX1_OS_ALPHA_V0_2_0_RELEASE_NOTES.md",
+    "BX1_OS_CORE.md",
+    "BX1_OS_CORE_DEVELOPER_GUIDE.md",
+    "BX1_OS_ALPHA_V0_3_0_RELEASE_NOTES.md",
 ]
 
 
@@ -105,6 +109,9 @@ def build_release(
         "release_tag": RELEASE_TAG,
         "created_at": created_at,
         "source_git_commit": commit,
+        "source_git_branch": _git(
+            repo, ["branch", "--show-current"]
+        ) or "detached",
         "source_git_tag": RELEASE_TAG
         if RELEASE_TAG in _git(repo, ["tag", "--points-at", "HEAD"]).splitlines()
         else "",

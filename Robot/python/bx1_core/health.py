@@ -2,11 +2,77 @@ from __future__ import annotations
 
 import copy
 import time
+from dataclasses import dataclass, field
+from enum import Enum
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
 
 from hardware_services import EventBus, EventType
 
 from .service_registry import ServiceLifecycleState, ServiceRegistry
+
+
+class HealthState(str, Enum):
+    HEALTHY = "healthy"
+    WARNING = "warning"
+    FAULT = "fault"
+
+
+@dataclass(frozen=True)
+class PluginHealth:
+    """Common health contract returned by every Core telemetry plugin."""
+
+    state: HealthState
+    timestamp: float
+    details: Mapping[str, Any] = field(default_factory=dict)
+
+    @property
+    def healthy(self) -> bool:
+        return self.state == HealthState.HEALTHY
+
+    @property
+    def warning(self) -> bool:
+        return self.state == HealthState.WARNING
+
+    @property
+    def fault(self) -> bool:
+        return self.state == HealthState.FAULT
+
+    def as_dict(self) -> Dict[str, Any]:
+        return {
+            "state": self.state.value,
+            "healthy": self.healthy,
+            "warning": self.warning,
+            "fault": self.fault,
+            "timestamp": self.timestamp,
+            "details": copy.deepcopy(dict(self.details)),
+        }
+
+
+def aggregate_plugin_health(
+    plugins: Mapping[str, Mapping[str, Any]],
+    *,
+    timestamp: Optional[float] = None,
+) -> Dict[str, Any]:
+    states = {
+        str(item.get("state", HealthState.FAULT.value))
+        for item in plugins.values()
+    }
+    overall = (
+        HealthState.FAULT
+        if HealthState.FAULT.value in states
+        else HealthState.WARNING
+        if HealthState.WARNING.value in states
+        else HealthState.HEALTHY
+    )
+    return {
+        "schema": "bx1.core.health.v1",
+        "state": overall.value,
+        "healthy": overall == HealthState.HEALTHY,
+        "warning": overall == HealthState.WARNING,
+        "fault": overall == HealthState.FAULT,
+        "timestamp": time.time() if timestamp is None else float(timestamp),
+        "plugins": copy.deepcopy(dict(plugins)),
+    }
 
 
 class HealthMonitor:

@@ -70,7 +70,7 @@ class ManagementApplicationTests(unittest.TestCase):
 
     def test_bootstrap_payload_contains_framework_sections_without_controls(self):
         payload = ManagementApplication(qualification_config()).bootstrap_payload()
-        self.assertEqual(payload["interface"]["version"], "0.2.0")
+        self.assertEqual(payload["interface"]["version"], "0.3.0")
         self.assertIn("system", payload)
         self.assertIn("services", payload)
         self.assertIn("deployment", payload)
@@ -114,6 +114,11 @@ class ManagementHTTPTests(unittest.TestCase):
             ("/assets/app.js", "text/javascript"),
             ("/api/status", "application/json"),
             ("/api/management/bootstrap", "application/json"),
+            ("/api/core/state", "application/json"),
+            ("/api/core/health", "application/json"),
+            ("/api/core/plugins", "application/json"),
+            ("/api/core/services", "application/json"),
+            ("/api/core/system", "application/json"),
         ):
             with self.subTest(path=path):
                 status, actual_type, body = self.get(path)
@@ -145,6 +150,20 @@ class ManagementHTTPTests(unittest.TestCase):
                 host="127.0.0.1",
                 port=8088,
             )
+
+    def test_core_state_supports_incremental_updates(self):
+        status, content_type, body = self.get("/api/core/state")
+        payload = json.loads(body)
+        revision = payload["revision"]
+        self.server.application.core.state.set(
+            "test.api", "changed", source="test"
+        )
+        status, content_type, body = self.get(
+            "/api/core/state?since=%s" % revision
+        )
+        update = json.loads(body)
+        self.assertEqual(update["schema"], "bx1.core.telemetry.update.v1")
+        self.assertIn("test.api", [item["path"] for item in update["changes"]])
 
 
 class ManagementAssetTests(unittest.TestCase):
@@ -206,6 +225,19 @@ class ManagementAssetTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
         self.assertNotIn("from web_control", server_source)
         self.assertNotIn("import web_control", server_source)
+
+    def test_management_ui_reads_only_core_apis(self):
+        self.assertIn('"/api/core/state"', self.javascript)
+        self.assertIn('"/api/core/health"', self.javascript)
+        self.assertIn('"/api/core/plugins"', self.javascript)
+        self.assertIn('"/api/core/services"', self.javascript)
+        self.assertIn('"/api/core/system"', self.javascript)
+        self.assertNotIn('fetch("/api/management/bootstrap"', self.javascript)
+        server_source = (
+            PYTHON_ROOT / "bx1_management" / "server.py"
+        ).read_text(encoding="utf-8")
+        self.assertNotIn("import platform", server_source)
+        self.assertNotIn("import socket", server_source)
 
     def test_dedicated_unit_launches_management_application_only(self):
         unit = (ROOT / "service" / "bx1-os-alpha.service").read_text(

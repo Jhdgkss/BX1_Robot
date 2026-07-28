@@ -26,6 +26,16 @@ This release establishes architecture only:
 No service restart, host power, configuration write, log streaming, update or
 rollback action is implemented.
 
+## v0.3.0 Core integration
+
+The application shell is unchanged, but its runtime values now come only from
+BX1 OS Core. Host observation moved from `bx1_management` into Core plugins.
+The browser requests `/api/core/state`, `/api/core/health`,
+`/api/core/plugins`, `/api/core/services` and `/api/core/system`.
+
+The v0.2.0 bootstrap endpoint remains as a compatibility projection generated
+from Core state; it is no longer a dashboard data source.
+
 ## Folder structure
 
 ```text
@@ -38,7 +48,14 @@ Robot/
       static/
         index.html
         styles.css
-        app.js
+      app.js
+    bx1_core/
+      core.py
+      state.py
+      events.py
+      telemetry.py
+      registry.py
+      plugins/
   service/
     bx1-os-alpha.service
   tools/
@@ -55,6 +72,7 @@ existing recursive `Robot/python` payload selection.
 bx1-os-alpha.service
   -> tools/run_bx1_os_management.sh
     -> .venv/bin/python -m bx1_management
+      -> BX1Core observer runtime
       -> ManagementApplication
       -> ManagementServer
       -> static management SPA
@@ -77,6 +95,11 @@ POST requests in this milestone.
 | `/assets/app.js` | Navigation and reusable page components |
 | `/api/status` | Existing Alpha observer-canary qualification contract |
 | `/api/management/bootstrap` | Read-only interface, system and release scaffold |
+| `/api/core/state` | Full state snapshot or incremental changes |
+| `/api/core/health` | Aggregate and plugin health |
+| `/api/core/plugins` | Discovered plugin inventory |
+| `/api/core/services` | Core service projection |
+| `/api/core/system` | System, network and robot projection |
 
 The page routes are:
 
@@ -134,6 +157,7 @@ Port 18089 is used only for local development. The installed Alpha service uses
 
 ```powershell
 python -m unittest Robot/tools/test_management_interface.py -v
+python -m unittest Robot/tools/test_bx1_core_telemetry.py -v
 python -m unittest Robot/tools/test_deployment_system.py -v
 ```
 

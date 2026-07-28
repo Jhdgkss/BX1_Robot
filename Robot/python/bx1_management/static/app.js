@@ -30,8 +30,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.2.0",
-    tag: "BX1_OS_ALPHA_v0.2.0",
+    version: "0.3.0",
+    tag: "BX1_OS_ALPHA_v0.3.0",
     architecture_only: true,
     capabilities: {},
   },
@@ -62,10 +62,10 @@ const fallbackData = {
   },
   services: [],
   deployment: {
-    current_version: "0.2.0",
+    current_version: "0.3.0",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_ALPHA_v0.2.0",
+    tag: "BX1_OS_ALPHA_v0.3.0",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -78,6 +78,7 @@ const state = {
   page: routeFromLocation(),
   data: fallbackData,
   connected: false,
+  telemetryLoading: false,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -95,6 +96,10 @@ const formatUptime = (seconds) => {
   const minutes = Math.floor((total % 3600) / 60);
   return days ? `${days}d ${hours}h` : hours ? `${hours}h ${minutes}m` : `${minutes}m`;
 };
+const formatPercent = (value) =>
+  value === null || value === undefined ? null : `${Number(value).toFixed(1)}%`;
+const formatTemperature = (value) =>
+  value === null || value === undefined ? null : `${Number(value).toFixed(1)} °C`;
 
 function routeFromLocation() {
   const route = location.pathname.replace(/^\/+|\/+$/g, "");
@@ -108,10 +113,12 @@ function button(label, options = {}) {
     prototype = "",
     href = "",
     disabled = false,
+    coreRefresh = false,
   } = options;
   const attrs = [
     `class="button ${className}"`,
     prototype ? `data-prototype="${esc(prototype)}"` : "",
+    coreRefresh ? 'data-core-refresh="true"' : "",
     disabled ? `aria-disabled="true"` : "",
   ].filter(Boolean).join(" ");
   const content = `${iconName ? icon(iconName) : ""}<span>${esc(label)}</span>`;
@@ -170,17 +177,17 @@ function dashboardPage(data) {
   const oldUi = `http://${location.hostname}:${data.robot.existing_ui_port || 8088}`;
   const cards = [
     ["BX1 OS Version", `v${data.interface.version}`, data.interface.tag, "about", ""],
-    ["Robot Status", data.robot.status, "Side-by-side qualification", "hardware", "blue"],
+    ["Robot Status", data.robot.status, "Core health aggregation", "hardware", "blue"],
     ["Brain Status", data.brain.status, "External intelligence layer", "brain", "purple"],
     ["Current Mode", data.robot.mode, "No hardware ownership", "diagnostics", "amber"],
-    ["Service Status", "1 managed", "Management service online", "services", ""],
-    ["CPU", data.system.cpu, "Telemetry adapter pending", "system", "blue"],
-    ["RAM", data.system.ram, "Telemetry adapter pending", "system", "purple"],
-    ["Disk", data.system.disk, "Telemetry adapter pending", "system", "amber"],
-    ["Temperature", data.system.temperature, "Sensor adapter pending", "hardware", "amber"],
+    ["Service Status", `${data.services.length} observed`, "Core service projection", "services", ""],
+    ["CPU", formatPercent(data.system.cpu), "Core system plugin", "system", "blue"],
+    ["RAM", formatPercent(data.system.ram), "Core system plugin", "system", "purple"],
+    ["Disk", formatPercent(data.system.disk), "Core system plugin", "system", "amber"],
+    ["Temperature", formatTemperature(data.system.temperature), "Core system plugin", "hardware", "amber"],
     ["Network", data.system.network, "Management port 8089", "services", ""],
-    ["Robot IP", location.hostname, "Resolved by this browser", "system", "blue"],
-    ["Uptime", formatUptime(data.system.uptime_seconds), "Management process", "clock", "purple"],
+    ["Robot IP", data.robot.ip, "Core network plugin", "system", "blue"],
+    ["Uptime", formatUptime(data.system.uptime_seconds), "Core system plugin", "clock", "purple"],
   ];
   const actions = `
     <div class="quick-actions">
@@ -193,7 +200,7 @@ function dashboardPage(data) {
   const overview = `
     <div class="architecture-note">
       ${icon("diagnostics")}
-      <div><strong>Architecture milestone</strong>This interface is read-only. Control APIs will be introduced behind explicit permissions in a later release.</div>
+      <div><strong>Core telemetry active</strong>Every visible value is projected from BX1 OS Core. This interface remains read-only and takes no hardware ownership.</div>
     </div>`;
   return `
     <div class="grid">
@@ -223,7 +230,14 @@ function systemPage(data) {
   return `<div class="grid">
     ${panel("Host information", dataList(platformRows), { span: 6, subtitle: "Read-only host identity" })}
     ${panel("BX1 OS release", dataList(releaseRows), { span: 6, subtitle: "Installed platform metadata" })}
-    ${panel("Resource telemetry", emptyPanel("system", "Telemetry adapters pending", "CPU, memory, disk, temperature and network history will be connected in a later milestone."), { span: 12 })}
+    ${panel("Resource telemetry", dataList([
+      ["CPU utilisation", formatPercent(data.system.cpu)],
+      ["Memory utilisation", formatPercent(data.system.ram)],
+      ["Disk utilisation", formatPercent(data.system.disk)],
+      ["Temperature", formatTemperature(data.system.temperature)],
+      ["Network", data.system.network],
+      ["Robot IP", data.robot.ip, true],
+    ]), { span: 12, subtitle: "Live read-only values from BX1 OS Core plugins" })}
   </div>`;
 }
 
@@ -347,7 +361,8 @@ function deploymentPage(data) {
   ];
   const timeline = `
     <div class="timeline">
-      <div class="timeline-item"><strong>BX1 OS Alpha v0.2.0</strong><span>Management Interface framework · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.3.0</strong><span>Core telemetry and plugin architecture · current</span></div>
+      <div class="timeline-item"><strong>BX1 OS Alpha v0.2.0</strong><span>Management Interface framework</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.1.2</strong><span>Process-isolation qualification correction</span></div>
       <div class="timeline-item"><strong>BX1 OS Alpha v0.1.1</strong><span>Side-by-side deployment foundation</span></div>
     </div>`;
@@ -440,7 +455,7 @@ function renderPage() {
   $("#pageTitle").textContent = meta[1];
   $("#pageDescription").textContent = meta[2];
   $("#pageActions").innerHTML = state.page === "dashboard"
-    ? button("Refresh status", { iconName: "refresh", className: "primary", prototype: "Refresh dashboard" })
+    ? button("Refresh status", { iconName: "refresh", className: "primary", coreRefresh: true })
     : "";
   $("#pageContent").innerHTML = RENDERERS[state.page](state.data);
   $$("[data-bind='version']").forEach(node => { node.textContent = `v${state.data.interface.version}`; });
@@ -467,6 +482,12 @@ function toast(title, detail = "This control is intentionally not implemented in
 }
 
 function bindPrototypeActions() {
+  $$("[data-core-refresh]").forEach(node => {
+    node.addEventListener("click", event => {
+      event.preventDefault();
+      loadCoreTelemetry();
+    });
+  });
   $$("[data-prototype]").forEach(node => {
     node.addEventListener("click", event => {
       event.preventDefault();
@@ -478,16 +499,93 @@ function bindPrototypeActions() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-async function loadBootstrap() {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload) {
+  const core = statePayload.state || {};
+  const deployment = core.deployment || {};
+  const system = core.system || {};
+  const network = core.network || {};
+  const robot = core.robot || {};
+  const brain = core.brain || {};
+  const management = core.management || {};
+  return {
+    interface: {
+      id: management.id || "bx1-os-management",
+      name: management.name || "BX1 OS Management",
+      version: deployment.version || "0.3.0",
+      tag: deployment.tag || "BX1_OS_ALPHA_v0.3.0",
+      architecture_only: true,
+      capabilities: management.capabilities || {},
+    },
+    robot: {
+      name: robot.name || "BX1",
+      status: healthPayload.state || robot.state || "unknown",
+      mode: robot.mode || "observer_only",
+      hostname: system.hostname,
+      ip: network.ip,
+      existing_ui_port: management.existing_ui_port || 8088,
+      management_port: management.port || 8089,
+    },
+    brain: {
+      status: brain.connected ? "Connected" : "Not connected",
+      url: "",
+    },
+    system: {
+      python: system.python,
+      os: system.os,
+      kernel: system.kernel,
+      architecture: system.architecture,
+      hostname: system.hostname,
+      serial: system.serial,
+      update_channel: "alpha",
+      cpu: system.cpu,
+      ram: system.memory,
+      disk: system.disk,
+      temperature: system.temperature,
+      network: network.state,
+      uptime_seconds: system.uptime,
+    },
+    services: servicesPayload.services || [],
+    deployment: {
+      current_version: deployment.version,
+      commit: deployment.commit,
+      branch: deployment.branch,
+      tag: deployment.tag,
+      build_date: deployment.build_date,
+      previous_versions: [],
+      rollback_points: [],
+      qualification_history: [],
+      deployment_history: [],
+    },
+  };
+}
+
+async function loadCoreTelemetry() {
+  if (state.telemetryLoading) return;
+  state.telemetryLoading = true;
   try {
-    const response = await fetch("/api/management/bootstrap", { cache: "no-store" });
-    if (!response.ok) throw new Error(`HTTP ${response.status}`);
-    state.data = await response.json();
+    const paths = [
+      "/api/core/state",
+      "/api/core/services",
+      "/api/core/health",
+      "/api/core/plugins",
+      "/api/core/system",
+    ];
+    const responses = await Promise.all(
+      paths.map(path => fetch(path, { cache: "no-store" }))
+    );
+    const failed = responses.find(response => !response.ok);
+    if (failed) throw new Error(`HTTP ${failed.status}`);
+    const [coreState, services, health] = await Promise.all(
+      responses.map(response => response.json())
+    );
+    state.data = managementDataFromCore(coreState, services, health);
     state.connected = true;
     renderPage();
   } catch (error) {
     state.connected = false;
-    toast("Using interface preview", "The management bootstrap endpoint is not available.");
+    toast("Using interface preview", "BX1 OS Core telemetry is not available.");
+  } finally {
+    state.telemetryLoading = false;
   }
 }
 
@@ -515,7 +613,8 @@ function init() {
     }
     if (event.key === "Escape") closeMobileNav();
   });
-  loadBootstrap();
+  loadCoreTelemetry();
+  window.setInterval(loadCoreTelemetry, 5000);
 }
 
 document.addEventListener("DOMContentLoaded", init);

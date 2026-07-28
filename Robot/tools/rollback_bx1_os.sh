@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-echo "[BX1 ROLLBACK] BX1 OS Alpha v0.2.0 rollback launcher"
+echo "[BX1 ROLLBACK] BX1 OS Alpha v0.3.0 rollback launcher"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -f "$SCRIPT_DIR/release_manifest.json" ] && [ -d "$SCRIPT_DIR/payload" ]; then

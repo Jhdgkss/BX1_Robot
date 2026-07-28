@@ -4,8 +4,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import platform
-import socket
 import sys
 import threading
 import time
@@ -14,16 +12,16 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, urlparse
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from bx1_core import BootstrapResult, bootstrap_runtime
+from bx1_core import BX1Core, BootstrapResult, bootstrap_runtime
 
 
-RELEASE_VERSION = "0.2.0"
-RELEASE_TAG = "BX1_OS_ALPHA_v0.2.0"
+RELEASE_VERSION = "0.3.0"
+RELEASE_TAG = "BX1_OS_ALPHA_v0.3.0"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -89,6 +87,25 @@ class ManagementApplication:
         self.started_at = time.time() if started_at is None else float(started_at)
         self.bootstrap = bootstrap or bootstrap_runtime(self.config)
         self.capabilities = InterfaceCapabilities()
+        self.core = BX1Core(
+            self.config,
+            install_root=Path(
+                self.config.get("install_root", "/home/arduino/BX1_OS")
+            ),
+            service_provider=self._service_projection,
+        )
+        self.core.state.set_many(
+            {
+                "management.id": INTERFACE_ID,
+                "management.name": "BX1 OS Management",
+                "management.read_only": True,
+                "management.capabilities": self.capabilities.as_dict(),
+                "management.port": int(self.config.get("web_port", 8089)),
+                "management.existing_ui_port": 8088,
+                "robot.name": str(self.config.get("robot_name", "BX1")),
+            },
+            source="management.registration",
+        )
 
     @classmethod
     def from_config_file(cls, config_path: Path) -> "ManagementApplication":
@@ -101,6 +118,7 @@ class ManagementApplication:
         bx1 = self.bootstrap.bx1
         bx1.tick()
         bx1.health.check()
+        self.core.update()
         isolation = dict(self.config.get("observer_isolation", {}))
         return {
             "ok": True,
@@ -129,80 +147,122 @@ class ManagementApplication:
                 "health": bx1.health.status(),
                 "management_interface": {
                     "id": INTERFACE_ID,
-                    "schema": "bx1.management.interface.v1",
+                    "schema": "bx1.management.interface.v2",
                     "state": "READY",
                     "architecture_only": True,
+                    "core_telemetry": True,
                     "capabilities": self.capabilities.as_dict(),
                 },
             },
         }
 
     def bootstrap_payload(self) -> Dict[str, Any]:
-        hostname = socket.gethostname()
+        """Compatibility projection built only from the Core state snapshot."""
+        state = self.core.state_snapshot()["state"]
+        deployment = state.get("deployment", {})
+        system = state.get("system", {})
+        network = state.get("network", {})
+        robot = state.get("robot", {})
+        brain = state.get("brain", {})
+        management = state.get("management", {})
         return {
-            "schema": "bx1.management.bootstrap.v1",
+            "schema": "bx1.management.bootstrap.v2",
             "interface": {
                 "id": INTERFACE_ID,
                 "name": "BX1 OS Management",
-                "version": RELEASE_VERSION,
-                "tag": RELEASE_TAG,
+                "version": deployment.get("version", RELEASE_VERSION),
+                "tag": deployment.get("tag", RELEASE_TAG),
                 "architecture_only": True,
-                "capabilities": self.capabilities.as_dict(),
+                "capabilities": management.get(
+                    "capabilities", self.capabilities.as_dict()
+                ),
             },
             "robot": {
-                "name": str(self.config.get("robot_name", "BX1")),
-                "status": "Qualification",
-                "mode": "Observer only",
-                "hostname": hostname,
-                "ip": "Detected by browser",
-                "existing_ui_port": 8088,
-                "management_port": int(self.config.get("web_port", 8089)),
+                "name": robot.get("name", "BX1"),
+                "status": robot.get("state", "unknown"),
+                "mode": robot.get("mode", "observer_only"),
+                "hostname": system.get("hostname", "Unknown"),
+                "ip": network.get("ip"),
+                "existing_ui_port": management.get("existing_ui_port", 8088),
+                "management_port": management.get("port", 8089),
             },
             "brain": {
-                "status": "Not connected",
+                "status": "Connected" if brain.get("connected") else "Not connected",
                 "url": "",
             },
             "system": {
-                "python": platform.python_version(),
-                "os": platform.system() or "Unknown",
-                "kernel": platform.release() or "Unknown",
-                "architecture": platform.machine() or "Unknown",
-                "hostname": hostname,
-                "serial": "Pending integration",
+                "python": system.get("python"),
+                "os": system.get("os"),
+                "kernel": system.get("kernel"),
+                "architecture": system.get("architecture"),
+                "hostname": system.get("hostname"),
+                "serial": system.get("serial"),
                 "update_channel": "alpha",
-                "cpu": None,
-                "ram": None,
-                "disk": None,
-                "temperature": None,
-                "network": "Management interface online",
-                "uptime_seconds": max(0, int(time.time() - self.started_at)),
+                "cpu": system.get("cpu"),
+                "ram": system.get("memory"),
+                "disk": system.get("disk"),
+                "temperature": system.get("temperature"),
+                "network": network.get("state"),
+                "uptime_seconds": system.get("uptime", 0),
             },
-            "services": [
-                {
-                    "name": "bx1-os-alpha.service",
-                    "description": "BX1 OS Alpha management service",
-                    "state": "running",
-                    "managed": True,
-                },
-                {
-                    "name": "bx1-web.service",
-                    "description": "Existing Robot Body interface (protected)",
-                    "state": "external",
-                    "managed": False,
-                },
-            ],
+            "services": state.get("services", {}).get("items", []),
             "deployment": {
-                "current_version": RELEASE_VERSION,
-                "commit": "Provided by release manifest",
-                "branch": "Provided by release manifest",
-                "tag": RELEASE_TAG,
-                "build_date": "Provided by release manifest",
+                "current_version": deployment.get("version"),
+                "commit": deployment.get("commit"),
+                "branch": deployment.get("branch"),
+                "tag": deployment.get("tag"),
+                "build_date": deployment.get("build_date"),
                 "previous_versions": [],
                 "rollback_points": [],
                 "qualification_history": [],
                 "deployment_history": [],
             },
         }
+
+    def core_state(self, since_revision: Optional[int] = None) -> Dict[str, Any]:
+        if since_revision is None:
+            return self.core.state_snapshot()
+        return self.core.telemetry.updates(since_revision)
+
+    def core_health(self) -> Dict[str, Any]:
+        return self.core.health_snapshot()
+
+    def core_plugins(self) -> Dict[str, Any]:
+        return self.core.plugin_snapshot()
+
+    def core_services(self) -> Dict[str, Any]:
+        return self.core.service_snapshot()
+
+    def core_system(self) -> Dict[str, Any]:
+        return self.core.system_snapshot()
+
+    def _service_projection(self) -> list[Dict[str, Any]]:
+        bx1 = self.bootstrap.bx1
+        services = [
+            {
+                "name": "bx1-os-alpha.service",
+                "description": "BX1 OS Alpha management and Core service",
+                "state": "running",
+                "managed": True,
+            },
+            {
+                "name": "bx1-web.service",
+                "description": "Existing Robot Body interface (protected)",
+                "state": "external",
+                "managed": False,
+            },
+        ]
+        for name in bx1.services.names():
+            registration = bx1.services.registration(name)
+            services.append(
+                {
+                    "name": "core/%s" % name,
+                    "description": type(registration.service).__name__,
+                    "state": registration.state.value.lower(),
+                    "managed": True,
+                }
+            )
+        return services
 
 
 class ReusableThreadingHTTPServer(ThreadingHTTPServer):
@@ -233,6 +293,7 @@ class ManagementServer:
             return
         self.httpd = self._build_httpd()
         self.port = int(self.httpd.server_address[1])
+        self.application.core.start()
         self.thread = threading.Thread(
             target=self.httpd.serve_forever,
             name="bx1-management-http",
@@ -243,7 +304,11 @@ class ManagementServer:
     def serve_forever(self) -> None:
         self.httpd = self._build_httpd()
         self.port = int(self.httpd.server_address[1])
-        self.httpd.serve_forever()
+        self.application.core.start()
+        try:
+            self.httpd.serve_forever()
+        finally:
+            self.application.core.stop()
 
     def stop(self) -> None:
         if self.httpd is not None:
@@ -251,6 +316,7 @@ class ManagementServer:
             self.httpd.server_close()
         if self.thread is not None:
             self.thread.join(timeout=3)
+        self.application.core.stop()
         self.httpd = None
         self.thread = None
 
@@ -259,7 +325,7 @@ class ManagementServer:
         static_root = self.static_root
 
         class Handler(BaseHTTPRequestHandler):
-            server_version = "BX1OSManagement/0.2"
+            server_version = "BX1OSManagement/0.3"
 
             def log_message(self, fmt: str, *args: Any) -> None:
                 if os.environ.get("BX1_MANAGEMENT_HTTP_LOG") == "1":
@@ -291,9 +357,35 @@ class ManagementServer:
                 )
 
             def do_GET(self) -> None:  # noqa: N802
-                path = urlparse(self.path).path
+                request = urlparse(self.path)
+                path = request.path
                 if path == "/api/status":
                     self._json(HTTPStatus.OK, application.status())
+                    return
+                if path == "/api/core/state":
+                    query = parse_qs(request.query)
+                    raw_since = query.get("since", [None])[0]
+                    try:
+                        since = None if raw_since is None else int(raw_since)
+                    except ValueError:
+                        self._json(
+                            HTTPStatus.BAD_REQUEST,
+                            {"ok": False, "error": "invalid_revision"},
+                        )
+                        return
+                    self._json(HTTPStatus.OK, application.core_state(since))
+                    return
+                if path == "/api/core/health":
+                    self._json(HTTPStatus.OK, application.core_health())
+                    return
+                if path == "/api/core/plugins":
+                    self._json(HTTPStatus.OK, application.core_plugins())
+                    return
+                if path == "/api/core/services":
+                    self._json(HTTPStatus.OK, application.core_services())
+                    return
+                if path == "/api/core/system":
+                    self._json(HTTPStatus.OK, application.core_system())
                     return
                 if path == "/api/management/bootstrap":
                     self._json(HTTPStatus.OK, application.bootstrap_payload())
@@ -332,7 +424,7 @@ class ManagementServer:
                     {
                         "ok": False,
                         "error": "architecture_only",
-                        "detail": "Management actions are not implemented in v0.2.0",
+                        "detail": "Management actions are not implemented in v0.3.0",
                     },
                 )
 

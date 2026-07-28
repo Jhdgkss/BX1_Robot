@@ -1,12 +1,17 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS Alpha v0.2.0 management qualification",
-  "bx1_os_release_version": "0.2.0",
-  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.2.0",
+  "app_version": "BX1 OS Alpha v0.3.0 Core telemetry qualification",
+  "bx1_os_release_version": "0.3.0",
+  "bx1_os_release_tag": "BX1_OS_ALPHA_v0.3.0",
   "management_interface": {
     "enabled": true,
     "architecture_only": true,
     "read_only": true
+  },
+  "core_telemetry": {
+    "enabled": true,
+    "observer_only": true,
+    "update_interval_seconds": 2.0
   },
   "qualification_mode": true,
   "observer_only": true,
