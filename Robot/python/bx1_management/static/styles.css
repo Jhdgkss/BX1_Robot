@@ -307,6 +307,7 @@ kbd {
 .page-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 
 .grid { display: grid; grid-template-columns: repeat(12, minmax(0, 1fr)); gap: 16px; }
+.grid > * { min-width: 0; }
 .span-12 { grid-column: span 12; }
 .span-9 { grid-column: span 9; }
 .span-8 { grid-column: span 8; }
@@ -334,6 +335,8 @@ kbd {
 .panel-header h3 { margin: 0; font-size: 13px; letter-spacing: .01em; }
 .panel-header p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
 .panel-body { padding: 18px; }
+.dashboard-live-summary, .dashboard-live-summary .panel { min-width: 0; }
+.truncate-line { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel-empty {
   min-height: 260px;
   display: grid;

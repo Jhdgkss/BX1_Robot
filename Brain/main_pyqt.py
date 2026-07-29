@@ -3283,6 +3283,35 @@ class BX1BrainCore:
         )
         return not any(token in text for token in blockers)
 
+    @staticmethod
+    def _is_idle_life_request(provenance: Dict[str, Any]) -> bool:
+        """Return True only for Body-originated autonomous idle prompts."""
+        return (
+            str(provenance.get("label") or "").upper() == "IDLE"
+            and str(provenance.get("source") or "").lower() in {"idle_life", "robot_body", "body"}
+        )
+
+    def _idle_life_system_prompt(self, cfg: Dict[str, Any]) -> str:
+        """A local-personality route which deliberately excludes tools and RAG."""
+        return (
+            self.build_system_prompt(None, cfg_override=cfg)
+            + "\n\nAUTONOMOUS IDLE-LIFE MODE: This is not a user question. Produce one brief, natural "
+            "in-character observation or thought suitable for speaking aloud, or return an empty response "
+            "if no good remark is available. Use only the personality and Body context in this request. "
+            "Do not use, request, mention, apologise for, or report internet, live tools, RAG, document lookup, "
+            "search, weather, news, configuration, or internal errors. Never claim a lookup failed or tools were disabled."
+        )
+
+    def _idle_life_silent_response(self, robot_id: str, provenance: Dict[str, Any], reason: str) -> Dict[str, Any]:
+        """Idle life fails quietly when local personality generation is unavailable."""
+        self.log(f"Idle-life local personality response withheld: {reason}")
+        return {
+            "ok": True, "idle_silent": True, "reply": "", "speech": "", "actions": [],
+            "robot_id": robot_id, "provenance": provenance,
+            "live_tool": {"route": "idle_local", "query": "", "verified": False, "sources": [], "result_count": 0, "error": ""},
+            "stats": {"live_tool_route": "idle_local", "idle_silent": True, "reason": str(reason)[:160]},
+        }
+
     def _fast_voice_system_prompt(self, cfg: Dict[str, Any]) -> str:
         name = robot_name_from_cfg(cfg)
         profile = str(cfg.get("robot_profile") or "embodied robot assistant")
@@ -3398,6 +3427,7 @@ class BX1BrainCore:
     def generate_reply(self, data: Dict[str, Any]) -> Dict[str, Any]:
         message = str(data.get("message") or data.get("text") or data.get("instruction") or "").strip()
         provenance = self._request_provenance(data)
+        idle_life_request = self._is_idle_life_request(provenance)
         if not message:
             return {"ok": False, "error": "Missing message/text/instruction field.", "provenance": provenance}
         # Per-turn evidence must never leak from a previous response.
@@ -3791,6 +3821,12 @@ class BX1BrainCore:
         if bool(self.cfg.get("api_require_ollama_online", True)):
             health = self.ollama_health()
             if not health.get("ok"):
+                if idle_life_request:
+                    return self._idle_life_silent_response(
+                        str(data.get("robot_id") or robot_name_from_cfg(self.cfg)),
+                        provenance,
+                        "local personality model unavailable",
+                    )
                 stage_times["total_s"] = time.perf_counter() - total_started
                 stats = {
                     "elapsed_s": round(stage_times["total_s"], 3),
@@ -3837,13 +3873,14 @@ class BX1BrainCore:
         live_context = ""
         mem_context = ""
         document_context = ""
-        if fast_voice_mode:
+        if fast_voice_mode or idle_life_request:
             self.last_tool_route = "none"
             self.last_tool_context = ""
             self.last_tool_context_reused = False
             self.last_tool_diagnostics = {
-                "route": "none", "query": message, "verified": False, "sources": [],
-                "result_count": 0, "context_reused": False, "error": "Fast voice route",
+                "route": "idle_local" if idle_life_request else "none", "query": message,
+                "verified": False, "sources": [], "result_count": 0, "context_reused": False,
+                "error": "" if idle_life_request else "Fast voice route",
                 "fetched_at": now_iso(),
             }
         else:
@@ -3912,7 +3949,10 @@ class BX1BrainCore:
         if has_image:
             system_prompt = self._vision_system_prompt(effective_cfg, body_state)
         else:
-            system_prompt = self._fast_voice_system_prompt(effective_cfg) if fast_voice_mode else self.build_system_prompt(body_state, cfg_override=effective_cfg)
+            system_prompt = (
+                self._idle_life_system_prompt(effective_cfg) if idle_life_request
+                else (self._fast_voice_system_prompt(effective_cfg) if fast_voice_mode else self.build_system_prompt(body_state, cfg_override=effective_cfg))
+            )
         messages: List[Dict[str, Any]] = [{"role": "system", "content": system_prompt}]
         if mem_context and not has_image:
             messages.append({"role": "system", "content": mem_context})

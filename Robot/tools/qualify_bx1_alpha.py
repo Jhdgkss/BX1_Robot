@@ -24,8 +24,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.7.7-body-speaker-echo-suppression"
-RELEASE_TAG = "BX1_OS_v0.7.7_body_speaker_echo_suppression"
+RELEASE_VERSION = "0.7.8-stt-calibration-kiosk"
+RELEASE_TAG = "BX1_OS_v0.7.8_stt_calibration_kiosk"
 SAMPLE_PATHS = (
     "main.py",
     "START_BX1_WEB.sh",
@@ -272,11 +272,11 @@ def qualify(
     checks.append(
         Check(
             "Alpha Service State",
-            alpha_active == expected_alpha_active and not alpha_enabled,
+            alpha_active == expected_alpha_active and alpha_enabled,
             (
-                "Alpha service is active but disabled for a manual canary"
+                "Alpha service is active and enabled for automatic startup"
                 if mode == "canary"
-                else "Alpha service is disabled and inactive after install-only"
+                else "Alpha service is enabled for automatic startup and inactive after install-only"
             ),
             alpha_state,
         )

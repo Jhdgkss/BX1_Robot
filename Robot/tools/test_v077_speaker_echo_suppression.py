@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sys
+import tempfile
 import threading
 import unittest
 from pathlib import Path
@@ -59,6 +60,23 @@ class SpeakerSuppressionTests(unittest.TestCase):
         self.service._process_voice_worker_result({"accepted": True, "text": "hello leo", "confidence": 0.9})
         self.assertEqual(submitted, [])
         self.assertEqual(self.events[-1][0], "echo_suppressed")
+
+    def test_idle_life_playback_suppression_never_submits_its_audio(self) -> None:
+        submitted = []
+        self.service.speaker_suppression_snapshot = lambda: {"suppressed": True, "playback_active": False, "echo_tail_remaining_s": 1.2}
+        self.service.handle_user_text = lambda *args, **kwargs: submitted.append((args, kwargs))
+        self.service._process_voice_worker_result({"accepted": True, "text": "leo's idle comment", "confidence": 0.98})
+        self.assertEqual(submitted, [])
+        self.assertEqual(self.events[-1][0], "echo_suppressed")
+
+    def test_direct_body_file_playback_uses_the_authoritative_lifecycle(self) -> None:
+        lifecycle = []
+        self.service.handle_mouth_audio_event = lambda event, info: lifecycle.append((event, info["tag"]))
+        with tempfile.NamedTemporaryFile(suffix=".wav") as audio_file, patch.object(main, "play_audio_file", return_value={"ok": True}) as play:
+            result = self.service.play_body_audio_file(audio_file.name, tag="idle-local", backend="local-cue")
+        self.assertTrue(result["ok"])
+        self.assertEqual(lifecycle, [("speech_audio_file_start", "idle-local"), ("speech_audio_file_stop", "idle-local")])
+        play.assert_called_once()
 
 
 if __name__ == "__main__":

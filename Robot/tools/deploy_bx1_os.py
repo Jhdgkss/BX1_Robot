@@ -26,8 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.7.7-body-speaker-echo-suppression"
-RELEASE_TAG = "BX1_OS_v0.7.7_body_speaker_echo_suppression"
+RELEASE_VERSION = "0.7.8-stt-calibration-kiosk"
+RELEASE_TAG = "BX1_OS_v0.7.8_stt_calibration_kiosk"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -659,11 +659,11 @@ class SideBySideDeployer:
             if self.options.mode in {"install-only", "no-start"}:
                 if current["active"]:
                     self._systemctl("stop", self.options.service_name)
-                if current["enabled"]:
-                    self._systemctl("disable", self.options.service_name)
+                if not current["enabled"]:
+                    self._systemctl("enable", self.options.service_name)
             else:
-                if current["enabled"]:
-                    self._systemctl("disable", self.options.service_name)
+                if not current["enabled"]:
+                    self._systemctl("enable", self.options.service_name)
                 if port_in_use(self.options.web_port):
                     raise DeploymentError("canary port became busy before service start")
                 self._systemctl("start", self.options.service_name)
@@ -683,7 +683,7 @@ class SideBySideDeployer:
                 "service_name": self.options.service_name,
                 "web_port": self.options.web_port,
                 "backup_location": str(self.backup_dir),
-                "service_enabled": False,
+                "service_enabled": True,
                 "live_installation_changed": False,
                 "live_service_changed": False,
             }

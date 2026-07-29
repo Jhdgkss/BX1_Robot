@@ -263,6 +263,7 @@ function dashboardPage(data) {
       ${icon("diagnostics")}
       <div><strong>Core telemetry active</strong>Every visible value is projected from BX1 OS Core. This interface remains read-only and takes no hardware ownership.</div>
     </div>`;
+  const kiosk = data.touchscreen || {};
   const widgets = (data.widgets?.widgets || []).filter(widget => widget.placement === "dashboard").map(widget => {
     const values = Object.entries(widget.data || {}).map(([key, value]) => `<div><span>${esc(key.replaceAll("_", " "))}</span><strong>${display(value)}</strong></div>`).join("");
     return panel(widget.title, `<div class="device-facts">${values}</div>${widget.fault ? `<p class="mono">${esc(widget.fault)}</p>` : ""}`, { span: 4, subtitle: `${esc(widget.module_id)} · ${esc(widget.health)}` });
@@ -270,8 +271,8 @@ function dashboardPage(data) {
   return `
     <div class="grid">
       ${cards.map(card => metricCard(...card)).join("")}
-      <div class="span-12" data-live-voice="dashboard">${liveVoiceMarkup(data.audio_bridge || {}, false)}</div>
-      <div data-shared-voice>${sharedVoiceFeed(data, false)}</div>
+      <div class="span-12 dashboard-live-summary" data-live-voice="dashboard">${liveVoiceMarkup(data.audio_bridge || {}, false)}</div>
+      ${panel("Touchscreen kiosk", dataList([["State", kiosk.state || "Not reported"], ["Last start reason", kiosk.reason || "kiosk has not reported a start"], ["Target", kiosk.url || "http://127.0.0.1:8089/dashboard"], ["Last update", kiosk.updated_at ? formatTimestamp(kiosk.updated_at) : "Never"]]), { span: 12, subtitle: "Existing X11 kiosk launcher status" })}
       ${widgets}
       ${panel("Legacy fallback", actions, { span: 12, subtitle: "Touchscreen starts BX1 OS on 8089. The protected Robot Body page remains available here." })}
       ${panel("Platform posture", overview, { span: 12 })}
@@ -292,7 +293,8 @@ function liveVoiceMarkup(bridge, expanded) {
   const thresholdPercent = Math.max(0, Math.min(100, (threshold + 90) / .9));
   const stateTone = audio.state === "failed" ? "failure" : audio.state === "speaking" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
   const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Failure / rejection", recognition.rejection_reason || "None"], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
-  return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><p class="heard-line">${esc(audio.state_detail || audio.state || "Voice state unavailable")}</p><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Last accepted request: ${esc(recognition.last_accepted_request || "None")}</p>${details}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
+  const compact = expanded ? "" : `<div class="page-actions"><button class="button primary" type="button" data-page-link="voice">Open Live Voice</button></div>`;
+  return panel(expanded ? "Voice Monitor" : "Live Voice summary", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><p class="heard-line">${esc(audio.state_detail || audio.state || "Voice state unavailable")}</p><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line truncate-line">Last accepted request: ${esc(recognition.last_accepted_request || "None")}</p><p class="heard-line">STT: ${esc(recognition.engine || "Unknown")}${recognition.rejection_reason ? ` · ${esc(recognition.rejection_reason)}` : ""}</p>${details}${compact}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
 }
 
 function sharedVoiceFeed(data, expanded = false) {
@@ -608,6 +610,7 @@ function audioPage(data) {
       ["Core update", formatTimestamp(observedMeta(input.level_rms).timestamp)],
     ]), { span: 8, subtitle: "Proxied only; BX1 OS never seizes the microphone" })}
     <div class="span-12" data-live-voice="monitor">${liveVoiceMarkup(bridge, true)}</div>
+    ${panel("Speech Test & Calibration", `<p class="voice-connection">Speak a short phrase. Robot Body captures, validates and immediately discards it; BX1 OS receives metadata only.</p><div class="page-actions"><button class="button primary" type="button" data-speech-test="run">Run Speech Test</button></div><div id="speechTestResult" class="result-box">Ready. Live level, gate and noise floor are shown above.</div>`, { span: 12, subtitle: "Faster-Whisper primary · labelled Vosk fallback · settings save only after Apply" })}
     ${panel("Body audio settings", bridge.ok ? `<form id="audioBridgeForm" class="audio-settings">${Object.entries(bridge.settings || {}).map(([key, value]) => `<label>${esc(key.replaceAll("_", " "))}<input class="input" name="${esc(key)}" type="number" min="${value.minimum}" max="${value.maximum}" step="any" value="${value.current}"><small>Range ${value.minimum}–${value.maximum} ${esc(value.unit)} · default ${value.default} · effective ${value.effective}</small></label>`).join("")}<div class="page-actions"><button class="button primary" type="submit">Apply Body settings</button><span id="audioBridgeState" class="mono">Validated and atomically saved by Robot Body.</span></div></form>` : "", { span: 12, subtitle: "No raw audio, recording, device, GPIO or hardware controls" })}
     ${panel("Wake & Speech", wakeSpeechSettingsPanel(bridge), { span: 12, subtitle: "Normal operator settings live in BX1 OS; the 8088 Body page is engineering fallback only." })}
     ${panel("Microphones", audioDeviceTable(microphones, "Microphone"), { span: 12, aside: badge(`${microphones.length} observed`, "info", false) })}
@@ -835,6 +838,7 @@ function renderPage() {
   enhanceConversationView();
   bindAudioBridgeForm();
   bindWakeSpeechForm();
+  bindSpeechTest();
   if (["audio", "dashboard", "voice"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
   if (!["audio", "dashboard", "voice"].includes(state.page) && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
   if (state.page === "camera") startCameraPreview();
@@ -921,6 +925,30 @@ function bindWakeSpeechForm() {
       if (target) target.textContent = `Saved by Robot Body · revision ${payload.revision || "updated"}`;
       await loadAudioBridge();
     } catch (error) { if (target) target.textContent = `Failed: ${error.message}`; }
+  });
+}
+
+function bindSpeechTest() {
+  const button = $('[data-speech-test="run"]');
+  const result = $("#speechTestResult");
+  if (!button || !result) return;
+  button.addEventListener("click", async () => {
+    button.disabled = true; result.textContent = "Listening through Robot Body…";
+    try {
+      const response = await fetch("/api/audio/speech-test", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+      const payload = await response.json();
+      const handoff = payload.handoff || {};
+      result.className = `result-box ${payload.ok ? "good" : "bad"}`;
+      result.textContent = [
+        payload.ok ? `Recognised: ${payload.text || "[no accepted text]"}` : `Test not accepted: ${payload.reason || payload.error || "unknown reason"}`,
+        `Engine: ${payload.engine || handoff.engine_selected || "unknown"} · elapsed: ${payload.elapsed_ms ?? handoff.elapsed_ms ?? "--"} ms`,
+        `Payload: ${handoff.audio_payload || "unknown"} · ${handoff.sample_rate_hz ?? "--"} Hz · ${handoff.channels ?? "--"} channel · ${handoff.duration_s ?? "--"} s`,
+        `Primary request: ${handoff.primary_request || "not started"}${payload.fallback_reason ? ` · fallback/reason: ${payload.fallback_reason}` : ""}`,
+        `Recommendation: ${payload.recommendation || "None"}`,
+      ].join("\n");
+      await loadAudioBridge();
+    } catch (error) { result.className = "result-box bad"; result.textContent = `Speech Test failed: ${error.message}`; }
+    finally { button.disabled = false; }
   });
 }
 

@@ -15,8 +15,9 @@ Environment=DISPLAY=:0
 Environment=XAUTHORITY=/home/arduino/.Xauthority
 Environment=BX1_TOUCH_URL=http://127.0.0.1:8089/dashboard
 Environment=BX1_TOUCH_LEGACY_URL=http://127.0.0.1:8088
+Environment=BX1_TOUCH_STATUS_URL=http://127.0.0.1:8089/api/status
 ExecStart=/home/arduino/BX1_OS/tools/bx1_touchscreen_kiosk.sh
-Restart=on-failure
+Restart=always
 RestartSec=5
 TimeoutStartSec=180
 

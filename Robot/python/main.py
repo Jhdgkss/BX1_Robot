@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 import importlib.util
+import io
 import math
 import os
 import uuid
@@ -1162,10 +1163,13 @@ class BX1RobotBodyService:
                     result = {"ok": False, "error": "speaker busy with another local feedback cue"}
                 else:
                     try:
-                        result = play_audio_file(
+                        result = self.play_body_audio_file(
                             path,
                             device=str(self.cfg.get("tts_playback_device", "default") or "default"),
                             timeout_s=4.0,
+                            text=f"voice feedback {kind}",
+                            tag=f"voice-feedback-{kind}",
+                            backend="voice-feedback",
                         )
                     finally:
                         self.feedback_audio_lock.release()
@@ -1307,6 +1311,31 @@ class BX1RobotBodyService:
                                loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
                                speaker_playback_active=False, echo_tail_remaining_s=round(tail_s, 2))
 
+    def play_body_audio_file(
+        self,
+        filename: str | os.PathLike,
+        *,
+        device: str = "default",
+        timeout_s: float = 30.0,
+        text: str = "",
+        tag: str = "body-audio-file",
+        backend: str = "body-audio-file",
+    ) -> Dict[str, Any]:
+        """Play a Body-owned file through the authoritative speaker lifecycle."""
+        path = Path(filename)
+        if not path.is_file():
+            return play_audio_file(path, device=device, timeout_s=timeout_s)
+        info = {
+            "text": str(text or ""), "tag": str(tag or "body-audio-file"),
+            "backend": str(backend or "body-audio-file"), "filename": str(path),
+            "wav": path.suffix.lower() == ".wav", "audio_profile": {},
+        }
+        self.handle_mouth_audio_event("speech_audio_file_start", info)
+        try:
+            return play_audio_file(path, device=device, timeout_s=timeout_s)
+        finally:
+            self.handle_mouth_audio_event("speech_audio_file_stop", info)
+
     def stt_guard_remaining_s(self) -> float:
         with self.tts_capture_mute_lock:
             return max(0.0, float(getattr(self, "tts_capture_mute_until", 0.0) or 0.0) - time.monotonic())
@@ -1442,6 +1471,37 @@ class BX1RobotBodyService:
         pipeline_started = time.monotonic()
         result = dict(result or {})
         wav_bytes = result.pop("_submitted_wav_bytes", b"") or b""
+        handoff: Dict[str, Any] = {
+            "schema": "bx1.body.primary_stt_handoff.v1",
+            "audio_payload": "present" if wav_bytes else "absent",
+            "valid_wav": False,
+            "sample_rate_hz": None,
+            "channels": None,
+            "duration_s": None,
+            "primary_request": "not_started",
+            "request_started_at": None,
+            "request_completed_at": None,
+            "elapsed_ms": None,
+            "engine_selected": "brain_faster_whisper" if self._primary_brain_stt_active() else "local_vosk",
+            "fallback_reason": "",
+        }
+        if wav_bytes:
+            try:
+                with wave.open(io.BytesIO(wav_bytes), "rb") as submitted:
+                    rate = int(submitted.getframerate())
+                    channels = int(submitted.getnchannels())
+                    width = int(submitted.getsampwidth())
+                    duration_s = submitted.getnframes() / float(rate or 1)
+                handoff.update({
+                    "sample_rate_hz": rate, "channels": channels,
+                    "duration_s": round(duration_s, 3),
+                    "valid_wav": rate == 16000 and channels == 1 and width == 2 and duration_s > 0.0,
+                })
+                if not handoff["valid_wav"]:
+                    handoff["fallback_reason"] = "submitted audio must be a complete 16 kHz mono 16-bit WAV"
+            except (wave.Error, EOFError, ValueError) as exc:
+                handoff["fallback_reason"] = f"invalid submitted WAV: {str(exc)[:120]}"
+        result["primary_stt_handoff"] = handoff
         local_text = str(result.get("text") or "").strip()
         result["local_vosk_text"] = local_text
         result["transcription_backend"] = "local_vosk"
@@ -1451,6 +1511,7 @@ class BX1RobotBodyService:
         def apply_local_fallback(primary_error: str, backend_name: str = "local_vosk_fallback") -> bool:
             nonlocal local_text
             if local_text:
+                handoff["fallback_reason"] = str(primary_error)[:240]
                 result["transcription_backend"] = backend_name
                 result["primary_stt_error"] = primary_error
                 result["stt_pipeline_ms"] = round((time.monotonic() - pipeline_started) * 1000.0, 1)
@@ -1485,6 +1546,7 @@ class BX1RobotBodyService:
             return result
         if not wav_bytes:
             result["primary_stt_error"] = "No submitted WAV bytes were available for desktop transcription."
+            handoff["fallback_reason"] = result["primary_stt_error"]
             result["stt_pipeline_ms"] = round((time.monotonic() - pipeline_started) * 1000.0, 1)
             return result
         if not self.brain.base_url:
@@ -1494,7 +1556,16 @@ class BX1RobotBodyService:
                 result["stt_pipeline_ms"] = round((time.monotonic() - pipeline_started) * 1000.0, 1)
             return result
 
+        if not handoff["valid_wav"]:
+            error = str(handoff["fallback_reason"] or "submitted WAV validation failed")
+            if not apply_local_fallback(error):
+                result["primary_stt_error"] = error
+                result["stt_pipeline_ms"] = round((time.monotonic() - pipeline_started) * 1000.0, 1)
+            return result
+
         remote_started = time.monotonic()
+        handoff["primary_request"] = "started"
+        handoff["request_started_at"] = now_iso()
         try:
             configured_hotwords = str(self.cfg.get("brain_stt_hotwords", "") or "").strip()
             wake_hints: List[str] = []
@@ -1526,6 +1597,7 @@ class BX1RobotBodyService:
         except Exception as exc:
             remote = {"ok": False, "error": str(exc)}
         remote_roundtrip_ms = round((time.monotonic() - remote_started) * 1000.0, 1)
+        handoff.update({"primary_request": "completed", "request_completed_at": now_iso(), "elapsed_ms": remote_roundtrip_ms})
 
         result["brain_stt"] = remote
         result["brain_stt_roundtrip_ms"] = remote_roundtrip_ms
@@ -1559,6 +1631,7 @@ class BX1RobotBodyService:
             return result
 
         error = str(remote.get("error") or "Desktop faster-whisper returned no transcript.")
+        handoff["fallback_reason"] = error[:240]
         result["primary_stt_error"] = error
         # A valid desktop STT response that says "no speech" or "corrupt
         # transcript" is authoritative. Local Vosk must not resurrect the same
@@ -3415,6 +3488,11 @@ class BX1RobotBodyService:
             self.set_idle_life_runtime("error", last_error=str(exc))
             return {"ok": False, "error": str(exc)}
         self.touch_robot_activity(f"idle_{kind}")
+        if bool(result.get("idle_silent")):
+            # Idle personality generation is intentionally allowed to remain
+            # silent.  Do not surface a desktop/tool failure as robot speech.
+            self.set_idle_life_runtime("waiting", "idle remark withheld", last_error="")
+            return {"ok": True, "silent": True, "reason": "Brain withheld idle remark"}
         response = self.handle_brain_result(result, original_message=f"autonomous idle {kind}")
         if response.get("ok"):
             self.set_idle_life_runtime("chatter", str(response.get("reply", "") or f"idle {kind}"))
@@ -4181,7 +4259,7 @@ class BX1RobotBodyService:
             return {"ok": False, "error": "brain_response_invalid" if privacy_mode else visible, "raw": {} if privacy_mode else result}
 
         live_tool = result.get("live_tool") if isinstance(result.get("live_tool"), dict) else {}
-        if live_tool and not privacy_mode:
+        if live_tool and not privacy_mode and str(live_tool.get("route") or "") != "idle_local":
             route = str(live_tool.get("route") or "none")
             query = str(live_tool.get("query") or "")
             verified = bool(live_tool.get("verified"))
@@ -4528,18 +4606,17 @@ class BX1RobotBodyService:
                 self.local_cue_playing.set()
                 self.guard_stt_capture(self.estimate_speech_guard_s(text, 1.2), "local_voice_cue")
                 self.web_log("thinking" if cue_key.startswith("thinking") else "voice", f"local cue: {text}", {"cue_key": cue_key, "filename": str(path)})
-                self.handle_mouth_audio_event("speech_audio_file_start", {"text": text, "backend": "local-cue", "tag": "local-cue", "filename": str(path), "wav": path.suffix.lower() == ".wav", "audio_profile": {}})
                 try:
-                    report = play_audio_file(path, str(self.cfg.get("tts_playback_device", "default")))
+                    report = self.play_body_audio_file(
+                        path, device=str(self.cfg.get("tts_playback_device", "default")),
+                        text=text, tag="local-cue", backend="local-cue",
+                    )
                     if not report.get("ok"):
                         self.web_log("error", f"local cue playback failed: {report.get('error') or report}", report)
                         return False
                     return True
                 finally:
-                    try:
-                        self.handle_mouth_audio_event("speech_audio_file_stop", {"text": text, "backend": "local-cue", "tag": "local-cue", "filename": str(path)})
-                    finally:
-                        self.local_cue_playing.clear()
+                    self.local_cue_playing.clear()
         if allow_main_tts_fallback and text:
             self.guard_stt_capture(self.estimate_speech_guard_s(text, 1.2), "main_tts_cue_fallback")
             self.tts.speak(text, flush=False, tag="local-cue-fallback")
@@ -5435,18 +5512,18 @@ class BX1RobotBodyService:
                 except Exception:
                     pass
 
-        capture_id = str(result.get("capture_id") or "").strip()
         debug_paths = result.get("debug_audio") if isinstance(result.get("debug_audio"), dict) else {}
-        debug_urls: Dict[str, str] = {}
-        if re.fullmatch(r"[A-Za-z0-9_-]{8,80}", capture_id):
-            for kind in ("raw", "filtered", "submitted"):
-                path = Path(str(debug_paths.get(kind) or ""))
-                if path.is_file():
-                    debug_urls[kind] = f"/api/stt_audio/{kind}.wav?capture_id={capture_id}&v={time.time_ns()}"
-        result["debug_audio_urls"] = debug_urls
-        if debug_urls:
-            self.last_stt_capture_id = capture_id
-            self.last_stt_debug_audio_urls = dict(debug_urls)
+        # The touchscreen calibration route reports bounded metadata only.
+        # Remove temporary debug WAVs before returning so neither raw nor
+        # submitted speech is retained or exported through the OS bridge.
+        for path_value in debug_paths.values():
+            try:
+                Path(str(path_value)).unlink(missing_ok=True)
+            except OSError:
+                pass
+        result.pop("debug_audio", None)
+        result.pop("capture_id", None)
+        result["debug_audio_urls"] = {}
 
         text = str(result.get("text") or "").strip()
         metrics = {
@@ -5467,6 +5544,7 @@ class BX1RobotBodyService:
             "local_recognition_ms": result.get("local_recognition_ms"),
             "stt_pipeline_ms": result.get("stt_pipeline_ms"),
             "primary_stt_error": result.get("primary_stt_error", ""),
+            "primary_stt_handoff": result.get("primary_stt_handoff", {}),
         }
         if not result.get("accepted", False):
             reason = str(result.get("reason") or result.get("error") or "speech rejected")
@@ -5846,7 +5924,7 @@ class BX1RobotBodyService:
             state_detail = "Leo speaking — microphone wake detection temporarily suppressed"
         elif state == "echo suppressed":
             state_detail = f"Speaker echo tail — wake detection suppressed ({float(suppression.get('echo_tail_remaining_s') or 0):.1f} s remaining)"
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}
@@ -6041,7 +6119,10 @@ class BX1RobotBodyService:
         data = data or {}
         device = str(data.get("playback_device", self.cfg.get("mic_playback_device", "default"))).strip() or "default"
         self.cfg["mic_playback_device"] = device
-        report = play_audio_file(self.last_mic_test_wav, device=device)
+        report = self.play_body_audio_file(
+            self.last_mic_test_wav, device=device, text="microphone test playback",
+            tag="mic-test", backend="mic-test",
+        )
         self.web_log("system" if report.get("ok") else "error", "Mic test playback " + ("complete" if report.get("ok") else "failed"))
         return {"ok": bool(report.get("ok")), "playback": report, "filename": self.last_mic_test_wav, "sample_info": self.web_mic_sample_info()}
 

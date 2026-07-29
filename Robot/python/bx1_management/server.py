@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.7-body-speaker-echo-suppression"
-RELEASE_TAG = "BX1_OS_v0.7.7_body_speaker_echo_suppression"
+RELEASE_VERSION = "0.7.8-stt-calibration-kiosk"
+RELEASE_TAG = "BX1_OS_v0.7.8_stt_calibration_kiosk"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -316,6 +316,7 @@ class ManagementApplication:
                 "uptime_seconds": system.get("uptime", 0),
             },
             "services": state.get("services", {}).get("items", []),
+            "touchscreen": self.touchscreen_status(),
             "deployment": {
                 "current_version": deployment.get("version"),
                 "commit": deployment.get("commit"),
@@ -407,6 +408,48 @@ class ManagementApplication:
             self.live_voice_console.observe_body(result)
             result["receiver"] = self.live_voice_console.snapshot()["receiver"]
             return result
+
+    def body_speech_test(self) -> Dict[str, Any]:
+        """Run one Body-owned calibration utterance; never proxy WAV data."""
+        try:
+            req = request.Request(
+                "http://127.0.0.1:8088/api/stt_once", data=b'{"send":false}', method="POST",
+                headers={"Content-Type": "application/json"},
+            )
+            with request.urlopen(req, timeout=25.0) as response:
+                payload = json.loads(response.read(32768).decode("utf-8"))
+            source = dict(payload) if isinstance(payload, Mapping) else {}
+            stt = source.get("stt") if isinstance(source.get("stt"), Mapping) else {}
+            capture = stt.get("capture") if isinstance(stt.get("capture"), Mapping) else {}
+            handoff = stt.get("primary_stt_handoff") if isinstance(stt.get("primary_stt_handoff"), Mapping) else {}
+            recommendation = "No adjustment recommended. Repeat in a quieter moment if the gate stays closed while speaking."
+            if capture.get("noise_floor_dbfs") is not None and capture.get("threshold_dbfs") is not None:
+                try:
+                    margin = float(capture["threshold_dbfs"]) - float(capture["noise_floor_dbfs"])
+                    if margin < 4.0:
+                        recommendation = "Consider increasing the existing noise margin slightly, then Apply only if repeated tests clip speech."
+                except (TypeError, ValueError):
+                    pass
+            return {
+                "ok": bool(source.get("ok")), "text": str(source.get("text") or "")[:400],
+                "accepted": bool(stt.get("accepted")), "reason": str(source.get("error") or stt.get("reason") or "")[:240],
+                "engine": str(stt.get("transcription_backend") or "unknown"),
+                "elapsed_ms": stt.get("stt_pipeline_ms"), "fallback_reason": str(stt.get("primary_stt_error") or handoff.get("fallback_reason") or "")[:240],
+                "handoff": dict(handoff),
+                "live": self.body_audio_bridge().get("audio", {}),
+                "recommendation": recommendation,
+                "boundary": "Robot Body captured and discarded the utterance; BX1 OS received metadata only.",
+            }
+        except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "Body speech test unavailable", "detail": str(exc)[:240]}
+
+    def touchscreen_status(self) -> Dict[str, Any]:
+        path = Path(self.config.get("touchscreen_status_file", "/home/arduino/BX1_OS/runtime/touchscreen-kiosk-status.json"))
+        try:
+            value = json.loads(path.read_text(encoding="utf-8"))
+            return dict(value) if isinstance(value, Mapping) else {"ok": False, "reason": "invalid_status"}
+        except (OSError, ValueError, json.JSONDecodeError):
+            return {"ok": False, "reason": "kiosk_has_not_reported_a_start"}
 
     def live_voice_console_snapshot(self) -> Dict[str, Any]:
         return self.live_voice_console.snapshot()
@@ -688,6 +731,9 @@ class ManagementServer:
                 if path == "/api/audio/bridge":
                     self._json(HTTPStatus.OK, application.body_audio_bridge())
                     return
+                if path == "/api/touchscreen/status":
+                    self._json(HTTPStatus.OK, application.touchscreen_status())
+                    return
                 if path == "/api/audio/voice-settings/v1":
                     self._json(HTTPStatus.OK, application.body_voice_settings())
                     return
@@ -877,6 +923,10 @@ class ManagementServer:
                         return
                     if path == "/api/audio/bridge/settings":
                         result = application.update_body_audio_bridge(body)
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        return
+                    if path == "/api/audio/speech-test":
+                        result = application.body_speech_test()
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/voice/typed-test":

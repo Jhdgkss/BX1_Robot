@@ -31,9 +31,19 @@ export XAUTHORITY="${XAUTHORITY:-/home/arduino/.Xauthority}"
 
 mkdir -p "$LOG_DIR" "$PROFILE_DIR"
 LOG_FILE="$LOG_DIR/touchscreen_kiosk.log"
+STATUS_FILE="$ROOT_DIR/runtime/touchscreen-kiosk-status.json"
+BX1_TOUCH_STATUS_URL="${BX1_TOUCH_STATUS_URL:-http://127.0.0.1:${BX1_WEB_PORT}/api/status}"
 
 log() {
     printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" | tee -a "$LOG_FILE"
+}
+
+status() {
+    local state="$1" reason="$2"
+    local tmp="${STATUS_FILE}.tmp.$$"
+    printf '{"ok":true,"state":"%s","reason":"%s","url":"%s","updated_at":"%s"}\n' \
+        "$state" "${reason//\"/}" "$URL" "$(date -Iseconds)" >"$tmp"
+    mv -f "$tmp" "$STATUS_FILE"
 }
 
 select_output() {
@@ -49,6 +59,7 @@ select_output() {
 }
 
 log "BX1 systemd kiosk launcher starting."
+status "starting" "systemd launcher started"
 
 # Wait for the graphical X11 session. This avoids the boot-time race that
 # previously caused the kiosk to exit before the desktop was available.
@@ -57,6 +68,7 @@ while true; do
         break
     fi
     log "Waiting for the X11 desktop on $DISPLAY."
+    status "waiting_display" "X11 desktop not ready"
     sleep 5
 done
 
@@ -94,20 +106,23 @@ else
     log "WARNING: Touch calibration tool is unavailable: $CALIBRATOR"
 fi
 
-# Wait for BX1 OS; its dashboard retains a visible legacy Body fallback link.
+# Wait for the actual OS health endpoint; its dashboard retains a visible
+# legacy Body fallback link.  This is deliberately not a page-load check.
 WAIT_COUNT=0
 while true; do
-    if curl --fail --silent --max-time 2 "$URL" >/dev/null 2>&1; then
+    if curl --fail --silent --max-time 2 "$BX1_TOUCH_STATUS_URL" >/dev/null 2>&1; then
         break
     fi
     WAIT_COUNT=$((WAIT_COUNT + 1))
     if (( WAIT_COUNT == 1 || WAIT_COUNT % 6 == 0 )); then
         log "Waiting for BX1 OS dashboard: $URL (legacy fallback: $BX1_TOUCH_LEGACY_URL)"
     fi
+    status "waiting_os" "BX1 OS status endpoint not ready"
     sleep 5
 done
 
 log "BX1 display route is ready."
+status "ready" "display and BX1 OS status endpoint ready"
 
 # Remove stale Chromium processes using only the dedicated BX1 profile.
 pkill -f "chromium.*${PROFILE_DIR}" >/dev/null 2>&1 || true
@@ -123,10 +138,12 @@ done
 
 if [[ -z "$BROWSER" ]]; then
     log "ERROR: Chromium is not installed."
+    status "failed" "Chromium is not installed"
     exit 127
 fi
 
 log "Starting Chromium kiosk: $URL"
+status "launching_browser" "starting Chromium kiosk"
 
 # Chromium is executed once. systemd, rather than a shell loop, restarts the
 # launcher if the browser genuinely exits.
