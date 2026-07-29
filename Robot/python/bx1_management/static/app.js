@@ -34,8 +34,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.5.0",
-    tag: "BX1_OS_ALPHA_v0.5.0",
+    version: "0.6.1-development",
+    tag: "BX1_OS_v0.6.1-development_voice_conversation",
     architecture_only: true,
     capabilities: {},
   },
@@ -92,10 +92,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.5.0",
+    current_version: "0.6.1-development",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_ALPHA_v0.5.0",
+    tag: "BX1_OS_v0.6.1-development_voice_conversation",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -109,6 +109,7 @@ const state = {
   data: fallbackData,
   connected: false,
   telemetryLoading: false,
+  talk: { phase: "Ready", sessionId: "", busy: false, error: "", timer: null },
   cameraPreview: {
     token: 0,
     timer: null,
@@ -540,6 +541,7 @@ function audioPage(data) {
 
 function brainPage(data) {
   const voice = data.voice || {};
+  const brain = voice.brain || { state: "not_connected", reason: "not_probed" };
   const events = voice.events || [];
   const bodyFaults = data.robot_body?.active_faults || [];
   const eventRows = events.length ? events.slice().reverse().map(item => `<tr>
@@ -550,11 +552,12 @@ function brainPage(data) {
     ${panel("Brain and Body connection", dataList([
       ["Robot Body", data.robot_body?.connected ? "Connected (port 8088)" : "Unavailable"],
       ["Brain endpoint", voice.brain_endpoint || "Not discovered from Body configuration", true],
-      ["Brain state", data.brain.status],
+      ["Brain state", brain.state === "connected" ? "Connected" : brain.state === "degraded" ? "Degraded" : "Not connected"],
+      ["Probe reason", brain.reason || "Not probed"],
       ["Voice ownership", "Brain generates TTS; Robot Body plays it"],
       ["MCU / safety", bodyFaults.length ? "DEGRADED / FAULTED — visible" : "No Body fault reported"],
-    ]) + `<div class="page-actions">${button("Test Brain connectivity", { className: "small primary", prototype: "Voice Brain test" })}</div>`, { span: 5, subtitle: "No Brain credentials are displayed or stored here" })}
-    ${panel("Safe typed-text test", `<label for="voiceTypedText">Question (sent once to the Robot Body; not recorded by BX1 OS)</label><textarea class="input" id="voiceTypedText" maxlength="1000" rows="4" placeholder="Ask BX1 a short question"></textarea><div class="page-actions"><button class="button primary" type="button" data-voice-action="typed-test">Send through Brain and play Brain TTS</button></div><p id="voiceActionResult" class="mono">Action packets, motors, servos, cameras and MCU commands are blocked.</p>`, { span: 7, subtitle: "Body → Brain chat/TTS → Body speaker playback" })}
+    ]) + `<div class="page-actions"><button class="button small primary" type="button" data-voice-action="brain-probe">Test Brain connectivity</button></div>`, { span: 5, subtitle: "The probe travels through the configured Robot Body route; no credentials are displayed" })}
+    ${panel("Talk to Leo", `<label for="talkToLeoText">Message for Leo</label><p>Sent once through Robot Body → Brain chat/TTS → Robot Body speaker. BX1 OS does not retain your text or Leo’s reply.</p><textarea class="input" id="talkToLeoText" maxlength="1000" rows="7" aria-describedby="talkToLeoHelp talkToLeoCount" placeholder="Type a message for Leo" ${state.talk.busy ? "disabled" : ""}></textarea><div id="talkToLeoHelp" class="mono">Ctrl+Enter sends. Action packets, motors, servos, cameras and MCU commands are blocked.</div><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send" ${state.talk.busy ? "disabled" : ""}>Send to Leo</button><button class="button" type="button" data-voice-action="talk-clear" ${state.talk.busy ? "disabled" : ""}>Clear</button></div><p id="talkToLeoState" class="mono" role="status" aria-live="polite">${esc(state.talk.phase)}${state.talk.error ? ` — ${esc(state.talk.error)}` : ""}</p>`, { span: 7, subtitle: "Safe Body-owned conversation path" })}
     ${panel("Conversation Timeline", `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Event</th><th>Session</th><th>Metadata / fault</th></tr></thead><tbody>${eventRows}</tbody></table></div>`, { span: 12, subtitle: "Versioned metadata only — no raw audio, prompt, transcript, credential, or Brain reply" })}
     ${panel("Voice diagnostics", dataList([
       ["Observer faults", (voice.active_faults || []).length],
@@ -729,6 +732,7 @@ function renderPage() {
   $$("[data-bind='version']").forEach(node => { node.textContent = `v${state.data.interface.version}`; });
   renderNavigation();
   bindPrototypeActions();
+  bindTalkToLeo();
   if (state.page === "camera") startCameraPreview();
   $("#workspace").focus({ preventScroll: true });
 }
@@ -773,27 +777,74 @@ function bindPrototypeActions() {
 }
 
 async function voiceAction(action) {
-  const result = $("#voiceActionResult");
+  const result = $("#talkToLeoState");
   try {
     let path = "/api/voice/brain-test";
     let body = {};
-    if (action === "typed-test") {
-      const text = $("#voiceTypedText")?.value?.trim() || "";
+    if (action === "talk-send") {
+      const input = $("#talkToLeoText");
+      const text = input?.value?.trim() || "";
       if (!text) throw new Error("Enter a question first.");
+      if (text.length > 1000) throw new Error("Message is too long.");
       path = "/api/voice/typed-test";
       body = { text };
+      state.talk = { phase: "Sending to Brain", sessionId: "", busy: true, error: "" };
+      state.talk.timer = window.setTimeout(() => {
+        if (state.talk.busy && state.talk.phase === "Sending to Brain") {
+          state.talk.phase = "Leo is thinking";
+          if (result) result.textContent = state.talk.phase;
+        }
+      }, 350);
+      if (result) result.textContent = state.talk.phase;
+      $$("[data-voice-action='talk-send'], [data-voice-action='talk-clear']").forEach(node => { node.disabled = true; });
+    } else if (action === "talk-clear") {
+      if (state.talk.timer) window.clearTimeout(state.talk.timer);
+      const input = $("#talkToLeoText");
+      if (input) input.value = "";
+      const counter = $("#talkToLeoCount");
+      if (counter) counter.textContent = "0 / 1000";
+      state.talk = { phase: "Ready", sessionId: "", busy: false, error: "", timer: null };
+      if (result) result.textContent = state.talk.phase;
+      return;
     } else if (action === "clear-faults") {
       path = "/api/voice/faults/clear";
     }
     const response = await fetch(path, { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
     const payload = await response.json();
-    if (!response.ok || !payload.ok) throw new Error(payload.error || "Voice action failed");
-    if (result) result.textContent = action === "typed-test" ? `Session ${payload.session_id}: Body accepted the request; Brain TTS playback is in progress.` : JSON.stringify(payload);
+    if (!response.ok || (!payload.ok && action !== "brain-probe")) throw new Error(payload.error || payload.reason || "Voice action failed");
+    if (action === "talk-send") {
+      if (state.talk.timer) window.clearTimeout(state.talk.timer);
+      state.talk = { phase: payload.state === "playing_reply" ? "Playing reply" : "Leo is thinking", sessionId: payload.session_id || "", busy: false, error: "", timer: null };
+      const input = $("#talkToLeoText");
+      if (input) input.value = "";
+      if (result) result.textContent = state.talk.phase;
+    } else if (action === "brain-probe") {
+      if (result) result.textContent = payload.state === "connected" ? "Brain connected" : `Brain ${payload.state || "not connected"}`;
+    }
     await loadCoreTelemetry();
   } catch (error) {
-    if (result) result.textContent = error.message;
+    if (action === "talk-send") {
+      if (state.talk.timer) window.clearTimeout(state.talk.timer);
+      state.talk = { phase: "Failed", sessionId: "", busy: false, error: error.message, timer: null };
+    }
+    if (result) result.textContent = action === "talk-send" ? `Failed — ${error.message}` : error.message;
     toast("Voice diagnostic failed", error.message);
   }
+}
+
+function bindTalkToLeo() {
+  const input = $("#talkToLeoText");
+  const counter = $("#talkToLeoCount");
+  if (!input || !counter) return;
+  const update = () => { counter.textContent = `${input.value.length} / 1000`; };
+  input.addEventListener("input", update);
+  input.addEventListener("keydown", event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+      event.preventDefault();
+      if (!state.talk.busy) voiceAction("talk-send");
+    }
+  });
+  update();
 }
 
 function setCameraPreviewState(mode, detail = "") {
@@ -933,7 +984,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
       management_port: management.port || 8089,
     },
     brain: {
-      status: voicePayload.brain_endpoint ? (brain.connected ? "Connected" : "Configured / probe available") : "Not connected",
+      status: voicePayload.brain?.state === "connected" ? "Connected" : voicePayload.brain?.state === "degraded" ? "Degraded" : "Not connected",
       url: voicePayload.brain_endpoint || "",
     },
     system: {
@@ -1018,6 +1069,11 @@ async function loadCoreTelemetry() {
       responses.map(response => response.json())
     );
     state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice);
+    const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
+    if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
+    else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };
+    else if (session?.state === "thinking") state.talk.phase = "Leo is thinking";
+    else if (session?.state === "playing") state.talk.phase = "Playing reply";
     state.connected = true;
     if (state.page === "camera") updateCameraPageTelemetry();
     else renderPage();

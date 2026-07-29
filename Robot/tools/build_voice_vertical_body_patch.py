@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build the minimal Robot Body staging archive for the v0.6 voice observer."""
+"""Build the minimal Robot Body staging archive for the v0.6.1 conversation repair."""
 from __future__ import annotations
 
 import argparse
@@ -12,8 +12,8 @@ from pathlib import Path
 from typing import Any, Dict
 
 
-VERSION = "0.6-development"
-PACKAGE = "bx1-robot-body-voice-observer-v0.6-development"
+VERSION = "0.6.1-development"
+PACKAGE = "bx1-robot-body-voice-conversation-v0.6.1-development"
 FILES = (
     "python/audio_io.py",
     "python/main.py",

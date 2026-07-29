@@ -26,8 +26,8 @@ from bx1_core.hardware import (
 from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 
 
-RELEASE_VERSION = "0.6-development"
-RELEASE_TAG = "BX1_OS_v0.6-development_voice_vertical_slice"
+RELEASE_VERSION = "0.6.1-development"
+RELEASE_TAG = "BX1_OS_v0.6.1-development_voice_conversation"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -118,7 +118,8 @@ class ManagementApplication:
         self.voice = VoiceVerticalSlice(
             self.voice_timeline,
             body_url=str(self.config.get("hardware_observer", {}).get("robot_body_url", "http://127.0.0.1:8088")),
-            timeout=float(voice_config.get("body_timeout_seconds", 5.0)),
+            probe_timeout=float(voice_config.get("body_probe_timeout_seconds", 5.0)),
+            request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
         self.core.state.set_many(
             {
@@ -292,7 +293,19 @@ class ManagementApplication:
         body = self.core.robot_body_snapshot().get("robot_body", {})
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
         endpoint = self.voice.update_brain_endpoint(body_value if isinstance(body_value, Mapping) else {})
-        return {"ok": True, "brain_endpoint": endpoint, **self.voice_timeline.snapshot()}
+        timeline = self.voice_timeline.snapshot()
+        sessions = {
+            str(item.get("session_id")): self.voice.session_state(str(item.get("session_id")))
+            for item in timeline.get("events", [])[-30:]
+            if item.get("session_id")
+        }
+        return {
+            "ok": True,
+            "brain_endpoint": endpoint,
+            "brain": self.voice.connection_snapshot(),
+            "sessions": sessions,
+            **timeline,
+        }
 
     def core_camera(self) -> Dict[str, Any]:
         payload = self.core.camera_snapshot()
@@ -656,7 +669,7 @@ class ManagementServer:
                     {
                         "ok": False,
                         "error": "architecture_only",
-                        "detail": "BX1 OS v0.6-development allows only the scoped voice diagnostic routes",
+                        "detail": "BX1 OS v0.6.1-development allows only the scoped voice diagnostic routes",
                     },
                 )
 
@@ -676,7 +689,10 @@ class ManagementServer:
                         return
                     if path == "/api/voice/brain-test":
                         result = application.voice.brain_probe()
-                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        # Connectivity outcomes are diagnostic states, not a UI command
+                        # failure.  Keep the response readable so the page can show
+                        # Connected, Degraded or Not connected without guessing.
+                        self._json(HTTPStatus.OK, result)
                         return
                     if path == "/api/voice/faults/clear":
                         self._json(HTTPStatus.OK, application.voice_timeline.clear_observer_faults())

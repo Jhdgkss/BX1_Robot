@@ -1,8 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS v0.6-development voice vertical slice",
-  "bx1_os_release_version": "0.6-development",
-  "bx1_os_release_tag": "BX1_OS_v0.6-development_voice_vertical_slice",
+  "app_version": "BX1 OS v0.6.1-development voice conversation",
+  "bx1_os_release_version": "0.6.1-development",
+  "bx1_os_release_tag": "BX1_OS_v0.6.1-development_voice_conversation",
   "robot_name": "LEO",
   "management_interface": {
     "enabled": true,
@@ -54,7 +54,8 @@
   "brain_base_url": "",
   "voice_vertical_slice": {
     "event_limit": 250,
-    "body_timeout_seconds": 5.0,
+    "body_probe_timeout_seconds": 5.0,
+    "body_request_timeout_seconds": 240.0,
     "metadata_only": true
   },
   "api_key": "",

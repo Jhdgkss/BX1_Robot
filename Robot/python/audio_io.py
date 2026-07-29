@@ -636,6 +636,7 @@ class TextToSpeech:
         delete_after: bool = True,
         timing: Optional[dict] = None,
         emit_mouth_events: bool = True,
+        on_playback_started: Optional[Callable[[], None]] = None,
     ) -> dict:
         """Play a Brain-published reply file with real mouth-envelope events."""
         filename = str(filename or "")
@@ -671,6 +672,8 @@ class TextToSpeech:
                 })
             playback_started = time.perf_counter()
             try:
+                if on_playback_started is not None:
+                    on_playback_started()
                 play = _bx1_play_file(player, filename, self.cfg.tts_volume, wav=wav, playback_device=self.cfg.tts_playback_device)
             finally:
                 print(f"[audio] Reply playback finished: elapsed={time.perf_counter() - playback_started:.3f}s")

@@ -459,6 +459,9 @@ class WebControlServer:
                         )
                         self._json(200 if result.get("ok") else 400, result)
                         return
+                    if path == "/api/voice/vertical-slice/probe":
+                        self._json(200, service.web_voice_vertical_probe())
+                        return
                     if path == "/api/repeat_last_response":
                         result = service.web_repeat_last_response()
                         self._json(200 if result.get("ok") else 400, result)
