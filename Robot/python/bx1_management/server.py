@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.3-voice-console-body-audio-bridge"
-RELEASE_TAG = "BX1_OS_v0.7.3_voice_console_body_audio_bridge"
+RELEASE_VERSION = "0.7.4-live-voice-monitor"
+RELEASE_TAG = "BX1_OS_v0.7.4_live_voice_monitor"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(

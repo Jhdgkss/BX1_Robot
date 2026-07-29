@@ -1695,6 +1695,7 @@ def record_microphone_utterance(
     software_gain_db: float = 0.0,
     frame_ms: int = 20,
     cancel_event: Optional[threading.Event] = None,
+    level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
 ) -> dict[str, Any]:
     """Capture one natural utterance from ALSA using lightweight endpointing.
 
@@ -1784,7 +1785,8 @@ def record_microphone_utterance(
                 break
             if len(block) < frame_bytes:
                 block += b"\x00" * (frame_bytes - len(block))
-            level = _pcm16_rms_dbfs(block, channels=ch, gain_db=software_gain_db)
+            frame_level = _pcm16_level(block, software_gain_db=software_gain_db)
+            level = float(frame_level["rms_dbfs"])
             peak_dbfs = max(peak_dbfs, level)
             level_trace.append(round(level, 1))
 
@@ -1816,6 +1818,11 @@ def record_microphone_utterance(
                     pre.clear()
                     silence_run = 0
                     resume_run = 0
+                if level_observer is not None:
+                    try:
+                        level_observer({"rms_dbfs": level, "peak_dbfs": float(frame_level["peak_dbfs"]), "noise_floor_dbfs": round(float(noise_floor), 1), "threshold_dbfs": round(float(current_threshold), 1), "gate_open": bool(level >= current_threshold), "speech_detected": bool(speech_started), "captured_at": time.time()})
+                    except Exception:
+                        pass
                 continue
 
             captured.append(block)
@@ -1842,6 +1849,11 @@ def record_microphone_utterance(
                     ignored_transients += 1
                 resume_run = 0
                 silence_run += 1
+            if level_observer is not None:
+                try:
+                    level_observer({"rms_dbfs": level, "peak_dbfs": float(frame_level["peak_dbfs"]), "noise_floor_dbfs": round(float(noise_floor), 1), "threshold_dbfs": round(float(continue_threshold), 1), "gate_open": bool(level >= continue_threshold), "speech_detected": True, "captured_at": time.time()})
+                except Exception:
+                    pass
             # Do not close in the middle of a possible resumed phrase. Wait up
             # to speech_resume_trigger_ms for it either to prove itself as
             # speech or collapse as an isolated transient.
@@ -2402,7 +2414,7 @@ class VoskSpeechToText:
 
     def _listen_once_alsa_detailed(
         self, timeout_s: float, *, defer_local_recognition: bool = False,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: Optional[threading.Event] = None, level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> dict[str, Any]:
         if not shutil.which("arecord"):
             return {"accepted": False, "text": "", "reason": "arecord not found", "error": "arecord not found", "capture_method": "alsa"}
@@ -2441,6 +2453,7 @@ class VoskSpeechToText:
                     adaptive_margin_db=float(getattr(self.cfg, "stt_adaptive_margin_db", 8.0)),
                     software_gain_db=float(getattr(self.cfg, "mic_software_gain_db", 0.0)),
                     cancel_event=cancel_event,
+                    level_observer=level_observer,
                 )
             else:
                 capture = record_microphone_sample(
@@ -2607,7 +2620,7 @@ class VoskSpeechToText:
 
     def listen_once_detailed(
         self, timeout_s: Optional[float] = None, *, defer_local_recognition: bool = False,
-        cancel_event: Optional[threading.Event] = None,
+        cancel_event: Optional[threading.Event] = None, level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
     ) -> dict[str, Any]:
         if not self.ready:
             self.last_result = {"accepted": False, "text": "", "reason": "STT not ready", "error": self.error}
@@ -2618,7 +2631,7 @@ class VoskSpeechToText:
 
         if method in {"auto", "alsa", "arecord"}:
             result = self._listen_once_alsa_detailed(
-                timeout, defer_local_recognition=defer_local_recognition, cancel_event=cancel_event
+                timeout, defer_local_recognition=defer_local_recognition, cancel_event=cancel_event, level_observer=level_observer
             )
             attempts.append(result)
             # ALSA is the selected and preferred UNO Q path. A normal rejection
