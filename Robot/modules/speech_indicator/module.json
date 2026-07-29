@@ -2,8 +2,8 @@
   "schema": "bx1.module.manifest.v1",
   "id": "speech_indicator",
   "name": "Speech indicator",
-  "version": "0.7.0-preview",
+  "version": "0.7.1-preview",
   "entrypoint": "module.py:SpeechIndicator",
-  "capabilities": ["events.publish", "events.subscribe"],
+  "capabilities": ["events.publish", "events.subscribe", "widgets.publish"],
   "subscriptions": ["speech.started", "speech.finished"]
 }

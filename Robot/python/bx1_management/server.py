@@ -13,6 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 from urllib.parse import parse_qs, urlparse
+from urllib import error, request
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -27,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.0-developer-preview"
-RELEASE_TAG = "BX1_OS_v0.7.0_modular_runtime_developer_preview"
+RELEASE_VERSION = "0.7.1-developer-preview"
+RELEASE_TAG = "BX1_OS_v0.7.1_modular_runtime_developer_platform"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -124,7 +125,8 @@ class ManagementApplication:
             request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
         modules_root = Path(self.config.get("modules_root", Path(__file__).resolve().parents[2] / "modules"))
-        self.modules = ModuleManager(modules_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)))
+        persistent_root = Path(self.config.get("persistent_modules_root", "/home/arduino/BX1_modules"))
+        self.modules = ModuleManager(modules_root, persistent_root=persistent_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)), led_request=self._body_led_request)
         self.modules.load_all()
         self.core.state.set_many(
             {
@@ -297,6 +299,32 @@ class ManagementApplication:
 
     def runtime_modules(self) -> Dict[str, Any]:
         return self.modules.snapshot()
+
+    def runtime_widgets(self) -> Dict[str, Any]:
+        return self.modules.widgets_snapshot()
+
+    def runtime_install(self, archive: bytes) -> Dict[str, Any]:
+        if not archive or len(archive) > 2 * 1024 * 1024:
+            raise ValueError("invalid_module_archive")
+        import tempfile
+        with tempfile.NamedTemporaryFile(suffix=".zip", delete=False) as stream:
+            stream.write(archive)
+            path = Path(stream.name)
+        try:
+            return self.modules.install_zip(path)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def _body_led_request(self, value: Mapping[str, Any]) -> Dict[str, Any]:
+        """High-level, loopback-only Body request; Body remains the hardware authority."""
+        payload = {key: value.get(key) for key in ("module_id", "target", "colour", "effect")}
+        try:
+            req = request.Request("http://127.0.0.1:8088/api/bx1-os/led-status", data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            with request.urlopen(req, timeout=1.5) as response:
+                result = json.loads(response.read(4096).decode("utf-8"))
+            return dict(result) if isinstance(result, Mapping) and bool(result.get("ok")) else {"ok": False, "state": "unavailable", "reason": "Body LED capability unavailable"}
+        except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError):
+            return {"ok": False, "state": "unavailable", "reason": "Body LED capability unavailable"}
 
     def voice_status(self) -> Dict[str, Any]:
         body = self.core.robot_body_snapshot().get("robot_body", {})
@@ -554,6 +582,9 @@ class ManagementServer:
                 if path == "/api/runtime/modules":
                     self._json(HTTPStatus.OK, application.runtime_modules())
                     return
+                if path == "/api/runtime/widgets":
+                    self._json(HTTPStatus.OK, application.runtime_widgets())
+                    return
                 if path == "/api/voice/status":
                     self._json(HTTPStatus.OK, application.voice_status())
                     return
@@ -689,7 +720,29 @@ class ManagementServer:
             def do_POST(self) -> None:  # noqa: N802
                 path = urlparse(self.path).path
                 try:
+                    if path == "/api/runtime/modules/install":
+                        length = int(self.headers.get("Content-Length", "0") or "0")
+                        if length < 1 or length > 2 * 1024 * 1024:
+                            raise ValueError("invalid_module_archive")
+                        self._json(HTTPStatus.OK, application.runtime_install(self.rfile.read(length)))
+                        return
                     body = self._read_json()
+                    if path == "/api/runtime/modules/reload":
+                        self._json(HTTPStatus.OK, application.modules.reload())
+                        return
+                    if path == "/api/runtime/modules/clear-faults":
+                        self._json(HTTPStatus.OK, application.modules.clear_faults())
+                        return
+                    if path.startswith("/api/runtime/modules/"):
+                        parts = path.split("/")
+                        if len(parts) == 6 and parts[5] in {"enable", "disable", "remove"}:
+                            operation, module_id = parts[5], parts[4]
+                            result = application.modules.remove(module_id) if operation == "remove" else application.modules.set_enabled(module_id, operation == "enable")
+                            self._json(HTTPStatus.OK, result)
+                            return
+                        if len(parts) == 7 and parts[5] == "actions":
+                            self._json(HTTPStatus.OK, application.modules.invoke_action(parts[4], parts[6], body.get("fields", {})))
+                            return
                     if path == "/api/voice/events":
                         if self.client_address[0] not in {"127.0.0.1", "::1"}:
                             self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "voice_events_loopback_only"})

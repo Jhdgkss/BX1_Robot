@@ -16,7 +16,7 @@ class ModularRuntimeTests(unittest.TestCase):
         manager = ModuleManager(ROOT / "modules")
         manager.load_all()
         snapshot = manager.snapshot()
-        module = snapshot["modules"][0]
+        module = next(item for item in snapshot["modules"] if item["id"] == "speech_indicator")
         self.assertEqual(module["id"], "speech_indicator")
         self.assertEqual(module["state"], "healthy")
         self.assertNotIn("camera", " ".join(module["capabilities"]))

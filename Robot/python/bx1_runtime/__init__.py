@@ -1,4 +1,4 @@
-"""BX1 OS v0.7 modular runtime developer-preview public API."""
+"""BX1 OS v0.7.1 hobby developer module platform public API."""
 
 from .runtime import ModuleManager, RuntimeEventBus
 

@@ -26,8 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.7.0-developer-preview"
-RELEASE_TAG = "BX1_OS_v0.7.0_modular_runtime_developer_preview"
+RELEASE_VERSION = "0.7.1-developer-preview"
+RELEASE_TAG = "BX1_OS_v0.7.1_modular_runtime_developer_platform"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -302,7 +302,7 @@ class SideBySideDeployer:
             self.release.get("release_version") != RELEASE_VERSION
             or self.release.get("release_tag") != RELEASE_TAG
         ):
-            raise DeploymentError("release manifest version/tag is not BX1 OS v0.7.0 modular runtime developer preview")
+            raise DeploymentError("release manifest version/tag is not BX1 OS v0.7.1 modular runtime developer platform")
         if self.release.get("target_service") != DEFAULT_SERVICE:
             raise DeploymentError("release manifest does not target bx1-os-alpha.service")
         if canonical(Path(self.release.get("default_install_root", ""))) != canonical(
@@ -470,7 +470,11 @@ class SideBySideDeployer:
             account = pwd.getpwnam(self.options.service_user)
             os.chown(config, account.pw_uid, account.pw_gid)
         for relative in ("runtime", "runtime/tmp", "logs", "cache"):
-            (self.staging_dir / relative).mkdir(parents=True, exist_ok=True)
+            directory = self.staging_dir / relative
+            directory.mkdir(parents=True, exist_ok=True)
+            os.chmod(directory, 0o750)
+            if os.name == "posix" and self.options.privileged:
+                os.chown(directory, account.pw_uid, account.pw_gid)
         return self.staging_dir
 
     def _create_venv(self, staging: Path) -> None:

@@ -36,8 +36,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.0-developer-preview",
-    tag: "BX1_OS_v0.7.0_modular_runtime_developer_preview",
+    version: "0.7.1-developer-preview",
+    tag: "BX1_OS_v0.7.1_modular_runtime_developer_platform",
     architecture_only: true,
     capabilities: {},
   },
@@ -94,10 +94,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.0-developer-preview",
+    current_version: "0.7.1-developer-preview",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.0_modular_runtime_developer_preview",
+    tag: "BX1_OS_v0.7.1_modular_runtime_developer_platform",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -120,6 +120,7 @@ const state = {
     mode: "idle",
     controller: null,
   },
+  conversation: [],
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -261,9 +262,14 @@ function dashboardPage(data) {
       ${icon("diagnostics")}
       <div><strong>Core telemetry active</strong>Every visible value is projected from BX1 OS Core. This interface remains read-only and takes no hardware ownership.</div>
     </div>`;
+  const widgets = (data.widgets?.widgets || []).filter(widget => widget.placement === "dashboard").map(widget => {
+    const values = Object.entries(widget.data || {}).map(([key, value]) => `<div><span>${esc(key.replaceAll("_", " "))}</span><strong>${display(value)}</strong></div>`).join("");
+    return panel(widget.title, `<div class="device-facts">${values}</div>${widget.fault ? `<p class="mono">${esc(widget.fault)}</p>` : ""}`, { span: 4, subtitle: `${esc(widget.module_id)} · ${esc(widget.health)}` });
+  }).join("");
   return `
     <div class="grid">
       ${cards.map(card => metricCard(...card)).join("")}
+      ${widgets}
       ${panel("Quick actions", actions, { span: 12, subtitle: "External links work; management actions remain intentionally disabled" })}
       ${panel("Platform posture", overview, { span: 12 })}
     </div>`;
@@ -560,7 +566,7 @@ function brainPage(data) {
       ["Voice ownership", "Brain generates TTS; Robot Body plays it"],
       ["MCU / safety", bodyFaults.length ? "DEGRADED / FAULTED — visible" : "No Body fault reported"],
     ]) + `<div class="page-actions"><button class="button small primary" type="button" data-voice-action="brain-probe">Test Brain connectivity</button></div>`, { span: 5, subtitle: "The probe travels through the configured Robot Body route; no credentials are displayed" })}
-    ${panel("Talk to Leo", `<label for="talkToLeoText">Message for Leo</label><p>Sent once through Robot Body → Brain chat/TTS → Robot Body speaker. BX1 OS does not retain your text or Leo’s reply.</p><textarea class="input" id="talkToLeoText" maxlength="1000" rows="7" aria-describedby="talkToLeoHelp talkToLeoCount" placeholder="Type a message for Leo" ${state.talk.busy ? "disabled" : ""}></textarea><div id="talkToLeoHelp" class="mono">Ctrl+Enter sends. Action packets, motors, servos, cameras and MCU commands are blocked.</div><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send" ${state.talk.busy ? "disabled" : ""}>Send to Leo</button><button class="button" type="button" data-voice-action="talk-clear" ${state.talk.busy ? "disabled" : ""}>Clear</button></div><p id="talkToLeoState" class="mono" role="status" aria-live="polite">${esc(state.talk.phase)}${state.talk.error ? ` — ${esc(state.talk.error)}` : ""}</p>`, { span: 7, subtitle: "Safe Body-owned conversation path" })}
+    ${panel("Manual fallback conversation", `<label for="talkToLeoText">Message for Leo</label><p>The Brain owns the real session and memory; this browser keeps display text only for this tab.</p><textarea class="input" id="talkToLeoText" maxlength="1000" rows="10" aria-describedby="talkToLeoHelp talkToLeoCount" placeholder="Type a message for Leo" ${state.talk.busy ? "disabled" : ""}></textarea><div id="talkToLeoHelp" class="mono">Ctrl+Enter sends through Body → Brain chat/TTS → Body speaker. Hardware/action packets are blocked.</div><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send" ${state.talk.busy ? "disabled" : ""}>Send</button><button class="button" type="button" data-voice-action="talk-repeat" ${state.talk.busy ? "disabled" : ""}>Repeat</button><button class="button" type="button" data-voice-action="talk-clear" ${state.talk.busy ? "disabled" : ""}>Clear</button></div><p id="talkToLeoState" class="mono" role="status" aria-live="polite">${esc(state.talk.phase)}${state.talk.error ? ` — ${esc(state.talk.error)}` : ""}</p><div class="log-view">${state.conversation.length ? state.conversation.map(item => `<div class="log-line"><span class="log-source">${esc(item.role)}</span><span class="log-message">${esc(item.text)}</span></div>`).join("") : "<div class=\"log-line\">No messages in this browser session.</div>"}</div>`, { span: 12, subtitle: "No raw conversation text is stored by BX1 OS" })}
     ${panel("Conversation Timeline", `<div class="table-wrap"><table><thead><tr><th>Timestamp</th><th>Event</th><th>Session</th><th>Metadata / fault</th></tr></thead><tbody>${eventRows}</tbody></table></div>`, { span: 12, subtitle: "Versioned metadata only — no raw audio, prompt, transcript, credential, or Brain reply" })}
     ${panel("Voice diagnostics", dataList([
       ["Observer faults", (voice.active_faults || []).length],
@@ -697,15 +703,15 @@ function modulesPage(data) {
     <td><strong>${esc(module.name)}</strong><br><small>${esc(module.id)} · ${esc(module.version)}</small></td>
     <td>${badge(module.state, module.state === "healthy" ? "good" : "bad", false)}</td>
     <td>${esc((module.capabilities || []).join(", ") || "None")}</td>
-    <td>${esc(module.detail || "")}</td>
+    <td>${esc(module.detail || "")}<div class="table-actions">${module.source === "user" ? `<button class="button small" data-module-action="${module.state === "disabled" ? "enable" : "disable"}" data-module-id="${esc(module.id)}">${module.state === "disabled" ? "Enable" : "Disable"}</button><button class="button small danger" data-module-action="remove" data-module-id="${esc(module.id)}">Remove</button>` : "Bundled"}</div></td>
   </tr>`).join("") : `<tr><td colspan="4">No manifests found.</td></tr>`;
   return `<div class="grid">
     ${panel("Runtime boundary", dataList([
-      ["Hardware access", "Blocked"], ["Module controls", "Not exposed"],
+      ["Persistent modules", data.modules?.persistent_root || "Unavailable"], ["Hardware access", "Blocked"],
       ["Event queue", `${data.modules?.event_bus?.queued || 0} / ${data.modules?.event_bus?.queue_limit || 0}`],
       ["Dropped events", data.modules?.event_bus?.dropped || 0],
     ]), { span: 4, subtitle: "Developer preview uses a deny-by-default capability gateway" })}
-    ${panel("Loaded modules", `<div class="table-wrap"><table><thead><tr><th>Module</th><th>Health</th><th>Declared safe capabilities</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>`, { span: 8, subtitle: "Manifest-first loading; no enable, disable or install operation is available here" })}
+    ${panel("Loaded modules", `<div class="table-wrap"><table><thead><tr><th>Module</th><th>Health</th><th>Declared safe capabilities</th><th>Detail / actions</th></tr></thead><tbody>${rows}</tbody></table></div><div class="page-actions"><input type="file" id="moduleArchive" accept=".zip"><button class="button primary" data-module-action="install">Install ZIP</button><button class="button" data-module-action="reload">Reload modules</button><button class="button" data-module-action="clear-faults">Clear faults</button></div>`, { span: 8, subtitle: "User modules are installed outside the OS update root; bundled modules are protected" })}
   </div>`;
 }
 
@@ -798,9 +804,34 @@ function bindPrototypeActions() {
   });
 }
 
+async function moduleAction(action, moduleId = "") {
+  try {
+    let path = `/api/runtime/modules/${moduleId}/${action}`;
+    let options = { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" };
+    if (action === "reload") path = "/api/runtime/modules/reload";
+    if (action === "clear-faults") path = "/api/runtime/modules/clear-faults";
+    if (action === "install") {
+      const file = $("#moduleArchive")?.files?.[0];
+      if (!file || !file.name.endsWith(".zip")) throw new Error("Choose a module ZIP first.");
+      path = "/api/runtime/modules/install";
+      options = { method: "POST", headers: { "Content-Type": "application/zip" }, body: file };
+    }
+    const response = await fetch(path, options); const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "Module action failed");
+    toast("Module Manager", "Action completed."); await loadCoreTelemetry();
+  } catch (error) { toast("Module action failed", error.message); }
+}
+
 async function voiceAction(action) {
   const result = $("#talkToLeoState");
   try {
+    if (action === "talk-repeat") {
+      const last = [...state.conversation].reverse().find(item => item.role === "You");
+      if (!last) throw new Error("No browser-session message to repeat.");
+      const input = $("#talkToLeoText");
+      if (input) input.value = last.text;
+      return voiceAction("talk-send");
+    }
     let path = "/api/voice/brain-test";
     let body = {};
     if (action === "talk-send") {
@@ -810,6 +841,7 @@ async function voiceAction(action) {
       if (text.length > 1000) throw new Error("Message is too long.");
       path = "/api/voice/typed-test";
       body = { text };
+      state.conversation.push({ role: "You", text });
       state.talk = { phase: "Sending to Brain", sessionId: "", busy: true, error: "" };
       state.talk.timer = window.setTimeout(() => {
         if (state.talk.busy && state.talk.phase === "Sending to Brain") {
@@ -826,6 +858,7 @@ async function voiceAction(action) {
       const counter = $("#talkToLeoCount");
       if (counter) counter.textContent = "0 / 1000";
       state.talk = { phase: "Ready", sessionId: "", busy: false, error: "", timer: null };
+      state.conversation = [];
       if (result) result.textContent = state.talk.phase;
       return;
     } else if (action === "clear-faults") {
@@ -839,6 +872,7 @@ async function voiceAction(action) {
       state.talk = { phase: payload.state === "playing_reply" ? "Playing reply" : "Leo is thinking", sessionId: payload.session_id || "", busy: false, error: "", timer: null };
       const input = $("#talkToLeoText");
       if (input) input.value = "";
+      state.conversation.push({ role: "LEO", text: "Reply is playing through the Body speaker. Conversation text remains only in this browser session." });
       if (result) result.textContent = state.talk.phase;
     } else if (action === "brain-probe") {
       if (result) result.textContent = payload.state === "connected" ? "Brain connected" : `Brain ${payload.state || "not connected"}`;
@@ -979,7 +1013,7 @@ function updateCameraPageTelemetry() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}, widgetsPayload = {}) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -1053,6 +1087,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     },
     voice: voicePayload,
     modules: modulesPayload,
+    widgets: widgetsPayload,
     deployment: {
       current_version: deployment.version,
       commit: deployment.commit,
@@ -1083,16 +1118,17 @@ async function loadCoreTelemetry() {
       "/api/core/camera",
       "/api/voice/status",
       "/api/runtime/modules",
+      "/api/runtime/widgets",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets);
     const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
     if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
     else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };
@@ -1119,6 +1155,8 @@ function init() {
   $("#pageContent").addEventListener("click", event => {
     const action = event.target.closest("[data-voice-action]")?.dataset.voiceAction;
     if (action) voiceAction(action);
+    const moduleButton = event.target.closest("[data-module-action]");
+    if (moduleButton) moduleAction(moduleButton.dataset.moduleAction, moduleButton.dataset.moduleId || "");
   });
   $("#sidebarCollapse").addEventListener("click", () => {
     const shell = $(".app-shell");

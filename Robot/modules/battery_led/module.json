@@ -1,0 +1,9 @@
+{
+  "schema": "bx1.module.manifest.v1",
+  "id": "battery_led",
+  "name": "Battery LED",
+  "version": "0.7.1-preview",
+  "entrypoint": "module.py:BatteryLed",
+  "capabilities": ["events.subscribe", "widgets.publish", "led.status.request"],
+  "subscriptions": ["battery.status"]
+}

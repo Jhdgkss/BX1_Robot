@@ -126,6 +126,7 @@ class ManagementHTTPTests(unittest.TestCase):
             ("/api/core/robot-body", "application/json"),
             ("/api/core/robot-body/health", "application/json"),
             ("/api/runtime/modules", "application/json"),
+            ("/api/runtime/widgets", "application/json"),
             ("/api/core/camera", "application/json"),
         ):
             with self.subTest(path=path):
