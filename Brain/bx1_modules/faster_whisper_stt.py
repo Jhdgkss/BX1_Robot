@@ -326,12 +326,16 @@ class FasterWhisperSTTService:
         }
 
     def transcribe_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
+        request_id = str(metadata.get("request_id") or payload.get("request_id") or "").strip()[:96]
         if not self.enabled():
-            return {"ok": False, "error": "Desktop faster-whisper STT is disabled.", "stt": self.status()}
+            return {"ok": False, "outcome": "service_failure", "request_id": request_id,
+                    "error": "Desktop faster-whisper STT is disabled.", "stt": self.status()}
         audio_bytes = self._decode_audio_payload(payload)
         max_bytes = max(128 * 1024, int(self.cfg.get("stt_max_audio_bytes", 8 * 1024 * 1024) or 8 * 1024 * 1024))
         if len(audio_bytes) > max_bytes:
-            return {"ok": False, "error": f"Audio payload exceeds the {max_bytes} byte limit.", "stt": self.status()}
+            return {"ok": False, "outcome": "rejected", "request_id": request_id,
+                    "error": f"Audio payload exceeds the {max_bytes} byte limit.", "stt": self.status()}
         wav_info = self._validate_wav(audio_bytes)
 
         suffix = ".wav"
@@ -383,6 +387,8 @@ class FasterWhisperSTTService:
                 self._last_text = text
             return {
                 "ok": accepted,
+                "outcome": "accepted" if accepted else "rejected",
+                "request_id": request_id,
                 "text": text,
                 "language": str(getattr(info, "language", language) or language),
                 "language_probability": round(float(getattr(info, "language_probability", 0.0) or 0.0), 4),
@@ -404,7 +410,8 @@ class FasterWhisperSTTService:
             with self._lock:
                 self._last_error = str(exc)
                 self._last_latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
-            return {"ok": False, "error": str(exc), "backend": "faster-whisper", "stt": self.status(), "wav": wav_info}
+            return {"ok": False, "outcome": "service_failure", "request_id": request_id,
+                    "error": str(exc), "backend": "faster-whisper", "stt": self.status(), "wav": wav_info}
         finally:
             try:
                 os.unlink(tmp.name)

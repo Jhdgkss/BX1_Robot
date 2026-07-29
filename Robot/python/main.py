@@ -1481,6 +1481,7 @@ class BX1RobotBodyService:
         wav_bytes = result.pop("_submitted_wav_bytes", b"") or b""
         handoff: Dict[str, Any] = {
             "schema": "bx1.body.primary_stt_handoff.v1",
+            "request_id": self.new_input_event_id("stt"),
             "audio_payload": "present" if wav_bytes else "absent",
             "valid_wav": False,
             "sample_rate_hz": None,
@@ -1518,6 +1519,8 @@ class BX1RobotBodyService:
 
         def apply_local_fallback(primary_error: str, backend_name: str = "local_vosk_fallback") -> bool:
             nonlocal local_text
+            self.set_voice_runtime("fallback", "Brain STT unavailable — using local fallback.", loop_active=True,
+                                   last_error=str(primary_error)[:240])
             if local_text:
                 handoff["fallback_reason"] = str(primary_error)[:240]
                 result["transcription_backend"] = backend_name
@@ -1594,6 +1597,7 @@ class BX1RobotBodyService:
                 hotwords=hotwords,
                 initial_prompt=initial_prompt,
                 metadata={
+                    "request_id": handoff["request_id"],
                     "robot_id": self.robot_id,
                     "source": source,
                     "captured_at": result.get("captured_at", now_iso()),
@@ -1609,6 +1613,12 @@ class BX1RobotBodyService:
 
         result["brain_stt"] = remote
         result["brain_stt_roundtrip_ms"] = remote_roundtrip_ms
+        remote_request_id = str(remote.get("request_id") or "") if isinstance(remote, dict) else ""
+        if remote_request_id != str(handoff["request_id"]):
+            remote = {"ok": False, "outcome": "service_failure",
+                      "error": "Brain STT response request ID did not match the submitted utterance."}
+            result["brain_stt"] = remote
+        handoff["response_request_id"] = remote_request_id
         remote_text = str(remote.get("text") or "").strip() if isinstance(remote, dict) else ""
         if bool(remote.get("ok")) and remote_text:
             tokens = re.findall(r"[A-Za-z0-9']+", remote_text)
@@ -1645,9 +1655,7 @@ class BX1RobotBodyService:
         # transcript" is authoritative. Local Vosk must not resurrect the same
         # noise as a one-word wake command. Fallback is reserved for transport,
         # service or model failures where the desktop did not evaluate the WAV.
-        desktop_evaluated = isinstance(remote, dict) and (
-            "text" in remote or "transcript_quality" in remote or "wav" in remote
-        )
+        desktop_evaluated = isinstance(remote, dict) and str(remote.get("outcome") or "") == "rejected"
         if desktop_evaluated:
             result.update({
                 "accepted": False,
@@ -2931,7 +2939,7 @@ class BX1RobotBodyService:
                                            speaker_playback_active=bool(suppression["playback_active"]),
                                            echo_tail_remaining_s=suppression["echo_tail_remaining_s"])
                     continue
-                self.set_voice_runtime("recognising", "Recognising queued speech…", loop_active=True, last_error="")
+                self.set_voice_runtime("transcribing", "Transcribing on Brain", loop_active=True, last_error="")
                 resolved = self._apply_primary_stt(captured, source="live_voice", stt_engine=self.stt)
                 self._process_voice_worker_result(resolved)
             except Exception as exc:
@@ -2954,9 +2962,13 @@ class BX1RobotBodyService:
             "transcription_backend": stt_result.get("transcription_backend", "unknown"),
             "brain_stt_roundtrip_ms": stt_result.get("brain_stt_roundtrip_ms"),
             "primary_stt_error": stt_result.get("primary_stt_error", ""),
+            "primary_stt_handoff": stt_result.get("primary_stt_handoff", {}),
+            "stt_request_id": (stt_result.get("primary_stt_handoff") or {}).get("request_id", ""),
         }
         if not stt_result.get("accepted", False):
-            self.set_voice_runtime("rejected", f"Rejected microphone input: {reason}", loop_active=True,
+            no_speech = (str(stt_result.get("transcription_backend") or "") == "brain_faster_whisper_rejected" and
+                         not text and "speech" in reason.lower())
+            self.set_voice_runtime("rejected", "No speech heard — please try again." if no_speech else f"Rejected microphone input: {reason}", loop_active=True,
                                    last_rejected=text, last_rejection_reason=reason, last_stt_metrics=metrics)
             return
         wake_words = self.get_wake_words()
@@ -5962,6 +5974,7 @@ class BX1RobotBodyService:
             "adaptive_margin_db": float(self.cfg.get("stt_adaptive_margin_db", 8.0)),
             "speaker_echo_tail_ms": int(self.cfg.get("speaker_echo_tail_ms", 1500)),
             "stt_policy": str(self.cfg.get("stt_transcription_backend", "brain_faster_whisper")),
+            "brain_stt_timeout_s": int(self.cfg.get("brain_stt_timeout_s", 12)),
         }
         revision = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()[:16]
         return {
@@ -5976,6 +5989,7 @@ class BX1RobotBodyService:
                 "adaptive_margin_db": {"minimum": 0.0, "maximum": 30.0},
                 "speaker_echo_tail_ms": {"minimum": 250, "maximum": 5000},
                 "stt_policy": {"allowed": ["brain_faster_whisper", "vosk"]},
+                "brain_stt_timeout_s": {"minimum": 2, "maximum": 20, "default": 12},
             },
             "ownership": "Robot Body validates and atomically saves only these voice settings; BX1 OS never edits arbitrary configuration.",
         }
@@ -5984,7 +5998,7 @@ class BX1RobotBodyService:
         requested = data.get("settings", data)
         if not isinstance(requested, dict):
             return {"ok": False, "error": "settings must be an object"}
-        allowed = {"wake_phrases", "wake_listen_timeout_s", "speech_end_timeout_ms", "noise_gate_dbfs", "noise_margin_db", "adaptive_margin_db", "speaker_echo_tail_ms", "stt_policy"}
+        allowed = {"wake_phrases", "wake_listen_timeout_s", "speech_end_timeout_ms", "noise_gate_dbfs", "noise_margin_db", "adaptive_margin_db", "speaker_echo_tail_ms", "stt_policy", "brain_stt_timeout_s"}
         unknown = set(requested) - allowed
         if unknown:
             return {"ok": False, "error": "unsupported voice setting: " + ", ".join(sorted(unknown))}
@@ -6008,6 +6022,7 @@ class BX1RobotBodyService:
             "wake_listen_timeout_s": (3.0, 60.0, float), "speech_end_timeout_ms": (250, 4000, int),
             "noise_gate_dbfs": (-90.0, -5.0, float), "noise_margin_db": (0.0, 30.0, float),
             "adaptive_margin_db": (0.0, 30.0, float), "speaker_echo_tail_ms": (250, 5000, int),
+            "brain_stt_timeout_s": (2, 20, int),
         }
         parsed: Dict[str, Any] = {"wake_phrases": normalised}
         for name, (low, high, convert) in numeric.items():
@@ -6024,7 +6039,8 @@ class BX1RobotBodyService:
         self.cfg.update({"wake_words": parsed["wake_phrases"], "wake_command_window_s": parsed["wake_listen_timeout_s"],
                          "stt_end_silence_ms": parsed["speech_end_timeout_ms"], "mic_noise_gate_dbfs": parsed["noise_gate_dbfs"],
                          "stt_noise_margin_db": parsed["noise_margin_db"], "stt_adaptive_margin_db": parsed["adaptive_margin_db"],
-                         "speaker_echo_tail_ms": parsed["speaker_echo_tail_ms"], "stt_transcription_backend": policy})
+                         "speaker_echo_tail_ms": parsed["speaker_echo_tail_ms"], "stt_transcription_backend": policy,
+                         "brain_stt_timeout_s": parsed["brain_stt_timeout_s"]})
         self._refresh_mic_monitor_settings()
         self.save_config_file()
         result = self.web_bx1_voice_settings()
