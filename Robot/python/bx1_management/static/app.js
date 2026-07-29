@@ -36,15 +36,15 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.2-operator-integration",
-    tag: "BX1_OS_v0.7.2_operator_integration",
+    version: "0.7.3-voice-console-body-audio-bridge",
+    tag: "BX1_OS_v0.7.3_voice_console_body_audio_bridge",
     architecture_only: true,
     capabilities: {},
   },
   robot: {
     name: "LEO",
     status: "Qualification",
-    mode: "Observer only",
+    mode: "Body-mediated capability mode",
     hostname: "bx1",
     ip: "Detected by browser",
     existing_ui_port: 8088,
@@ -94,10 +94,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.2-operator-integration",
+    current_version: "0.7.3-voice-console-body-audio-bridge",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.2_operator_integration",
+    tag: "BX1_OS_v0.7.3_voice_console_body_audio_bridge",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -121,6 +121,7 @@ const state = {
     controller: null,
   },
   conversation: [],
+  audioTimer: null,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -514,8 +515,10 @@ function audioDeviceTable(devices, category) {
 }
 
 function audioPage(data) {
+  const bridge = data.audio_bridge || {};
+  const live = bridge.audio || {};
   const audio = data.audio || {};
-  const input = audio.input || {};
+  const input = bridge.ok ? { ...(audio.input || {}), level_rms: `${Number(live.rms_dbfs).toFixed(1)} dBFS`, level_peak: `${Number(live.peak_dbfs).toFixed(1)} dBFS`, noise_floor: `${Number(live.noise_floor_dbfs).toFixed(1)} dBFS`, measurement_state: live.state || "idle", last_sample_timestamp: live.timestamp } : (audio.input || {});
   const output = audio.output || {};
   const microphones = audio.microphones || [];
   const speakers = audio.speakers || [];
@@ -525,7 +528,7 @@ function audioPage(data) {
       ["Speaker owner", observed(output.owner, "Unknown")],
       ["STT state", observed(audio.stt?.state, "Unknown")],
       ["TTS state", observed(audio.tts?.state, "Unknown")],
-      ["Control", "Blocked — observer only"],
+      ["Control", "Body-mediated capability mode"],
     ]), { span: 4, subtitle: "Source: Existing Robot Body" })}
     ${panel("Levels", dataList([
       ["RMS", observed(input.level_rms, "Measurement unavailable while owned")],
@@ -536,6 +539,8 @@ function audioPage(data) {
       ["Last sample", formatTimestamp(observed(input.last_sample_timestamp))],
       ["Core update", formatTimestamp(observedMeta(input.level_rms).timestamp)],
     ]), { span: 8, subtitle: "Proxied only; BX1 OS never seizes the microphone" })}
+    ${panel("Live Body Audio Bridge", bridge.ok ? `<div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${Number(live.rms_dbfs || -90)}"><div class="audio-gauge-fill" style="width:${Math.max(0, Math.min(100, (Number(live.rms_dbfs || -90) + 90) / .9))}%"></div><i class="audio-gauge-threshold" style="left:${Math.max(0, Math.min(100, (Number(live.threshold_dbfs || -90) + 90) / .9))}%"></i></div><div class="audio-levels"><strong>${Number(live.rms_dbfs).toFixed(1)} dBFS</strong><span>Peak hold ${Number(live.peak_dbfs).toFixed(1)} dBFS · gate ${live.gate_open ? "open" : "closed"}</span></div>${dataList([["Voice state", live.state], ["Threshold", `${live.threshold_dbfs} dBFS`], ["Failure", live.last_failure_reason || "None"], ["Device / gain", `${live.device} / ${live.gain_db} dB`], ["Sample age", live.age_seconds == null ? "—" : `${Number(live.age_seconds).toFixed(1)} s`]])}` : emptyPanel("audio", "Body audio metadata unavailable", "BX1 OS did not open the microphone device."), { span: 12, subtitle: "Metadata only; refreshed four times per second" })}
+    ${panel("Body audio settings", bridge.ok ? `<form id="audioBridgeForm" class="audio-settings">${Object.entries(bridge.settings || {}).map(([key, value]) => `<label>${esc(key.replaceAll("_", " "))}<input class="input" name="${esc(key)}" type="number" min="${value.minimum}" max="${value.maximum}" step="any" value="${value.current}"><small>Range ${value.minimum}–${value.maximum} ${esc(value.unit)} · default ${value.default} · effective ${value.effective}</small></label>`).join("")}<div class="page-actions"><button class="button primary" type="submit">Apply Body settings</button><span id="audioBridgeState" class="mono">Validated and atomically saved by Robot Body.</span></div></form>` : "", { span: 12, subtitle: "No raw audio, recording, device, GPIO or hardware controls" })}
     ${panel("Microphones", audioDeviceTable(microphones, "Microphone"), { span: 12, aside: badge(`${microphones.length} observed`, "info", false) })}
     ${panel("Speakers", audioDeviceTable(speakers, "Speaker"), { span: 12, aside: badge(`${speakers.length} observed`, "info", false) })}
     ${panel("DSP", emptyPanel("logs", "Read-only metadata", "DSP configuration and live spectral controls are not exposed in this release."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
@@ -757,8 +762,51 @@ function renderPage() {
   renderNavigation();
   bindPrototypeActions();
   bindTalkToLeo();
+  enhanceConversationView();
+  bindAudioBridgeForm();
+  if (state.page === "audio" && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
+  if (state.page !== "audio" && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
   if (state.page === "camera") startCameraPreview();
   $("#workspace").focus({ preventScroll: true });
+}
+
+function enhanceConversationView() {
+  const view = $("#talkToLeoState")?.nextElementSibling;
+  if (!view) return;
+  view.classList.add("conversation-view");
+  $$(".log-line", view).forEach(line => {
+    const who = $(".log-source", line)?.textContent || "System";
+    line.classList.add("conversation-bubble", who === "John" ? "manual" : who === "LEO" ? "reply" : "system");
+    const source = $(".log-source", line); if (source) source.textContent = `${who} · ${new Date().toLocaleTimeString()}`;
+  });
+  view.scrollTop = view.scrollHeight;
+}
+
+async function loadAudioBridge() {
+  if (state.page !== "audio") return;
+  try {
+    const response = await fetch("/api/audio/bridge", { cache: "no-store" });
+    const payload = await response.json();
+    if (response.ok) { state.data.audio_bridge = payload; renderPage(); }
+  } catch (_) { /* normal Body-unavailable state remains visible */ }
+}
+
+function bindAudioBridgeForm() {
+  const form = $("#audioBridgeForm");
+  if (!form) return;
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const settings = Object.fromEntries(new FormData(form).entries());
+    const target = $("#audioBridgeState");
+    if (target) target.textContent = "Applying through Robot Body…";
+    try {
+      const response = await fetch("/api/audio/bridge/settings", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Body rejected settings");
+      if (target) target.textContent = payload.restart_required ? "Saved. Restart Robot Body via its approved management route to apply to active capture." : "Saved and effective.";
+      await loadAudioBridge();
+    } catch (error) { if (target) target.textContent = `Failed: ${error.message}`; }
+  });
 }
 
 function navigate(page, push = true) {
@@ -822,7 +870,7 @@ async function voiceAction(action) {
   const result = $("#talkToLeoState");
   try {
     if (action === "talk-repeat") {
-      const last = [...state.conversation].reverse().find(item => item.role === "You");
+      const last = [...state.conversation].reverse().find(item => item.role === "John");
       if (!last) throw new Error("No browser-session message to repeat.");
       const input = $("#talkToLeoText");
       if (input) input.value = last.text;
@@ -837,7 +885,7 @@ async function voiceAction(action) {
       if (text.length > 1000) throw new Error("Message is too long.");
       path = "/api/voice/typed-test";
       body = { text };
-      state.conversation.push({ role: "You", text });
+      state.conversation.push({ role: "John", tone: "manual", text, timestamp: new Date().toLocaleTimeString() });
       state.talk = { phase: "Sending to Brain", sessionId: "", busy: true, error: "" };
       state.talk.timer = window.setTimeout(() => {
         if (state.talk.busy && state.talk.phase === "Sending to Brain") {
@@ -868,7 +916,7 @@ async function voiceAction(action) {
       state.talk = { phase: payload.state === "playing_reply" ? "Playing reply" : "Leo is thinking", sessionId: payload.session_id || "", busy: false, error: "", timer: null };
       const input = $("#talkToLeoText");
       if (input) input.value = "";
-      state.conversation.push({ role: "LEO", text: "Reply is playing through the Body speaker. Conversation text remains only in this browser session." });
+      state.conversation.push({ role: "LEO", tone: "reply", text: payload.reply || "Reply is playing through the Body speaker.", timestamp: new Date().toLocaleTimeString() });
       if (result) result.textContent = state.talk.phase;
     } else if (action === "brain-probe") {
       if (result) result.textContent = payload.state === "connected" ? "Brain connected" : `Brain ${payload.state || "not connected"}`;
@@ -888,10 +936,13 @@ function bindTalkToLeo() {
   const input = $("#talkToLeoText");
   const counter = $("#talkToLeoCount");
   if (!input || !counter) return;
+  input.disabled = false; // A request in flight must not block normal touchscreen typing.
+  const help = $("#talkToLeoHelp");
+  if (help) help.textContent = "Enter sends · Shift+Enter adds a line · Body → Brain chat/TTS → Body speaker. Hardware/action packets are blocked.";
   const update = () => { counter.textContent = `${input.value.length} / 1000`; };
   input.addEventListener("input", update);
   input.addEventListener("keydown", event => {
-    if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+    if (event.key === "Enter" && !event.shiftKey) {
       event.preventDefault();
       if (!state.talk.busy) voiceAction("talk-send");
     }
@@ -1009,7 +1060,7 @@ function updateCameraPageTelemetry() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}, widgetsPayload = {}) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}, widgetsPayload = {}, audioBridgePayload = {}) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -1029,7 +1080,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     robot: {
       name: robot.name || "LEO",
       status: healthPayload.state || robot.state || "unknown",
-      mode: robot.mode || "observer_only",
+      mode: robot.mode === "observer_only" ? "Body-mediated capability mode" : (robot.mode || "Body-mediated capability mode"),
       hostname: system.hostname,
       ip: network.ip,
       existing_ui_port: management.existing_ui_port || 8088,
@@ -1083,6 +1134,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     },
     voice: voicePayload,
     modules: modulesPayload,
+    audio_bridge: audioBridgePayload,
     widgets: widgetsPayload,
     deployment: {
       current_version: deployment.version,
@@ -1115,16 +1167,17 @@ async function loadCoreTelemetry() {
       "/api/voice/status",
       "/api/runtime/modules",
       "/api/runtime/widgets",
+      "/api/audio/bridge",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge);
     const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
     if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
     else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };

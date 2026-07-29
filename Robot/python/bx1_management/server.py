@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.2-operator-integration"
-RELEASE_TAG = "BX1_OS_v0.7.2_operator_integration"
+RELEASE_VERSION = "0.7.3-voice-console-body-audio-bridge"
+RELEASE_TAG = "BX1_OS_v0.7.3_voice_console_body_audio_bridge"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -328,6 +328,27 @@ class ManagementApplication:
         except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError):
             return {"ok": False, "state": "unavailable", "reason": "Body LED capability unavailable"}
 
+    def body_audio_bridge(self) -> Dict[str, Any]:
+        """Fetch Body-owned, metadata-only audio diagnostics without opening ALSA."""
+        try:
+            with request.urlopen("http://127.0.0.1:8088/api/bx1-os/audio-bridge", timeout=1.2) as response:
+                payload = json.loads(response.read(16384).decode("utf-8"))
+            return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_audio_metadata"}
+        except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "Body audio metadata unavailable", "detail": str(exc), "boundary": "Robot Body owns microphone capture; BX1 OS did not open a device."}
+
+    def update_body_audio_bridge(self, values: Mapping[str, Any]) -> Dict[str, Any]:
+        payload = {"settings": dict(values.get("settings", values))}
+        try:
+            req = request.Request("http://127.0.0.1:8088/api/bx1-os/audio-bridge/settings", data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            with request.urlopen(req, timeout=3.0) as response:
+                value = json.loads(response.read(16384).decode("utf-8"))
+            return dict(value) if isinstance(value, Mapping) else {"ok": False, "error": "invalid_body_audio_response"}
+        except error.HTTPError as exc:
+            return {"ok": False, "error": f"Body rejected audio settings ({exc.code})"}
+        except (error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "Body audio settings unavailable", "detail": str(exc)}
+
     def voice_status(self) -> Dict[str, Any]:
         body = self.core.robot_body_snapshot().get("robot_body", {})
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
@@ -570,6 +591,9 @@ class ManagementServer:
                         HTTPStatus.OK, application.core_audio_devices()
                     )
                     return
+                if path == "/api/audio/bridge":
+                    self._json(HTTPStatus.OK, application.body_audio_bridge())
+                    return
                 if path == "/api/core/robot-body":
                     self._json(
                         HTTPStatus.OK, application.core_robot_body()
@@ -750,6 +774,10 @@ class ManagementServer:
                             self._json(HTTPStatus.FORBIDDEN, {"ok": False, "error": "voice_events_loopback_only"})
                             return
                         self._json(HTTPStatus.ACCEPTED, {"ok": True, "event": application.voice_timeline.record(body, source="robot_body")})
+                        return
+                    if path == "/api/audio/bridge/settings":
+                        result = application.update_body_audio_bridge(body)
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/voice/typed-test":
                         result = application.voice.typed_test(str(body.get("text") or ""))

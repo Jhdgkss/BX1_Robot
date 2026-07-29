@@ -212,12 +212,16 @@ class VoiceVerticalSlice:
                 self.timeline.record({"event": "FaultRaised", "session_id": session_id, "reason": reason, "source": "bx1_os"})
                 return {"ok": False, "session_id": session_id, "error": reason, "state": "failed"}
             self._remember_accepted_session(session_id)
+            # A Body implementation may return the Brain reply for immediate browser
+            # display.  It is intentionally not recorded in the timeline or state.
+            display_reply = str(result.get("reply") or result.get("response_text") or "")[:4000]
             return {
                 "ok": True,
                 "session_id": session_id,
                 "latency_ms": round((self.clock() - started) * 1000, 2),
                 "playback_owner": "robot_body",
                 "state": "playing_reply",
+                "reply": display_reply,
             }
         except (error.HTTPError, error.URLError, socket.timeout, TimeoutError, ValueError, OSError) as exc:
             reason = "body_response_timeout" if isinstance(exc, (socket.timeout, TimeoutError)) else "body_response_unavailable"

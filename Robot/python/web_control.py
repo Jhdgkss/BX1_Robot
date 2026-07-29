@@ -372,6 +372,9 @@ class WebControlServer:
                 if path == "/api/mic_level":
                     self._json(200, service.web_mic_level())
                     return
+                if path == "/api/bx1-os/audio-bridge":
+                    self._json(200, service.web_bx1_audio_bridge())
+                    return
                 if path == "/api/mic_devices":
                     self._json(200, service.web_list_mic_devices())
                     return
@@ -502,6 +505,10 @@ class WebControlServer:
                         return
                     if path == "/api/mic_settings":
                         result = service.web_update_mic_settings(data)
+                        self._json(200 if result.get("ok") else 400, result)
+                        return
+                    if path == "/api/bx1-os/audio-bridge/settings":
+                        result = service.web_update_bx1_audio_bridge_settings(data)
                         self._json(200 if result.get("ok") else 400, result)
                         return
                     if path == "/api/mic_monitor_start":

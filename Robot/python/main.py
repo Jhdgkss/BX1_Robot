@@ -5619,6 +5619,47 @@ class BX1RobotBodyService:
         level = self.mic_monitor.snapshot()
         return {"ok": True, "level": level, "mic": self.get_mic_settings() if False else None}
 
+    def web_bx1_audio_bridge(self) -> Dict[str, Any]:
+        """Metadata-only projection for BX1 OS; never includes audio or text."""
+        runtime = self.get_voice_runtime_snapshot()
+        meter = self.mic_monitor.snapshot()
+        metrics = runtime.get("last_stt_metrics", {}) if isinstance(runtime.get("last_stt_metrics"), dict) else {}
+        audio = metrics.get("audio", {}) if isinstance(metrics.get("audio"), dict) else {}
+        activity = metrics.get("voice_activity", {}) if isinstance(metrics.get("voice_activity"), dict) else {}
+        def number(value: Any, default: float) -> float:
+            try: return float(value)
+            except (TypeError, ValueError): return default
+        rms = number(audio.get("rms_dbfs", meter.get("rms_dbfs", meter.get("rms", -120.0))), -120.0)
+        peak = number(audio.get("peak_dbfs", meter.get("peak_dbfs", meter.get("peak", -120.0))), -120.0)
+        noise = max(-90.0, min(-5.0, number(activity.get("noise_floor_dbfs", self.cfg.get("mic_noise_gate_dbfs", -48.0)), -48.0)))
+        threshold = number(activity.get("threshold_dbfs", self.cfg.get("mic_noise_gate_dbfs", -48.0)), -48.0)
+        raw_state = str(runtime.get("state", "idle")).lower()
+        state_map = {"starting": "idle", "wake_detected": "wake detected", "listening": "listening", "speech": "speech detected", "recognising": "recognising", "thinking": "Brain request", "playing": "speaking", "error": "failed", "disabled": "idle"}
+        state = state_map.get(raw_state, raw_state if raw_state in {"idle", "failed"} else "idle")
+        last_sample = meter.get("last_update") or runtime.get("updated_at")
+        now = time.time()
+        age = max(0.0, now - float(last_sample)) if isinstance(last_sample, (int, float)) else None
+        return {"ok": True, "schema": "bx1.body.audio_bridge.v1", "audio": {"rms_dbfs": rms, "peak_dbfs": peak, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": rms >= threshold, "state": state, "last_failure_reason": str(runtime.get("last_error", "")), "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": last_sample, "age_seconds": age}, "settings": self._bx1_audio_bridge_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives metadata only."}
+
+    def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
+        specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}
+        return {name: {"current": self.cfg.get(key, default), "effective": self.cfg.get(key, default), "default": default, "minimum": low, "maximum": high, "unit": unit} for name, (key, low, high, default, unit) in specs.items()}
+
+    def web_update_bx1_audio_bridge_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Allowlisted, atomic configuration update for the OS audio bridge."""
+        mapping = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, float), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, float), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, int), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, int), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, float)}
+        requested = data.get("settings", data)
+        if not isinstance(requested, dict): return {"ok": False, "error": "settings must be an object"}
+        for name, (key, low, high, default, converter) in mapping.items():
+            if name not in requested: continue
+            try: value = converter(float(requested[name]))
+            except (TypeError, ValueError): return {"ok": False, "error": f"{name} must be numeric"}
+            self.cfg[key] = max(low, min(high, value))
+        self._refresh_mic_monitor_settings()
+        self.save_config_file()  # write/replace: configuration is never partially written
+        restart_required = bool(self.get_voice_runtime_snapshot().get("loop_active"))
+        return {"ok": True, "settings": self._bx1_audio_bridge_settings(), "restart_required": restart_required, "restart_route": "Robot Body management service restart" if restart_required else "not required", "message": "Saved atomically. Active voice capture uses these values after the approved Robot Body restart when one is required."}
+
     def web_list_mic_devices(self) -> Dict[str, Any]:
         return self._get_cached_mic_devices(force=True)
 
