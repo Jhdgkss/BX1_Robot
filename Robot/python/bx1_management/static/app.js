@@ -292,7 +292,7 @@ function liveVoiceMarkup(bridge, expanded) {
   const thresholdPercent = Math.max(0, Math.min(100, (threshold + 90) / .9));
   const stateTone = audio.state === "failed" ? "failure" : audio.state === "speaking" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
   const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Failure / rejection", recognition.rejection_reason || "None"], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
-  return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Heard: ${esc(recognition.latest_text || "No recognised words yet")}</p>${details}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
+  return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><p class="heard-line">${esc(audio.state_detail || audio.state || "Voice state unavailable")}</p><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Last accepted request: ${esc(recognition.last_accepted_request || "None")}</p>${details}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
 }
 
 function sharedVoiceFeed(data, expanded = false) {
@@ -308,7 +308,8 @@ function sharedVoiceFeed(data, expanded = false) {
 function liveVoiceStatusCard(bridge) {
   const audio = bridge.audio || {}; const recognition = bridge.recognition || {};
   return panel("Live status", dataList([
-    ["State", audio.state || "Unavailable"], ["Heard", recognition.latest_text || "No recognised words yet"],
+    ["State", audio.state_detail || audio.state || "Unavailable"], ["Last accepted request", recognition.last_accepted_request || "None"],
+    ["Last recognised / discarded", recognition.last_discarded_audio || recognition.latest_text || "None"],
     ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)],
     ["Failure", recognition.rejection_reason || audio.last_failure_reason || "None"], ["Sample age", audio.age_seconds == null ? "Unavailable" : `${Number(audio.age_seconds).toFixed(1)} s`],
   ]), { span: 12, className: "voice-console-status", subtitle: "Live Body metadata; no raw audio" });
@@ -574,6 +575,7 @@ function wakeSpeechSettingsPanel(bridge) {
     <label>Noise gate (dBFS)<input class="input" name="noise_gate_dbfs" type="number" min="-90" max="-5" step="0.5" value="${esc(value.noise_gate_dbfs)}"></label>
     <label>Noise margin (dB)<input class="input" name="noise_margin_db" type="number" min="0" max="30" step="0.5" value="${esc(value.noise_margin_db)}"></label>
     <label>Adaptive margin (dB)<input class="input" name="adaptive_margin_db" type="number" min="0" max="30" step="0.5" value="${esc(value.adaptive_margin_db)}"></label>
+    <label>Speaker echo tail (ms)<input class="input" name="speaker_echo_tail_ms" type="number" min="250" max="5000" step="50" value="${esc(value.speaker_echo_tail_ms ?? 1500)}"></label>
     <label>STT policy<select class="input" name="stt_policy"><option value="brain_faster_whisper" ${value.stt_policy === "brain_faster_whisper" ? "selected" : ""}>Brain faster-whisper with local Vosk fallback</option><option value="vosk" ${value.stt_policy === "vosk" ? "selected" : ""}>Local Vosk</option></select></label>
     <div class="page-actions"><button class="button primary" type="submit">Save to Robot</button><span id="wakeSpeechState" class="mono">Only allowlisted voice settings are saved.</span></div>
   </form>`;

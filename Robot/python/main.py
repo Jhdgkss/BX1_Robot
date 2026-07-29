@@ -673,6 +673,7 @@ def load_config() -> Dict[str, Any]:
         existing_stt_timeout = 12.0
     cfg["brain_stt_timeout_s"] = 12 if existing_stt_timeout > 20 else max(2, min(20, int(existing_stt_timeout)))
     cfg.setdefault("brain_stt_fallback_to_vosk", True)
+    cfg.setdefault("speaker_echo_tail_ms", 1500)
     cfg.setdefault("brain_stt_language", "en")
     cfg.setdefault("brain_stt_hotwords", "")
     cfg.setdefault("brain_stt_initial_prompt", "")
@@ -995,6 +996,10 @@ class BX1RobotBodyService:
         # Brain App. It also keeps the most recent recognised/wake phrases for
         # diagnostics without changing the robot profile.
         self.voice_state_lock = threading.Lock()
+        self.speaker_playback_lock = threading.Lock()
+        self.speaker_playback_active = False
+        self.speaker_playback_started_mono = 0.0
+        self.speaker_echo_tail_until_mono = 0.0
         self.voice_runtime: Dict[str, Any] = {
             "enabled": bool(self.cfg.get("voice_enabled", False)),
             "loop_active": False,
@@ -1087,6 +1092,7 @@ class BX1RobotBodyService:
         snap["stt_error"] = str(getattr(self.stt, "error", "")) if self.stt is not None else ""
         snap["stt_guard_remaining_s"] = round(self.stt_guard_remaining_s(), 2) if hasattr(self, "stt_guard_remaining_s") else 0.0
         snap["speech_output_active"] = bool(self.speech_output_active()) if hasattr(self, "speech_output_active") else False
+        snap["speaker_suppression"] = self.speaker_suppression_snapshot() if hasattr(self, "speaker_playback_lock") else {"playback_active": False, "echo_tail_remaining_s": 0.0, "suppressed": False}
         snap["command_processing"] = bool(self.command_processing.is_set()) if hasattr(self, "command_processing") else False
         snap["manual_audio_capture_requested"] = bool(self.manual_audio_capture_requested.is_set()) if hasattr(self, "manual_audio_capture_requested") else False
         snap["mic_monitor_running"] = bool(self.mic_monitor.is_running()) if hasattr(self, "mic_monitor") else False
@@ -1268,6 +1274,38 @@ class BX1RobotBodyService:
         until = time.monotonic() + seconds_f
         with self.tts_capture_mute_lock:
             self.tts_capture_mute_until = max(float(getattr(self, "tts_capture_mute_until", 0.0) or 0.0), until)
+
+    def _speaker_echo_tail_s(self) -> float:
+        try:
+            return max(0.25, min(5.0, float(self.cfg.get("speaker_echo_tail_ms", 1500)) / 1000.0))
+        except (TypeError, ValueError):
+            return 1.5
+
+    def speaker_suppression_snapshot(self) -> Dict[str, Any]:
+        now = time.monotonic()
+        with self.speaker_playback_lock:
+            active = bool(self.speaker_playback_active)
+            tail_remaining = max(0.0, self.speaker_echo_tail_until_mono - now)
+            return {"playback_active": active, "echo_tail_remaining_s": round(tail_remaining, 2),
+                    "suppressed": active or tail_remaining > 0.0}
+
+    def _speaker_playback_started(self) -> None:
+        with self.speaker_playback_lock:
+            self.speaker_playback_active = True
+            self.speaker_playback_started_mono = time.monotonic()
+            self.speaker_echo_tail_until_mono = 0.0
+        self.set_voice_runtime("speaking", "Leo speaking — microphone wake detection temporarily suppressed.",
+                               loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
+                               speaker_playback_active=True, echo_tail_remaining_s=0.0)
+
+    def _speaker_playback_finished(self) -> None:
+        tail_s = self._speaker_echo_tail_s()
+        with self.speaker_playback_lock:
+            self.speaker_playback_active = False
+            self.speaker_echo_tail_until_mono = time.monotonic() + tail_s
+        self.set_voice_runtime("echo_suppressed", f"Speaker playback finished — wake detection suppressed for {tail_s:.1f}s.",
+                               loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
+                               speaker_playback_active=False, echo_tail_remaining_s=round(tail_s, 2))
 
     def stt_guard_remaining_s(self) -> float:
         with self.tts_capture_mute_lock:
@@ -1763,8 +1801,10 @@ class BX1RobotBodyService:
             self.guard_stt_capture(1.5, "tts_prepare")
         elif event in {"speech_start", "speech_audio_file_start"}:
             self.guard_stt_capture(self.estimate_speech_guard_s(text, 1.5), "tts_start")
+            self._speaker_playback_started()
         elif event in {"speech_stop", "speech_audio_file_stop"}:
             self.guard_stt_capture(float(self.cfg.get("stt_post_tts_guard_s", 1.25)), "tts_stop")
+            self._speaker_playback_finished()
 
         if event == "speech_prepare" and not is_local_cue:
             # A long answer may be split into several Dot.TTS chunks. The
@@ -2803,6 +2843,13 @@ class BX1RobotBodyService:
             except queue.Empty:
                 continue
             try:
+                suppression = self.speaker_suppression_snapshot()
+                if suppression["suppressed"]:
+                    state = "speaking" if suppression["playback_active"] else "echo_suppressed"
+                    self.set_voice_runtime(state, "Queued microphone audio suppressed during speaker playback.", loop_active=True,
+                                           speaker_playback_active=bool(suppression["playback_active"]),
+                                           echo_tail_remaining_s=suppression["echo_tail_remaining_s"])
+                    continue
                 self.set_voice_runtime("recognising", "Recognising queued speech…", loop_active=True, last_error="")
                 resolved = self._apply_primary_stt(captured, source="live_voice", stt_engine=self.stt)
                 self._process_voice_worker_result(resolved)
@@ -2814,6 +2861,10 @@ class BX1RobotBodyService:
     def _process_voice_worker_result(self, stt_result: Dict[str, Any]) -> None:
         """Apply recognised voice text without returning to or blocking ALSA."""
         if stt_result.get("cancelled"):
+            return
+        if self.speaker_suppression_snapshot()["suppressed"]:
+            self.set_voice_runtime("echo_suppressed", "Recognised audio suppressed during speaker playback; no Brain request sent.",
+                                   loop_active=True)
             return
         text = str(stt_result.get("text") or "").strip()
         reason = str(stt_result.get("reason") or stt_result.get("error") or "speech rejected")[:240]
@@ -2841,13 +2892,16 @@ class BX1RobotBodyService:
             hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 12.0))))
             self.set_conversation_active_until(time.monotonic() + hold_s)
             self.set_voice_runtime("awake", f"Wake word detected: {matched_wake}. Listening for command…", loop_active=True,
-                                   last_heard=text, last_wake_word=matched_wake, last_stt_metrics=metrics)
+                                   last_heard=text, last_wake_word=matched_wake, last_wake_at=now_iso(), last_stt_metrics=metrics)
             self.acknowledge_voice_event("wake")
             return
         if not cleaned:
             cleaned = text
         self.set_voice_runtime("processing", "Sending recognised command to Brain App…", loop_active=True,
                                last_heard=text, last_accepted=cleaned, last_stt_metrics=metrics)
+        if self.speaker_suppression_snapshot()["suppressed"]:
+            self.set_voice_runtime("echo_suppressed", "Speaker suppression started before Brain submission; request dropped.", loop_active=True)
+            return
         event_id = self.new_input_event_id("voice")
         try:
             with self.command_lock:
@@ -2896,29 +2950,23 @@ class BX1RobotBodyService:
                 self.stop_event.wait(0.25)
                 continue
 
-            # Echo guard: do not record while BX1 is speaking or while a
-            # Dot.TTS reply/cue is still queued. This is more reliable than
-            # hoping the microphone/speaker placement avoids feedback.
-            if self.speech_output_active():
-                remain = self.stt_guard_remaining_s()
-                self.set_voice_runtime(
-                    "speaking",
-                    f"Robot speaking; microphone muted{f' for {remain:.1f}s' if remain > 0 else ''}.",
-                    loop_active=True,
-                    last_error="",
-                )
-                self.stop_event.wait(0.15)
-                continue
-
             wake_words = self.get_wake_words()
             now_mono = time.monotonic()
+            suppression = self.speaker_suppression_snapshot()
             # A person entering view can open the same follow-up window as a
             # spoken wake word. The global value is also used by idle-life.
             external_awake_until = float(getattr(self, "conversation_active_until", 0.0) or 0.0)
             if external_awake_until > awake_until:
                 awake_until = external_awake_until
             is_awake_waiting = now_mono < awake_until
-            if is_awake_waiting:
+            if suppression["playback_active"]:
+                self.set_voice_runtime("speaking", "Leo speaking — microphone wake detection temporarily suppressed.",
+                                       loop_active=True, speaker_playback_active=True, echo_tail_remaining_s=0.0)
+            elif suppression["echo_tail_remaining_s"] > 0:
+                remain = float(suppression["echo_tail_remaining_s"])
+                self.set_voice_runtime("echo_suppressed", f"Speaker playback finished — wake detection suppressed for {remain:.1f}s.",
+                                       loop_active=True, speaker_playback_active=False, echo_tail_remaining_s=remain)
+            elif is_awake_waiting:
                 remain = max(0.0, awake_until - now_mono)
                 self.set_voice_runtime(
                     "awake",
@@ -2954,6 +3002,13 @@ class BX1RobotBodyService:
                         level_observer=self.update_live_voice_observation,
                     )
                     if not stt_result.get("cancelled"):
+                        suppression = self.speaker_suppression_snapshot()
+                        if suppression["suppressed"]:
+                            state = "speaking" if suppression["playback_active"] else "echo_suppressed"
+                            self.set_voice_runtime(state, "Microphone suppressed during speaker playback; no wake/STT request accepted.",
+                                                   loop_active=True, speaker_playback_active=bool(suppression["playback_active"]),
+                                                   echo_tail_remaining_s=suppression["echo_tail_remaining_s"])
+                            continue
                         self._queue_voice_stt(stt_result)
                         # The worker owns desktop STT/Vosk fallback and Brain
                         # dispatch. Do not make the ALSA capture thread wait.
@@ -5766,17 +5821,32 @@ class BX1RobotBodyService:
         if threshold is None: threshold = number(activity.get("threshold_dbfs")) or float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         if noise is None: noise = float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         raw_state = str(runtime.get("state", "idle")).lower()
-        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "error": "failed", "rejected": "failed", "disabled": "idle"}
+        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "echo_suppressed": "echo suppressed", "error": "failed", "rejected": "failed", "disabled": "idle"}
         state = state_map.get(raw_state, raw_state if raw_state in {"idle", "failed"} else "idle")
+        suppression = runtime.get("speaker_suppression", {}) if isinstance(runtime.get("speaker_suppression"), dict) else {}
+        if suppression.get("playback_active"):
+            state = "speaking"
+        elif float(suppression.get("echo_tail_remaining_s") or 0.0) > 0:
+            state = "echo suppressed"
         if live_available and bool(live.get("speech_detected")) and state == "listening": state = "speech detected"
         display_state = state if live_available else ("stale" if age is not None else "unavailable")
         latest_text = str(runtime.get("last_heard") or runtime.get("last_rejected") or "").strip()[:240]
+        accepted_request = str(runtime.get("last_accepted") or "").strip()[:240]
+        discarded_audio = str(runtime.get("last_rejected") or runtime.get("last_ignored") or "").strip()[:240]
         latest_reply = str(getattr(self, "last_reply_text", "") or "").strip()[:400]
         rejection = str(runtime.get("last_rejection_reason") or runtime.get("last_error") or "").strip()[:240]
         engine = str(metrics.get("transcription_backend") or self.cfg.get("voice_backend", "unknown"))[:80]
         reason = "" if live_available else ("Active ALSA capture heartbeat is stale." if age is not None else "Active ALSA capture has not published a valid heartbeat.")
         heartbeat = {"publisher": str(live.get("publisher") or "none"), "sequence": int(live.get("sequence") or 0), "target_hz": int(live.get("target_hz") or 6), "last_callback_at": sample_at, "age_seconds": age, "fresh": live_available}
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "pipeline_state": state, "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        wake_remaining = max(0.0, float(runtime.get("conversation_awake_remaining_s") or 0.0))
+        state_detail = str(runtime.get("label") or state)
+        if state == "wake detected" and wake_remaining > 0:
+            state_detail = f"Wake detected — listening for your request ({wake_remaining:.0f} s remaining)"
+        elif state == "speaking":
+            state_detail = "Leo speaking — microphone wake detection temporarily suppressed"
+        elif state == "echo suppressed":
+            state_detail = f"Speaker echo tail — wake detection suppressed ({float(suppression.get('echo_tail_remaining_s') or 0):.1f} s remaining)"
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}
@@ -5791,6 +5861,7 @@ class BX1RobotBodyService:
             "noise_gate_dbfs": float(self.cfg.get("mic_noise_gate_dbfs", -48.0)),
             "noise_margin_db": float(self.cfg.get("stt_noise_margin_db", 6.0)),
             "adaptive_margin_db": float(self.cfg.get("stt_adaptive_margin_db", 8.0)),
+            "speaker_echo_tail_ms": int(self.cfg.get("speaker_echo_tail_ms", 1500)),
             "stt_policy": str(self.cfg.get("stt_transcription_backend", "brain_faster_whisper")),
         }
         revision = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()[:16]
@@ -5804,6 +5875,7 @@ class BX1RobotBodyService:
                 "noise_gate_dbfs": {"minimum": -90.0, "maximum": -5.0},
                 "noise_margin_db": {"minimum": 0.0, "maximum": 30.0},
                 "adaptive_margin_db": {"minimum": 0.0, "maximum": 30.0},
+                "speaker_echo_tail_ms": {"minimum": 250, "maximum": 5000},
                 "stt_policy": {"allowed": ["brain_faster_whisper", "vosk"]},
             },
             "ownership": "Robot Body validates and atomically saves only these voice settings; BX1 OS never edits arbitrary configuration.",
@@ -5813,7 +5885,7 @@ class BX1RobotBodyService:
         requested = data.get("settings", data)
         if not isinstance(requested, dict):
             return {"ok": False, "error": "settings must be an object"}
-        allowed = {"wake_phrases", "wake_listen_timeout_s", "speech_end_timeout_ms", "noise_gate_dbfs", "noise_margin_db", "adaptive_margin_db", "stt_policy"}
+        allowed = {"wake_phrases", "wake_listen_timeout_s", "speech_end_timeout_ms", "noise_gate_dbfs", "noise_margin_db", "adaptive_margin_db", "speaker_echo_tail_ms", "stt_policy"}
         unknown = set(requested) - allowed
         if unknown:
             return {"ok": False, "error": "unsupported voice setting: " + ", ".join(sorted(unknown))}
@@ -5836,7 +5908,7 @@ class BX1RobotBodyService:
         numeric = {
             "wake_listen_timeout_s": (3.0, 60.0, float), "speech_end_timeout_ms": (250, 4000, int),
             "noise_gate_dbfs": (-90.0, -5.0, float), "noise_margin_db": (0.0, 30.0, float),
-            "adaptive_margin_db": (0.0, 30.0, float),
+            "adaptive_margin_db": (0.0, 30.0, float), "speaker_echo_tail_ms": (250, 5000, int),
         }
         parsed: Dict[str, Any] = {"wake_phrases": normalised}
         for name, (low, high, convert) in numeric.items():
@@ -5853,7 +5925,7 @@ class BX1RobotBodyService:
         self.cfg.update({"wake_words": parsed["wake_phrases"], "wake_command_window_s": parsed["wake_listen_timeout_s"],
                          "stt_end_silence_ms": parsed["speech_end_timeout_ms"], "mic_noise_gate_dbfs": parsed["noise_gate_dbfs"],
                          "stt_noise_margin_db": parsed["noise_margin_db"], "stt_adaptive_margin_db": parsed["adaptive_margin_db"],
-                         "stt_transcription_backend": policy})
+                         "speaker_echo_tail_ms": parsed["speaker_echo_tail_ms"], "stt_transcription_backend": policy})
         self._refresh_mic_monitor_settings()
         self.save_config_file()
         result = self.web_bx1_voice_settings()

@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.6-voice-ownership-migration"
-RELEASE_TAG = "BX1_OS_v0.7.6_voice_ownership_migration"
+RELEASE_VERSION = "0.7.7-body-speaker-echo-suppression"
+RELEASE_TAG = "BX1_OS_v0.7.7_body_speaker_echo_suppression"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -112,9 +112,11 @@ class SharedLiveVoiceConsole:
                 self._receiver["last_success_at"] = received
             else:
                 self._receiver["last_error"] = str(payload.get("error") or "body_metadata_failed")[:160]
-        heard = str(recognition.get("latest_text") or "").strip()
+        # Only Body-confirmed accepted requests enter the shared user transcript.
+        # Discarded/noisy audio, including robot-speaker echo, remains metadata.
+        heard = str(recognition.get("last_accepted_request") or "").strip()
         reply = str(recognition.get("latest_reply") or "").strip()
-        state = str(audio.get("state") or "unavailable").strip()
+        state = str(audio.get("state_detail") or audio.get("state") or "unavailable").strip()
         failure = str(recognition.get("rejection_reason") or audio.get("last_failure_reason") or "").strip()
         if heard and heard != self._last_heard:
             self._last_heard = heard; self._append("stt", "Recognised speech", heard)
