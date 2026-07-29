@@ -4489,7 +4489,12 @@ class BX1RobotAPIServer:
                         return
                     if parsed.path == "/api/stt/transcribe":
                         result = core.stt_service.transcribe_payload(body)
-                        self._send_json(200 if result.get("ok") else 503, result)
+                        # A completed STT evaluation (including no-speech or a
+                        # quality rejection) is a valid protocol response, not
+                        # a transport outage.  Returning 503 made Robot Body
+                        # discard the structured reason and incorrectly invoke
+                        # its Vosk transport fallback.
+                        self._send_json(200, result)
                         return
                     if parsed.path in {"/api/vision_frame", "/api/camera_frame"}:
                         meta = core.remember_vision_frame(body)

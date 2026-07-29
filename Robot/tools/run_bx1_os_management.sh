@@ -22,7 +22,7 @@ fi
 export PYTHONPATH="$ROOT_DIR/python"
 export BX1_QUALIFICATION_MODE=1
 export BX1_OBSERVER_ONLY=1
-export BX1_OS_RELEASE_VERSION=0.7.8-stt-calibration-kiosk
+export BX1_OS_RELEASE_VERSION=0.7.9-conversational-voice-flow-primary-stt-repair
 export BX1_BODY_CONFIG="$CONFIG_PATH"
 export BX1_WEB_HOST="${BX1_WEB_HOST:-0.0.0.0}"
 export BX1_WEB_PORT="$PORT"

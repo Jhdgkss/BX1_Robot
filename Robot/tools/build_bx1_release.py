@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.7.8-stt-calibration-kiosk"
-RELEASE_TAG = "BX1_OS_v0.7.8_stt_calibration_kiosk"
+RELEASE_VERSION = "0.7.9-conversational-voice-flow-primary-stt-repair"
+RELEASE_TAG = "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -93,6 +93,7 @@ DOCUMENTATION_FILES = [
     "BX1_OS_V0_7_6_VOICE_OWNERSHIP_MIGRATION.md",
     "BX1_OS_V0_7_7_BODY_SPEAKER_ECHO_SUPPRESSION.md",
     "BX1_OS_V0_7_8_STT_CALIBRATION_KIOSK.md",
+    "BX1_OS_V0_7_9_CONVERSATIONAL_VOICE_FLOW_PRIMARY_STT_REPAIR.md",
 ]
 
 
@@ -109,7 +110,7 @@ def build_release(
     files = collect_release_files(repo)
     commit, dirty = git_identity(repo)
     created_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    release_id = "bx1-os-v0.7.8-stt-calibration-kiosk-%s" % timestamp.lower()
+    release_id = "bx1-os-v0.7.9-conversational-voice-flow-primary-stt-repair-%s" % timestamp.lower()
 
     entries = []
     for source, target in files:

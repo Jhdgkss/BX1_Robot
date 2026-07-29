@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.8-stt-calibration-kiosk"
-RELEASE_TAG = "BX1_OS_v0.7.8_stt_calibration_kiosk"
+RELEASE_VERSION = "0.7.9-conversational-voice-flow-primary-stt-repair"
+RELEASE_TAG = "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -116,14 +116,25 @@ class SharedLiveVoiceConsole:
         # Discarded/noisy audio, including robot-speaker echo, remains metadata.
         heard = str(recognition.get("last_accepted_request") or "").strip()
         reply = str(recognition.get("latest_reply") or "").strip()
-        state = str(audio.get("state_detail") or audio.get("state") or "unavailable").strip()
+        # Status detail contains a live countdown.  Use only the stable pipeline
+        # state as the transcript key so a 15-second wake window or echo tail
+        # cannot create one transcript row per poll.
+        state_key = str(audio.get("pipeline_state") or audio.get("state") or "unavailable").strip().lower()
+        state_labels = {
+            "awake": "Wake detected — listening for your request.",
+            "heard": "Speech detected.", "recognising": "Recognising speech.",
+            "processing": "Brain request in progress.", "speaking": "Leo speaking.",
+            "echo_suppressed": "Speaker echo suppression active.",
+            "listening": "Listening for wake word.", "error": "Voice failure.",
+        }
+        state = state_labels.get(state_key, str(audio.get("state_detail") or audio.get("state") or "unavailable").strip())
         failure = str(recognition.get("rejection_reason") or audio.get("last_failure_reason") or "").strip()
         if heard and heard != self._last_heard:
             self._last_heard = heard; self._append("stt", "Recognised speech", heard)
         if reply and reply != getattr(self, "_last_reply", ""):
             self._last_reply = reply; self._append("reply", "LEO / Brain", reply)
-        if state and state != self._last_state:
-            self._last_state = state; self._append("system", "Voice state", state)
+        if state_key and state_key != self._last_state:
+            self._last_state = state_key; self._append("system", "Voice state", state)
         if failure and failure != self._last_failure:
             self._last_failure = failure; self._append("failure", "Voice failure", failure)
 
@@ -422,21 +433,29 @@ class ManagementApplication:
             stt = source.get("stt") if isinstance(source.get("stt"), Mapping) else {}
             capture = stt.get("capture") if isinstance(stt.get("capture"), Mapping) else {}
             handoff = stt.get("primary_stt_handoff") if isinstance(stt.get("primary_stt_handoff"), Mapping) else {}
-            recommendation = "No adjustment recommended. Repeat in a quieter moment if the gate stays closed while speaking."
-            if capture.get("noise_floor_dbfs") is not None and capture.get("threshold_dbfs") is not None:
-                try:
-                    margin = float(capture["threshold_dbfs"]) - float(capture["noise_floor_dbfs"])
-                    if margin < 4.0:
-                        recommendation = "Consider increasing the existing noise margin slightly, then Apply only if repeated tests clip speech."
-                except (TypeError, ValueError):
-                    pass
+            live = self.body_audio_bridge().get("audio", {})
+            noise = live.get("noise_floor_dbfs", capture.get("noise_floor_dbfs"))
+            threshold = live.get("threshold_dbfs", capture.get("threshold_dbfs"))
+            proposed_gate = None
+            recommendation = "No automatic change. Apply settings only after repeated tests."
+            try:
+                noise_value = float(noise)
+                proposed_gate = round(max(-90.0, min(-5.0, noise_value + 8.0)), 1)
+                recommendation = (
+                    f"Measured room noise is {noise_value:.1f} dBFS. Start with the existing noise gate at "
+                    f"{proposed_gate:.1f} dBFS and noise margin 8 dB, then Apply only if normal speech still opens the gate. "
+                    "Software settings cannot remove physical servo, fan, or microphone noise."
+                )
+            except (TypeError, ValueError):
+                pass
             return {
                 "ok": bool(source.get("ok")), "text": str(source.get("text") or "")[:400],
                 "accepted": bool(stt.get("accepted")), "reason": str(source.get("error") or stt.get("reason") or "")[:240],
                 "engine": str(stt.get("transcription_backend") or "unknown"),
                 "elapsed_ms": stt.get("stt_pipeline_ms"), "fallback_reason": str(stt.get("primary_stt_error") or handoff.get("fallback_reason") or "")[:240],
                 "handoff": dict(handoff),
-                "live": self.body_audio_bridge().get("audio", {}),
+                "live": live, "recommended_gate_dbfs": proposed_gate,
+                "current_gate_dbfs": threshold,
                 "recommendation": recommendation,
                 "boundary": "Robot Body captured and discarded the utterance; BX1 OS received metadata only.",
             }

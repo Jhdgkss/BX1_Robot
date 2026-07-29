@@ -1,8 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
   "app_version": "BX1 OS v0.7.7 Body Speaker Echo Suppression",
-  "bx1_os_release_version": "0.7.8-stt-calibration-kiosk",
-  "bx1_os_release_tag": "BX1_OS_v0.7.8_stt_calibration_kiosk",
+  "bx1_os_release_version": "0.7.9-conversational-voice-flow-primary-stt-repair",
+  "bx1_os_release_tag": "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair",
   "persistent_modules_root": "/home/arduino/BX1_modules",
   "runtime": { "event_queue_limit": 128 },
   "robot_name": "LEO",

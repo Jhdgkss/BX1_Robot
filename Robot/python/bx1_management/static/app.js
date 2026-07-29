@@ -38,8 +38,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.5-shared-live-voice-console",
-    tag: "BX1_OS_v0.7.5_shared_live_voice_console",
+    version: "0.7.9-conversational-voice-flow-primary-stt-repair",
+    tag: "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair",
     architecture_only: true,
     capabilities: {},
   },
@@ -96,10 +96,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.5-shared-live-voice-console",
+    current_version: "0.7.9-conversational-voice-flow-primary-stt-repair",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.5_shared_live_voice_console",
+    tag: "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -289,10 +289,11 @@ function liveVoiceMarkup(bridge, expanded) {
     return panel(expanded ? "Voice Monitor" : "Live Voice", `<p class="mono">${esc(reason + last)}</p><p class="voice-connection">OS receiver last received Body metadata: ${esc(received)}.</p>`, { span: 12, subtitle: "No placeholder level is shown" });
   }
   const rms = Number(audio.rms_dbfs), peak = Number(audio.peak_dbfs), threshold = Number(audio.threshold_dbfs);
+  const handoff = recognition.handoff || {};
   const percent = Math.max(0, Math.min(100, (rms + 90) / .9));
   const thresholdPercent = Math.max(0, Math.min(100, (threshold + 90) / .9));
   const stateTone = audio.state === "failed" ? "failure" : audio.state === "speaking" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
-  const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Failure / rejection", recognition.rejection_reason || "None"], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
+  const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || handoff.engine_selected || "Unknown"], ["Primary STT", `${handoff.primary_request || "not started"} · ${handoff.elapsed_ms ?? "--"} ms`], ["Fallback reason", handoff.fallback_reason || recognition.rejection_reason || "None"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
   const compact = expanded ? "" : `<div class="page-actions"><button class="button primary" type="button" data-page-link="voice">Open Live Voice</button></div>`;
   return panel(expanded ? "Voice Monitor" : "Live Voice summary", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><p class="heard-line">${esc(audio.state_detail || audio.state || "Voice state unavailable")}</p><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line truncate-line">Last accepted request: ${esc(recognition.last_accepted_request || "None")}</p><p class="heard-line">STT: ${esc(recognition.engine || "Unknown")}${recognition.rejection_reason ? ` · ${esc(recognition.rejection_reason)}` : ""}</p>${details}${compact}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
 }

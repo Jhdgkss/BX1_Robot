@@ -675,6 +675,14 @@ def load_config() -> Dict[str, Any]:
     cfg["brain_stt_timeout_s"] = 12 if existing_stt_timeout > 20 else max(2, min(20, int(existing_stt_timeout)))
     cfg.setdefault("brain_stt_fallback_to_vosk", True)
     cfg.setdefault("speaker_echo_tail_ms", 1500)
+    # Older local files could retain an unbounded 90-second wake window.  Keep
+    # the operator range (3–60 seconds) but migrate that legacy value to the
+    # responsive 15-second default rather than silently preserving it.
+    try:
+        existing_wake_window = float(cfg.get("wake_command_window_s", 15) or 15)
+    except (TypeError, ValueError):
+        existing_wake_window = 15.0
+    cfg["wake_command_window_s"] = 15.0 if existing_wake_window > 60.0 else max(3.0, min(60.0, existing_wake_window))
     cfg.setdefault("brain_stt_language", "en")
     cfg.setdefault("brain_stt_hotwords", "")
     cfg.setdefault("brain_stt_initial_prompt", "")
@@ -2962,9 +2970,9 @@ class BX1RobotBodyService:
             return
         cleaned = self._strip_wake_words(low, wake_words) if matched_wake else low
         if matched_wake and not cleaned:
-            hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 12.0))))
+            hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 15.0))))
             self.set_conversation_active_until(time.monotonic() + hold_s)
-            self.set_voice_runtime("awake", f"Wake word detected: {matched_wake}. Listening for command…", loop_active=True,
+            self.set_voice_runtime("awake", "Listening — say your request now.", loop_active=True,
                                    last_heard=text, last_wake_word=matched_wake, last_wake_at=now_iso(), last_stt_metrics=metrics)
             self.acknowledge_voice_event("wake")
             return
@@ -3031,6 +3039,17 @@ class BX1RobotBodyService:
             external_awake_until = float(getattr(self, "conversation_active_until", 0.0) or 0.0)
             if external_awake_until > awake_until:
                 awake_until = external_awake_until
+            if awake_until > 0.0 and now_mono >= awake_until:
+                awake_until = 0.0
+                self.set_conversation_active_until(0.0)
+                self.set_voice_runtime(
+                    "timeout",
+                    "I did not hear a request — say “Hello Leo” and try again.",
+                    loop_active=True,
+                    last_error="wake command window expired",
+                )
+                self.stop_event.wait(0.2)
+                continue
             is_awake_waiting = now_mono < awake_until
             if suppression["playback_active"]:
                 self.set_voice_runtime("speaking", "Leo speaking — microphone wake detection temporarily suppressed.",
@@ -3260,7 +3279,7 @@ class BX1RobotBodyService:
             # the wake word again.  This feels much more natural than requiring
             # "BX1, <command>" in the same recognition sample.
             if matched_wake and not cleaned:
-                hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 12.0))))
+                hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 15.0))))
                 awake_until = time.monotonic() + hold_s
                 self.set_conversation_active_until(awake_until)
                 print(f"[audio] Wake word detected: {matched_wake}; waiting for command")
@@ -3273,7 +3292,7 @@ class BX1RobotBodyService:
                 self.record_input_event("microphone", "wake_word", text, True, "wake-only activation", event_id, metrics)
                 self.set_voice_runtime(
                     "awake",
-                    f"Wake word detected: {matched_wake}. Listening for command...",
+                    "Listening — say your request now.",
                     loop_active=True,
                     last_heard=text,
                     last_accepted="",
@@ -3324,8 +3343,8 @@ class BX1RobotBodyService:
             if bool(self.cfg.get("voice_command_immediate_cue_enabled", True)):
                 self.acknowledge_voice_event("heard")
             self.set_voice_runtime(
-                "processing",
-                "Awake. Sending command to Brain App...",
+                "heard",
+                f"Heard: {cleaned}",
                 loop_active=True,
                 last_heard=text,
                 last_accepted=cleaned,
@@ -3335,6 +3354,8 @@ class BX1RobotBodyService:
                 wake_match_score=round(float(wake_score or (1.0 if is_awake_waiting else 0.0)), 3),
                 last_wake_diagnostics=diagnostics,
             )
+            self.set_voice_runtime("processing", "Thinking…", loop_active=True,
+                                   last_heard=text, last_accepted=cleaned, last_stt_metrics=metrics)
             if matched_wake:
                 self.emit_voice_observer_event("WakeDetected", event_id, stage="wake_word")
             self.emit_voice_observer_event("ListeningStarted", event_id, stage="microphone")
@@ -5899,7 +5920,7 @@ class BX1RobotBodyService:
         if threshold is None: threshold = number(activity.get("threshold_dbfs")) or float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         if noise is None: noise = float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         raw_state = str(runtime.get("state", "idle")).lower()
-        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "echo_suppressed": "echo suppressed", "error": "failed", "rejected": "failed", "disabled": "idle"}
+        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "echo_suppressed": "echo suppressed", "timeout": "failed", "error": "failed", "rejected": "failed", "disabled": "idle"}
         state = state_map.get(raw_state, raw_state if raw_state in {"idle", "failed"} else "idle")
         suppression = runtime.get("speaker_suppression", {}) if isinstance(runtime.get("speaker_suppression"), dict) else {}
         if suppression.get("playback_active"):
@@ -5927,14 +5948,14 @@ class BX1RobotBodyService:
         return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
-        specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}
+        specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 15.0, "s")}
         return {name: {"current": self.cfg.get(key, default), "effective": self.cfg.get(key, default), "default": default, "minimum": low, "maximum": high, "unit": unit} for name, (key, low, high, default, unit) in specs.items()}
 
     def web_bx1_voice_settings(self) -> Dict[str, Any]:
         """Versioned, allowlisted voice configuration for BX1 OS only."""
         values = {
             "wake_phrases": self.get_wake_words(),
-            "wake_listen_timeout_s": float(self.cfg.get("wake_command_window_s", 12.0)),
+            "wake_listen_timeout_s": float(self.cfg.get("wake_command_window_s", 15.0)),
             "speech_end_timeout_ms": int(self.cfg.get("stt_end_silence_ms", 1350)),
             "noise_gate_dbfs": float(self.cfg.get("mic_noise_gate_dbfs", -48.0)),
             "noise_margin_db": float(self.cfg.get("stt_noise_margin_db", 6.0)),
@@ -6012,7 +6033,7 @@ class BX1RobotBodyService:
 
     def web_update_bx1_audio_bridge_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Allowlisted, atomic configuration update for the OS audio bridge."""
-        mapping = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, float), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, float), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, int), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, int), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, float)}
+        mapping = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, float), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, float), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, int), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, int), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 15.0, float)}
         requested = data.get("settings", data)
         if not isinstance(requested, dict): return {"ok": False, "error": "settings must be an object"}
         for name, (key, low, high, default, converter) in mapping.items():
@@ -6274,7 +6295,7 @@ class BX1RobotBodyService:
             "stt_pause_during_tts": bool(self.cfg.get("stt_pause_during_tts", True)),
             "stt_post_tts_guard_s": float(self.cfg.get("stt_post_tts_guard_s", 1.25)),
             "conversation_followup_window_s": float(self.cfg.get("conversation_followup_window_s", 45.0)),
-            "wake_command_window_s": float(self.cfg.get("wake_command_window_s", 12.0)),
+            "wake_command_window_s": float(self.cfg.get("wake_command_window_s", 15.0)),
             "wake_voice_ack_enabled": bool(self.cfg.get("wake_voice_ack_enabled", True)),
             "voice_feedback_audio_enabled": bool(self.cfg.get("voice_feedback_audio_enabled", True)),
             "voice_feedback_led_enabled": bool(self.cfg.get("voice_feedback_led_enabled", True)),
@@ -6322,7 +6343,7 @@ class BX1RobotBodyService:
         self.cfg["stt_pause_during_tts"] = bool(data.get("stt_pause_during_tts", self.cfg.get("stt_pause_during_tts", True)))
         self.cfg["stt_post_tts_guard_s"] = clamp_float(data.get("stt_post_tts_guard_s", self.cfg.get("stt_post_tts_guard_s", 1.25)), 0.0, 10.0, 1.25)
         self.cfg["conversation_followup_window_s"] = clamp_float(data.get("conversation_followup_window_s", self.cfg.get("conversation_followup_window_s", 45.0)), 5.0, 600.0, 45.0)
-        self.cfg["wake_command_window_s"] = clamp_float(data.get("wake_command_window_s", self.cfg.get("wake_command_window_s", 12.0)), 3.0, 60.0, 12.0)
+        self.cfg["wake_command_window_s"] = clamp_float(data.get("wake_command_window_s", self.cfg.get("wake_command_window_s", 15.0)), 3.0, 60.0, 15.0)
         self.cfg["wake_voice_ack_enabled"] = bool(data.get("wake_voice_ack_enabled", self.cfg.get("wake_voice_ack_enabled", True)))
         self.cfg["voice_feedback_audio_enabled"] = bool(data.get("voice_feedback_audio_enabled", self.cfg.get("voice_feedback_audio_enabled", True)))
         self.cfg["voice_feedback_led_enabled"] = bool(data.get("voice_feedback_led_enabled", self.cfg.get("voice_feedback_led_enabled", True)))
