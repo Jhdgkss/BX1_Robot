@@ -1079,9 +1079,18 @@ class BX1RobotBodyService:
         return snap
 
     def update_live_voice_observation(self, value: Dict[str, Any]) -> None:
-        """Store bounded level metadata emitted by the active Body capture loop."""
-        safe = {key: value.get(key) for key in ("rms_dbfs", "peak_dbfs", "noise_floor_dbfs", "threshold_dbfs", "gate_open", "speech_detected", "captured_at")}
+        """Publish bounded active-ALSA metadata at six Hz; no audio is retained."""
+        captured_at = value.get("captured_at")
+        if not isinstance(captured_at, (int, float)):
+            return
         with self.voice_state_lock:
+            prior = self.voice_runtime.get("live_audio", {})
+            published_at = prior.get("published_at") if isinstance(prior, dict) else None
+            if isinstance(published_at, (int, float)) and captured_at - published_at < (1.0 / 6.0):
+                return
+            sequence = int(prior.get("sequence", 0)) + 1 if isinstance(prior, dict) else 1
+            safe = {key: value.get(key) for key in ("rms_dbfs", "peak_dbfs", "noise_floor_dbfs", "threshold_dbfs", "gate_open", "speech_detected", "captured_at")}
+            safe.update({"published_at": float(captured_at), "sequence": sequence, "publisher": "active_alsa_capture", "target_hz": 6})
             self.voice_runtime["live_audio"] = safe
 
     def _voice_feedback_wav(self, kind: str) -> Path:
@@ -5354,7 +5363,9 @@ class BX1RobotBodyService:
             # The precise Body/Brain/TTS fault was already emitted by the owning
             # stage; do not duplicate it with a generic wrapper event.
             return {"ok": False, "session_id": correlation, "failure_stage": str(result.get("error") or "brain_request_failed")}
-        return {"ok": True, "session_id": correlation, "playback_owner": "robot_body", "stage": "playback_pending"}
+        # This immediate response is rendered only in BX1 OS's RAM-only shared
+        # console; it is not sent to the observer timeline or any persistent log.
+        return {"ok": True, "session_id": correlation, "playback_owner": "robot_body", "stage": "playback_pending", "reply": str(result.get("reply") or "")[:4000]}
 
     def web_voice_vertical_probe(self) -> Dict[str, Any]:
         """Read only the configured Body-to-Brain status and TTS readiness routes."""
@@ -5633,23 +5644,34 @@ class BX1RobotBodyService:
         metrics = runtime.get("last_stt_metrics", {}) if isinstance(runtime.get("last_stt_metrics"), dict) else {}
         activity = metrics.get("voice_activity", {}) if isinstance(metrics.get("voice_activity"), dict) else {}
         live = runtime.get("live_audio", {}) if isinstance(runtime.get("live_audio"), dict) else {}
-        def number(value: Any, default: float) -> float:
-            try: return float(value)
-            except (TypeError, ValueError): return default
+        def number(value: Any) -> Optional[float]:
+            try:
+                parsed = float(value)
+                return parsed if math.isfinite(parsed) else None
+            except (TypeError, ValueError):
+                return None
         sample_at = live.get("captured_at")
         now = time.time()
-        age = max(0.0, now - number(sample_at, -1.0)) if isinstance(sample_at, (int, float)) else None
-        live_available = age is not None and age <= 2.5
-        noise = max(-90.0, min(-5.0, number(live.get("noise_floor_dbfs", activity.get("noise_floor_dbfs", -48.0)), -48.0)))
-        threshold = number(live.get("threshold_dbfs", activity.get("threshold_dbfs", self.cfg.get("mic_noise_gate_dbfs", -48.0))), -48.0)
+        age = max(0.0, now - float(sample_at)) if isinstance(sample_at, (int, float)) else None
+        rms, peak = number(live.get("rms_dbfs")), number(live.get("peak_dbfs"))
+        noise = number(live.get("noise_floor_dbfs"))
+        threshold = number(live.get("threshold_dbfs"))
+        live_available = age is not None and age <= 2.5 and all(value is not None for value in (rms, peak, noise, threshold))
+        if noise is None: noise = number(activity.get("noise_floor_dbfs"))
+        if threshold is None: threshold = number(activity.get("threshold_dbfs")) or float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
+        if noise is None: noise = float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         raw_state = str(runtime.get("state", "idle")).lower()
         state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "error": "failed", "rejected": "failed", "disabled": "idle"}
         state = state_map.get(raw_state, raw_state if raw_state in {"idle", "failed"} else "idle")
         if live_available and bool(live.get("speech_detected")) and state == "listening": state = "speech detected"
+        display_state = state if live_available else ("stale" if age is not None else "unavailable")
         latest_text = str(runtime.get("last_heard") or runtime.get("last_rejected") or "").strip()[:240]
+        latest_reply = str(getattr(self, "last_reply_text", "") or "").strip()[:400]
         rejection = str(runtime.get("last_rejection_reason") or runtime.get("last_error") or "").strip()[:240]
         engine = str(metrics.get("transcription_backend") or self.cfg.get("voice_backend", "unknown"))[:80]
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v1", "audio": {"available": live_available, "unavailable_reason": "Active microphone capture has not supplied a fresh level sample." if not live_available else "", "rms_dbfs": number(live.get("rms_dbfs"), 0.0) if live_available else None, "peak_dbfs": number(live.get("peak_dbfs"), 0.0) if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": state, "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "recognition": {"latest_text": latest_text, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        reason = "" if live_available else ("Active ALSA capture heartbeat is stale." if age is not None else "Active ALSA capture has not published a valid heartbeat.")
+        heartbeat = {"publisher": str(live.get("publisher") or "none"), "sequence": int(live.get("sequence") or 0), "target_hz": int(live.get("target_hz") or 6), "last_callback_at": sample_at, "age_seconds": age, "fresh": live_available}
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "pipeline_state": state, "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}

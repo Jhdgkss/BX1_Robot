@@ -5,6 +5,7 @@ const NAVIGATION = [
   { section: "Manage", id: "hardware", label: "Hardware", icon: "hardware" },
   { section: "Manage", id: "camera", label: "Camera", icon: "hardware" },
   { section: "Manage", id: "audio", label: "Audio", icon: "logs" },
+  { section: "Manage", id: "voice", label: "Live Voice", icon: "brain" },
   { section: "Manage", id: "brain", label: "Brain", icon: "brain" },
   { section: "Manage", id: "configuration", label: "Configuration", icon: "config" },
   { section: "Manage", id: "modules", label: "Modules", icon: "services" },
@@ -22,6 +23,7 @@ const PAGE_META = {
   hardware: ["Device inventory", "Hardware", "Read-only discovery, ownership and health for detected robot devices."],
   camera: ["Safe live preview", "Camera", "Near-live frames proxied from the Existing Robot Body without reopening the physical camera."],
   audio: ["Audio telemetry", "Audio", "Read-only microphone, speaker, level, STT and TTS observations."],
+  voice: ["Shared live session", "Live Voice Console", "Body-mediated voice activity shared by the touchscreen and every 8089 browser."],
   brain: ["Intelligence layer", "Brain", "Connection, models, voice and memory will be managed from this workspace."],
   configuration: ["Platform settings", "Configuration", "A searchable, categorised configuration workspace with safe revision controls."],
   modules: ["Developer preview", "Module Manager", "Manifest-first module inventory, lifecycle health and safe declared capabilities."],
@@ -36,8 +38,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.4-live-voice-monitor",
-    tag: "BX1_OS_v0.7.4_live_voice_monitor",
+    version: "0.7.5-shared-live-voice-console",
+    tag: "BX1_OS_v0.7.5_shared_live_voice_console",
     architecture_only: true,
     capabilities: {},
   },
@@ -94,10 +96,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.4-live-voice-monitor",
+    current_version: "0.7.5-shared-live-voice-console",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.4_live_voice_monitor",
+    tag: "BX1_OS_v0.7.5_shared_live_voice_console",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -122,6 +124,7 @@ const state = {
   },
   conversation: [],
   voiceItems: [], // Browser-session-only recognised/manual/reply display; never exported or sent to OS storage.
+  voiceAutoScroll: true,
   audioTimer: null,
 };
 
@@ -268,6 +271,7 @@ function dashboardPage(data) {
     <div class="grid">
       ${cards.map(card => metricCard(...card)).join("")}
       <div class="span-12" data-live-voice="dashboard">${liveVoiceMarkup(data.audio_bridge || {}, false)}</div>
+      <div data-shared-voice>${sharedVoiceFeed(data, false)}</div>
       ${widgets}
       ${panel("Legacy fallback", actions, { span: 12, subtitle: "Touchscreen starts BX1 OS on 8089. The protected Robot Body page remains available here." })}
       ${panel("Platform posture", overview, { span: 12 })}
@@ -280,7 +284,8 @@ function liveVoiceMarkup(bridge, expanded) {
   if (!bridge.ok || !audio.available) {
     const reason = audio.unavailable_reason || bridge.error || "Body live voice metadata is unavailable.";
     const last = audio.last_successful_update ? ` Last successful update: ${formatTimestamp(audio.last_successful_update)}.` : " No successful live level has been received.";
-    return panel(expanded ? "Voice Monitor" : "Live Voice", `<p class="mono">${esc(reason + last)}</p>`, { span: 12, subtitle: "No placeholder level is shown" });
+    const receiver = bridge.receiver || {}; const received = receiver.last_received_at ? `${Math.max(0, Date.now() / 1000 - Number(receiver.last_received_at)).toFixed(1)} s ago` : "never";
+    return panel(expanded ? "Voice Monitor" : "Live Voice", `<p class="mono">${esc(reason + last)}</p><p class="voice-connection">OS receiver last received Body metadata: ${esc(received)}.</p>`, { span: 12, subtitle: "No placeholder level is shown" });
   }
   const rms = Number(audio.rms_dbfs), peak = Number(audio.peak_dbfs), threshold = Number(audio.threshold_dbfs);
   const percent = Math.max(0, Math.min(100, (rms + 90) / .9));
@@ -289,6 +294,20 @@ function liveVoiceMarkup(bridge, expanded) {
   const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Failure / rejection", recognition.rejection_reason || "None"], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
   const recent = expanded ? `<div class="voice-session-items">${state.voiceItems.length ? state.voiceItems.slice(-12).map(item => `<div class="voice-session-item ${esc(item.tone)}"><span>${esc(item.role)} · ${esc(item.at)}</span>${esc(item.text)}</div>`).join("") : "No browser-session voice items yet."}</div>` : "";
   return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Heard: ${esc(recognition.latest_text || "No recognised words yet")}</p>${details}${recent}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
+}
+
+function sharedVoiceFeed(data, expanded = false) {
+  const consoleData = data.voice_console || {};
+  const items = consoleData.items || [];
+  const receiver = consoleData.receiver || {};
+  const age = receiver.last_received_at ? `${Math.max(0, Date.now() / 1000 - Number(receiver.last_received_at)).toFixed(1)} s` : "never";
+  const visible = expanded ? items : items.slice(-3);
+  const rows = visible.length ? visible.map(item => `<div class="voice-session-item ${esc(item.kind)}"><span>${esc(item.source)} · ${esc(formatTimestamp(item.timestamp))}</span>${esc(item.text)}</div>`).join("") : "No temporary shared voice items yet.";
+  return panel(expanded ? "Shared Live Conversation" : "Shared conversation", `<p class="voice-connection">Body receiver ${receiver.body_available ? "connected" : "waiting"} · last OS receipt ${esc(age)} · Body sample ${receiver.body_sample_age_seconds == null ? "unavailable" : `${Number(receiver.body_sample_age_seconds).toFixed(1)} s old`}</p><div class="voice-session-items" id="sharedVoiceItems">${rows}</div>${expanded ? `<div class="page-actions"><button class="button" type="button" data-live-action="clear">Clear session</button><button class="button" type="button" data-live-action="autoscroll">${state.voiceAutoScroll ? "Pause autoscroll" : "Resume autoscroll"}</button></div>` : ""}`, { span: 12, subtitle: "Shared temporary RAM only; cleared on BX1 OS restart" });
+}
+
+function voiceConsolePage(data) {
+  return `<div class="grid"><div class="span-12" data-live-voice="console">${liveVoiceMarkup(data.audio_bridge || {}, true)}</div><div data-shared-voice>${sharedVoiceFeed(data, true)}</div>${panel("Manual message", `<label for="talkToLeoText">Message for Leo</label><textarea class="input" id="talkToLeoText" maxlength="1000" rows="10" placeholder="Type a message for Leo"></textarea><p id="talkToLeoHelp" class="mono">Enter sends · Shift+Enter adds a line · temporary shared session.</p><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send">Send</button><button class="button" type="button" data-voice-action="talk-repeat">Repeat</button></div><p id="talkToLeoState" class="mono" role="status">${esc(state.talk.phase)}</p>`, { span: 12, subtitle: "Body → Brain chat/TTS → Body speaker; no action packets" })}</div>`;
 }
 
 function systemPage(data) {
@@ -743,6 +762,7 @@ const RENDERERS = {
   hardware: hardwarePage,
   camera: cameraPage,
   audio: audioPage,
+  voice: voiceConsolePage,
   brain: brainPage,
   configuration: configurationPage,
   modules: modulesPage,
@@ -784,8 +804,8 @@ function renderPage() {
   bindTalkToLeo();
   enhanceConversationView();
   bindAudioBridgeForm();
-  if (["audio", "dashboard"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
-  if (!["audio", "dashboard"].includes(state.page) && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
+  if (["audio", "dashboard", "voice"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
+  if (!["audio", "dashboard", "voice"].includes(state.page) && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
   if (state.page === "camera") startCameraPreview();
   $("#workspace").focus({ preventScroll: true });
 }
@@ -803,11 +823,11 @@ function enhanceConversationView() {
 }
 
 async function loadAudioBridge() {
-  if (!["audio", "dashboard"].includes(state.page)) return;
+  if (!["audio", "dashboard", "voice"].includes(state.page)) return;
   try {
-    const response = await fetch("/api/audio/bridge", { cache: "no-store" });
-    const payload = await response.json();
-    if (response.ok) { state.data.audio_bridge = payload; ingestVoiceObservation(payload); updateLiveVoiceDom(); }
+    const [response, consoleResponse] = await Promise.all([fetch("/api/audio/bridge", { cache: "no-store" }), fetch("/api/voice/console", { cache: "no-store" })]);
+    const [payload, consolePayload] = await Promise.all([response.json(), consoleResponse.json()]);
+    if (response.ok && consoleResponse.ok) { state.data.audio_bridge = payload; state.data.voice_console = consolePayload; updateLiveVoiceDom(); }
   } catch (_) { /* normal Body-unavailable state remains visible */ }
 }
 
@@ -824,7 +844,9 @@ function ingestVoiceObservation(bridge) {
 }
 
 function updateLiveVoiceDom() {
-  $$('[data-live-voice]').forEach(node => { node.innerHTML = liveVoiceMarkup(state.data.audio_bridge || {}, node.dataset.liveVoice === "monitor"); });
+  $$('[data-live-voice]').forEach(node => { node.innerHTML = liveVoiceMarkup(state.data.audio_bridge || {}, node.dataset.liveVoice !== "dashboard"); });
+  $$('[data-shared-voice]').forEach(node => { node.innerHTML = sharedVoiceFeed(state.data, state.page === "voice"); });
+  const feed = $("#sharedVoiceItems"); if (feed && state.voiceAutoScroll) feed.scrollTop = feed.scrollHeight;
 }
 
 function bindAudioBridgeForm() {
@@ -940,6 +962,8 @@ async function voiceAction(action) {
       if (counter) counter.textContent = "0 / 1000";
       state.talk = { phase: "Ready", sessionId: "", busy: false, error: "", timer: null };
       state.conversation = [];
+      state.voiceItems = [];
+      await fetch("/api/voice/console/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
       if (result) result.textContent = state.talk.phase;
       return;
     } else if (action === "clear-faults") {
@@ -968,6 +992,16 @@ async function voiceAction(action) {
     }
     if (result) result.textContent = action === "talk-send" ? `Failed — ${error.message}` : error.message;
     toast("Voice diagnostic failed", error.message);
+  }
+}
+
+async function liveAction(action) {
+  if (action === "autoscroll") { state.voiceAutoScroll = !state.voiceAutoScroll; renderPage(); return; }
+  if (action === "clear") {
+    const response = await fetch("/api/voice/console/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) { toast("Live Voice", payload.error || "Could not clear session"); return; }
+    state.data.voice_console = payload; state.conversation = []; state.voiceItems = []; updateLiveVoiceDom();
   }
 }
 
@@ -1099,7 +1133,7 @@ function updateCameraPageTelemetry() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}, widgetsPayload = {}, audioBridgePayload = {}) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}, widgetsPayload = {}, audioBridgePayload = {}, voiceConsolePayload = {}) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -1174,6 +1208,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     voice: voicePayload,
     modules: modulesPayload,
     audio_bridge: audioBridgePayload,
+    voice_console: voiceConsolePayload,
     widgets: widgetsPayload,
     deployment: {
       current_version: deployment.version,
@@ -1207,16 +1242,17 @@ async function loadCoreTelemetry() {
       "/api/runtime/modules",
       "/api/runtime/widgets",
       "/api/audio/bridge",
+      "/api/voice/console",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge, voiceConsole] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge, voiceConsole);
     const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
     if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
     else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };
@@ -1243,6 +1279,8 @@ function init() {
   $("#pageContent").addEventListener("click", event => {
     const action = event.target.closest("[data-voice-action]")?.dataset.voiceAction;
     if (action) voiceAction(action);
+    const live = event.target.closest("[data-live-action]")?.dataset.liveAction;
+    if (live) liveAction(live);
     const moduleButton = event.target.closest("[data-module-action]");
     if (moduleButton) moduleAction(moduleButton.dataset.moduleAction, moduleButton.dataset.moduleId || "");
   });

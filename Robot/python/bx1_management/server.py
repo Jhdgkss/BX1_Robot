@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.4-live-voice-monitor"
-RELEASE_TAG = "BX1_OS_v0.7.4_live_voice_monitor"
+RELEASE_VERSION = "0.7.5-shared-live-voice-console"
+RELEASE_TAG = "BX1_OS_v0.7.5_shared_live_voice_console"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -51,6 +51,7 @@ SPA_ROUTES = {
     "/services",
     "/system",
     "/updates",
+    "/voice",
 }
 STATIC_FILES = {
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
@@ -76,6 +77,67 @@ class InterfaceCapabilities:
             "update_installation": self.update_installation,
             "deployment_rollback": self.deployment_rollback,
         }
+
+
+class SharedLiveVoiceConsole:
+    """Bounded RAM-only shared transcript for every 8089 browser client."""
+
+    def __init__(self, limit: int = 200) -> None:
+        self._items: list[Dict[str, Any]] = []
+        self._limit = max(10, min(200, int(limit)))
+        self._lock = threading.RLock()
+        self._next_id = 1
+        self._last_heard = ""
+        self._last_state = ""
+        self._last_failure = ""
+        self._last_reply = ""
+        self._receiver: Dict[str, Any] = {"last_received_at": None, "last_success_at": None, "last_error": "not_received"}
+
+    def _append(self, kind: str, source: str, text: str) -> None:
+        text = str(text or "").strip()[:400]
+        if not text:
+            return
+        with self._lock:
+            self._items.append({"id": self._next_id, "timestamp": time.time(), "kind": kind, "source": source[:40], "text": text})
+            self._next_id += 1
+            self._items = self._items[-self._limit:]
+
+    def observe_body(self, payload: Mapping[str, Any]) -> None:
+        received = time.time()
+        audio = payload.get("audio") if isinstance(payload.get("audio"), Mapping) else {}
+        recognition = payload.get("recognition") if isinstance(payload.get("recognition"), Mapping) else {}
+        with self._lock:
+            self._receiver.update({"last_received_at": received, "body_sample_at": audio.get("timestamp"), "body_sample_age_seconds": audio.get("age_seconds"), "body_available": bool(audio.get("available")), "last_error": ""})
+            if payload.get("ok"):
+                self._receiver["last_success_at"] = received
+            else:
+                self._receiver["last_error"] = str(payload.get("error") or "body_metadata_failed")[:160]
+        heard = str(recognition.get("latest_text") or "").strip()
+        reply = str(recognition.get("latest_reply") or "").strip()
+        state = str(audio.get("state") or "unavailable").strip()
+        failure = str(recognition.get("rejection_reason") or audio.get("last_failure_reason") or "").strip()
+        if heard and heard != self._last_heard:
+            self._last_heard = heard; self._append("stt", "Recognised speech", heard)
+        if reply and reply != getattr(self, "_last_reply", ""):
+            self._last_reply = reply; self._append("reply", "LEO / Brain", reply)
+        if state and state != self._last_state:
+            self._last_state = state; self._append("system", "Voice state", state)
+        if failure and failure != self._last_failure:
+            self._last_failure = failure; self._append("failure", "Voice failure", failure)
+
+    def add(self, kind: str, source: str, text: str) -> None:
+        self._append(kind, source, text)
+
+    def clear(self) -> Dict[str, Any]:
+        with self._lock:
+            # Keep the observed fingerprints so clearing does not immediately
+            # reinsert the same Body snapshot on the next browser poll.
+            self._items.clear()
+            return self.snapshot()
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"ok": True, "schema": "bx1.live_voice_console.v1", "items": list(self._items), "limit": self._limit, "receiver": dict(self._receiver), "storage": "temporary_memory_only_cleared_on_restart"}
 
 
 class ManagementApplication:
@@ -124,6 +186,7 @@ class ManagementApplication:
             probe_timeout=float(voice_config.get("body_probe_timeout_seconds", 5.0)),
             request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
+        self.live_voice_console = SharedLiveVoiceConsole(limit=200)
         modules_root = Path(self.config.get("modules_root", Path(__file__).resolve().parents[2] / "modules"))
         persistent_root = Path(self.config.get("persistent_modules_root", "/home/arduino/BX1_modules"))
         self.modules = ModuleManager(modules_root, persistent_root=persistent_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)), led_request=self._body_led_request)
@@ -333,9 +396,18 @@ class ManagementApplication:
         try:
             with request.urlopen("http://127.0.0.1:8088/api/bx1-os/audio-bridge", timeout=1.2) as response:
                 payload = json.loads(response.read(16384).decode("utf-8"))
-            return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_audio_metadata"}
+            result = dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_audio_metadata"}
+            self.live_voice_console.observe_body(result)
+            result["receiver"] = self.live_voice_console.snapshot()["receiver"]
+            return result
         except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
-            return {"ok": False, "error": "Body audio metadata unavailable", "detail": str(exc), "boundary": "Robot Body owns microphone capture; BX1 OS did not open a device."}
+            result = {"ok": False, "error": "Body audio metadata unavailable", "detail": str(exc), "boundary": "Robot Body owns microphone capture; BX1 OS did not open a device."}
+            self.live_voice_console.observe_body(result)
+            result["receiver"] = self.live_voice_console.snapshot()["receiver"]
+            return result
+
+    def live_voice_console_snapshot(self) -> Dict[str, Any]:
+        return self.live_voice_console.snapshot()
 
     def update_body_audio_bridge(self, values: Mapping[str, Any]) -> Dict[str, Any]:
         payload = {"settings": dict(values.get("settings", values))}
@@ -594,6 +666,9 @@ class ManagementServer:
                 if path == "/api/audio/bridge":
                     self._json(HTTPStatus.OK, application.body_audio_bridge())
                     return
+                if path == "/api/voice/console":
+                    self._json(HTTPStatus.OK, application.live_voice_console_snapshot())
+                    return
                 if path == "/api/core/robot-body":
                     self._json(
                         HTTPStatus.OK, application.core_robot_body()
@@ -780,8 +855,17 @@ class ManagementServer:
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/voice/typed-test":
-                        result = application.voice.typed_test(str(body.get("text") or ""))
+                        typed = str(body.get("text") or "")
+                        application.live_voice_console.add("manual", "John", typed)
+                        result = application.voice.typed_test(typed)
+                        if result.get("ok"):
+                            application.live_voice_console.add("reply", "LEO / Brain", str(result.get("reply") or "Reply is playing through the Body speaker."))
+                        else:
+                            application.live_voice_console.add("failure", "Voice failure", str(result.get("error") or "typed route failed"))
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        return
+                    if path == "/api/voice/console/clear":
+                        self._json(HTTPStatus.OK, application.live_voice_console.clear())
                         return
                     if path == "/api/voice/brain-test":
                         result = application.voice.brain_probe()
