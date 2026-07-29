@@ -773,6 +773,7 @@ def main() -> int:
     parser.add_argument("--install-only", action="store_true")
     parser.add_argument("--no-start", action="store_true")
     parser.add_argument("--start-canary", action="store_true")
+    parser.add_argument("--skip-qualification", action="store_true", help="Use only when an enclosing reviewed deployment script supplies its own smoke checks")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     try:
@@ -786,6 +787,7 @@ def main() -> int:
             mode=_mode_from_args(args),
             status_url=args.status_url,
             old_status_url=args.old_status_url,
+            run_qualification=not args.skip_qualification,
             dry_run=args.dry_run,
         )
         report = SideBySideDeployer(options).deploy()

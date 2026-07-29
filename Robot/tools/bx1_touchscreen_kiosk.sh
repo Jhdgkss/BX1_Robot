@@ -143,7 +143,7 @@ if [[ -z "$BROWSER" ]]; then
 fi
 
 log "Starting Chromium kiosk: $URL"
-status "launching_browser" "starting Chromium kiosk"
+status "launched" "Chromium kiosk launched"
 
 # Chromium is executed once. systemd, rather than a shell loop, restarts the
 # launcher if the browser genuinely exits.
