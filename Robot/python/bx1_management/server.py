@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.1-developer-preview"
-RELEASE_TAG = "BX1_OS_v0.7.1_modular_runtime_developer_platform"
+RELEASE_VERSION = "0.7.2-operator-integration"
+RELEASE_TAG = "BX1_OS_v0.7.2_operator_integration"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -158,6 +158,8 @@ class ManagementApplication:
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
         endpoint = self.voice.update_brain_endpoint(body_value if isinstance(body_value, Mapping) else {})
         isolation = dict(self.config.get("observer_isolation", {}))
+        installed_version = self.core.state.get("deployment.version") or self.config.get("bx1_os_release_version") or RELEASE_VERSION
+        installed_tag = self.core.state.get("deployment.tag") or self.config.get("bx1_os_release_tag") or RELEASE_TAG
         return {
             "ok": True,
             "service": INTERFACE_ID,
@@ -169,8 +171,8 @@ class ManagementApplication:
             },
             "bx1_os": {
                 "milestone": "BX1 OS Alpha",
-                "release_version": RELEASE_VERSION,
-                "release_tag": RELEASE_TAG,
+                "release_version": installed_version,
+                "release_tag": installed_tag,
                 "qualification_mode": True,
                 "observer_only": True,
                 "observer_isolation": isolation,

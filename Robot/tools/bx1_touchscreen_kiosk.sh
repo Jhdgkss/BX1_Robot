@@ -2,14 +2,15 @@
 set -u
 set -o pipefail
 
-ROOT_DIR="/home/arduino/Arduino_Q_Client_V1"
+ROOT_DIR="/home/arduino/BX1_OS"
 ENV_FILE="$ROOT_DIR/runtime/touchscreen.env"
-LOG_DIR="$ROOT_DIR/runtime/logs"
+LOG_DIR="$ROOT_DIR/logs"
 PROFILE_DIR="$ROOT_DIR/runtime/touchscreen-browser"
-CALIBRATOR="$ROOT_DIR/tools/bx1_touchscreen_calibrate.sh"
+CALIBRATOR="/home/arduino/Arduino_Q_Client_V1/tools/bx1_touchscreen_calibrate.sh"
 
-BX1_WEB_PORT="${BX1_WEB_PORT:-8088}"
-BX1_TOUCH_URL="${BX1_TOUCH_URL:-http://127.0.0.1:${BX1_WEB_PORT}/display}"
+BX1_WEB_PORT="${BX1_WEB_PORT:-8089}"
+BX1_TOUCH_URL="${BX1_TOUCH_URL:-http://127.0.0.1:${BX1_WEB_PORT}/dashboard}"
+BX1_TOUCH_LEGACY_URL="${BX1_TOUCH_LEGACY_URL:-http://127.0.0.1:8088}"
 BX1_TOUCH_ROTATION="${BX1_TOUCH_ROTATION:-right}"
 BX1_TOUCH_OUTPUT="${BX1_TOUCH_OUTPUT:-DP-1}"
 BX1_TOUCH_DEVICE="${BX1_TOUCH_DEVICE:-auto}"
@@ -93,8 +94,7 @@ else
     log "WARNING: Touch calibration tool is unavailable: $CALIBRATOR"
 fi
 
-# Wait indefinitely for the Body web server. The launcher no longer gives up
-# after two minutes; it remains ready until the BX1 Body application starts.
+# Wait for BX1 OS; its dashboard retains a visible legacy Body fallback link.
 WAIT_COUNT=0
 while true; do
     if curl --fail --silent --max-time 2 "$URL" >/dev/null 2>&1; then
@@ -102,7 +102,7 @@ while true; do
     fi
     WAIT_COUNT=$((WAIT_COUNT + 1))
     if (( WAIT_COUNT == 1 || WAIT_COUNT % 6 == 0 )); then
-        log "Waiting for BX1 display route: $URL"
+        log "Waiting for BX1 OS dashboard: $URL (legacy fallback: $BX1_TOUCH_LEGACY_URL)"
     fi
     sleep 5
 done

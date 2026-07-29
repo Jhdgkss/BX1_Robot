@@ -36,8 +36,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.1-developer-preview",
-    tag: "BX1_OS_v0.7.1_modular_runtime_developer_platform",
+    version: "0.7.2-operator-integration",
+    tag: "BX1_OS_v0.7.2_operator_integration",
     architecture_only: true,
     capabilities: {},
   },
@@ -94,10 +94,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.1-developer-preview",
+    current_version: "0.7.2-operator-integration",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.1_modular_runtime_developer_platform",
+    tag: "BX1_OS_v0.7.2_operator_integration",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -251,11 +251,7 @@ function dashboardPage(data) {
   ];
   const actions = `
     <div class="quick-actions">
-      ${button("Open Brain", { iconName: "external", prototype: "Open Brain" , className: "quick-action", disabled: true })}
-      ${button("Open Existing Robot UI", { iconName: "external", href: oldUi, className: "quick-action" })}
-      ${button("Restart BX1 OS", { iconName: "refresh", prototype: "Restart BX1 OS", className: "quick-action" })}
-      ${button("Restart Robot", { iconName: "refresh", prototype: "Restart Robot", className: "quick-action danger" })}
-      ${button("Shutdown Robot", { iconName: "power", prototype: "Shutdown Robot", className: "quick-action danger" })}
+      ${button("Open legacy Robot Body UI (8088)", { iconName: "external", href: oldUi, className: "quick-action" })}
     </div>`;
   const overview = `
     <div class="architecture-note">
@@ -270,7 +266,7 @@ function dashboardPage(data) {
     <div class="grid">
       ${cards.map(card => metricCard(...card)).join("")}
       ${widgets}
-      ${panel("Quick actions", actions, { span: 12, subtitle: "External links work; management actions remain intentionally disabled" })}
+      ${panel("Legacy fallback", actions, { span: 12, subtitle: "Touchscreen starts BX1 OS on 8089. The protected Robot Body page remains available here." })}
       ${panel("Platform posture", overview, { span: 12 })}
     </div>`;
 }
@@ -322,7 +318,7 @@ function servicesPage(data) {
       <td>${service.managed ? badge("Managed", "good", false) : badge("Protected / future", "info", false)}</td>
       <td><div class="table-actions">
         ${button("Logs", { className: "small", prototype: `View logs for ${service.name}` })}
-        ${button("Restart", { className: "small", prototype: `Restart ${service.name}`, disabled: !service.managed })}
+        ${button("Restart unavailable", { className: "small", disabled: true })}
       </div></td>
     </tr>`;
   }).join("");

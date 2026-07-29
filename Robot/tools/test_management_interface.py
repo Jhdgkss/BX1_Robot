@@ -217,11 +217,7 @@ class ManagementAssetTests(unittest.TestCase):
             "Network",
             "Robot IP",
             "Uptime",
-            "Open Brain",
-            "Open Existing Robot UI",
-            "Restart BX1 OS",
-            "Restart Robot",
-            "Shutdown Robot",
+            "Open legacy Robot Body UI (8088)",
         }
         for label in required:
             self.assertIn(label, self.javascript)

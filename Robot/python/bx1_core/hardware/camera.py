@@ -41,7 +41,8 @@ class CameraProxyError(RuntimeError):
 class RobotBodyCameraClient:
     """Fixed-loopback, GET-only proxy for Robot Body-owned cached frames."""
 
-    SNAPSHOT_PATH = "/api/camera/snapshot"
+    # Robot Body owns cached capture and serves its stable JPEG contract here.
+    SNAPSHOT_PATH = "/api/camera_snapshot.jpg"
     STREAM_PATH = "/api/camera/stream"
 
     def __init__(

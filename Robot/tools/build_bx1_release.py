@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.7.1-developer-preview"
-RELEASE_TAG = "BX1_OS_v0.7.1_modular_runtime_developer_platform"
+RELEASE_VERSION = "0.7.2-operator-integration"
+RELEASE_TAG = "BX1_OS_v0.7.2_operator_integration"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -56,8 +56,10 @@ TOOL_FILES = [
     "test_camera_preview_integration.py",
     "test_modular_runtime.py",
     "test_module_platform.py",
+    "test_operator_integration.py",
     "scaffold_bx1_module.py",
     "bx1_module.py",
+    "bx1_touchscreen_kiosk.sh",
 ]
 
 DOCUMENTATION_FILES = [
@@ -84,6 +86,7 @@ DOCUMENTATION_FILES = [
     "BX1_OS_ALPHA_V0_5_0_RELEASE_NOTES.md",
     "BX1_OS_ALPHA_V0_5_0_VALIDATION_REPORT.md",
     "BX1_OS_V0_7_MODULAR_RUNTIME_DEVELOPER_GUIDE.md",
+    "BX1_OS_V0_7_2_OPERATOR_INTEGRATION.md",
 ]
 
 
@@ -100,7 +103,7 @@ def build_release(
     files = collect_release_files(repo)
     commit, dirty = git_identity(repo)
     created_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    release_id = "bx1-os-v0.7.1-modular-runtime-developer-platform-%s" % timestamp.lower()
+    release_id = "bx1-os-v0.7.2-operator-integration-%s" % timestamp.lower()
 
     entries = []
     for source, target in files:
@@ -216,6 +219,7 @@ def collect_release_files(repo: Path) -> List[Tuple[Path, PurePosixPath]]:
         robot / "service" / "bx1-os-alpha.service",
         "service/bx1-os-alpha.service",
     )
+    include(robot / "service" / "bx1-touchscreen.service", "service/bx1-touchscreen.service")
     for name in DOCUMENTATION_FILES:
         include(
             repo / "Documentation" / name,

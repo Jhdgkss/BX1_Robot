@@ -229,7 +229,7 @@ class CameraClientTests(unittest.TestCase):
 
         client = RobotBodyCameraClient(opener=opener)
         frame = client.snapshot()
-        self.assertEqual(seen["url"], "http://127.0.0.1:8088/api/camera/snapshot")
+        self.assertEqual(seen["url"], "http://127.0.0.1:8088/api/camera_snapshot.jpg")
         self.assertEqual(seen["method"], "GET")
         self.assertEqual(frame.sequence, 12)
         self.assertEqual(frame.resolution, "640x480")
@@ -247,7 +247,7 @@ class CameraClientTests(unittest.TestCase):
     def test_snapshot_503_timeout_and_malformed_jpeg(self):
         def unavailable(*_args, **_kwargs):
             raise urllib.error.HTTPError(
-                "http://127.0.0.1:8088/api/camera/snapshot",
+                "http://127.0.0.1:8088/api/camera_snapshot.jpg",
                 503,
                 "missing",
                 {},

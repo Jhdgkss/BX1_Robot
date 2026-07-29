@@ -22,7 +22,7 @@ fi
 export PYTHONPATH="$ROOT_DIR/python"
 export BX1_QUALIFICATION_MODE=1
 export BX1_OBSERVER_ONLY=1
-export BX1_OS_RELEASE_VERSION=0.7.1-developer-preview
+export BX1_OS_RELEASE_VERSION=0.7.2-operator-integration
 export BX1_BODY_CONFIG="$CONFIG_PATH"
 export BX1_WEB_HOST="${BX1_WEB_HOST:-0.0.0.0}"
 export BX1_WEB_PORT="$PORT"

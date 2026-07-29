@@ -26,8 +26,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.7.1-developer-preview"
-RELEASE_TAG = "BX1_OS_v0.7.1_modular_runtime_developer_platform"
+RELEASE_VERSION = "0.7.2-operator-integration"
+RELEASE_TAG = "BX1_OS_v0.7.2_operator_integration"
 DEFAULT_BACKUP_ROOT = Path("/home/arduino/BX1_OS_backups")
 SYSTEMD_DIR = Path("/etc/systemd/system")
 SAMPLE_PATHS = (
@@ -302,7 +302,7 @@ class SideBySideDeployer:
             self.release.get("release_version") != RELEASE_VERSION
             or self.release.get("release_tag") != RELEASE_TAG
         ):
-            raise DeploymentError("release manifest version/tag is not BX1 OS v0.7.1 modular runtime developer platform")
+            raise DeploymentError("release manifest version/tag is not BX1 OS v0.7.2 operator integration")
         if self.release.get("target_service") != DEFAULT_SERVICE:
             raise DeploymentError("release manifest does not target bx1-os-alpha.service")
         if canonical(Path(self.release.get("default_install_root", ""))) != canonical(
@@ -646,6 +646,13 @@ class SideBySideDeployer:
                 check=True,
                 privileged=self.options.privileged,
             )
+            touchscreen_source = self.root / "service" / "bx1-touchscreen.service"
+            if touchscreen_source.is_file():
+                self.runner.run(
+                    ["install", "-m", "0644", str(touchscreen_source), str(self.options.systemd_dir / "bx1-touchscreen.service")],
+                    check=True,
+                    privileged=self.options.privileged,
+                )
             self._systemctl("daemon-reload")
 
             current = service_state(self.runner, self.options.service_name)

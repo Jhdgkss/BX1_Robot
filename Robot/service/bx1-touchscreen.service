@@ -1,0 +1,24 @@
+[Unit]
+Description=BX1 OS Touchscreen Kiosk
+Wants=graphical.target network-online.target bx1-os-alpha.service
+After=graphical.target network-online.target bx1-os-alpha.service
+Requires=bx1-os-alpha.service
+
+[Service]
+Type=simple
+User=arduino
+Group=arduino
+WorkingDirectory=/home/arduino/BX1_OS
+Environment=HOME=/home/arduino
+Environment=USER=arduino
+Environment=DISPLAY=:0
+Environment=XAUTHORITY=/home/arduino/.Xauthority
+Environment=BX1_TOUCH_URL=http://127.0.0.1:8089/dashboard
+Environment=BX1_TOUCH_LEGACY_URL=http://127.0.0.1:8088
+ExecStart=/home/arduino/BX1_OS/tools/bx1_touchscreen_kiosk.sh
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=180
+
+[Install]
+WantedBy=graphical.target
