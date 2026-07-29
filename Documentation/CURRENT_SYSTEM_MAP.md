@@ -2,6 +2,28 @@
 
 This map describes the active source tree, not a proposed replacement.
 
+## Current architecture and handoff — 2026-07-29
+
+- Brain desktop application is the primary conversation UI and owns history,
+  personality, LLM, memory, RAG and TTS. The verified current Brain endpoint is
+  `192.168.68.53:8765`.
+- Robot Body remains the hardware authority for microphone, wake/STT, speaker
+  playback, LEDs, head, MCU and sensors. Its engineering fallback page remains
+  on port 8088 while capabilities are extracted behind safe APIs.
+- BX1 OS is the modular runtime, module manager, event bus, safe capability
+  gateway, service supervision and local engineering interface. It must not
+  become a duplicate Brain conversation application.
+- BX1 OS v0.6.1-development voice conversation runs on port 8089, is manually
+  started and intentionally not enabled at boot. The Talk to Leo field is an
+  engineering Body → Brain → TTS smoke test, not the future chat UI.
+- Typed conversation works end-to-end. The spoken wake route works, but Brain
+  Faster-Whisper/STT requests can time out and Body falls back to local Vosk;
+  this is a future voice-quality task.
+- The next milestone is BX1 OS v0.7 Modular Runtime Developer Preview: bounded
+  event bus, module lifecycle/health, safe capabilities, Module Manager,
+  scaffold/developer guide and a non-hardware `speech_indicator` example. No
+  direct motor, balance, raw MCU, raw servo or raw camera access.
+
 | Responsibility | Actual implementation |
 |---|---|
 | Robot startup | `Robot/main.py` compatibility wrapper runs `Robot/python/main.py`; `BX1RobotBodyService` owns the runtime. |
