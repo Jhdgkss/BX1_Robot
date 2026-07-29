@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import importlib.util
 import math
 import os
@@ -11,6 +12,7 @@ import shutil
 import signal
 import sys
 import threading
+import queue
 import time
 import tempfile
 import textwrap
@@ -662,7 +664,14 @@ def load_config() -> Dict[str, Any]:
     cfg["version"] = "10.39"
     cfg.setdefault("stt_transcription_backend", "brain_faster_whisper")
     cfg.setdefault("brain_stt_enabled", True)
-    cfg.setdefault("brain_stt_timeout_s", 120)
+    # Desktop STT must never monopolise the sole ALSA capture loop.  Older
+    # local configs used 120 seconds; retain the key but migrate that unsafe
+    # value to the bounded worker timeout used by the voice pipeline.
+    try:
+        existing_stt_timeout = float(cfg.get("brain_stt_timeout_s", 12) or 12)
+    except (TypeError, ValueError):
+        existing_stt_timeout = 12.0
+    cfg["brain_stt_timeout_s"] = 12 if existing_stt_timeout > 20 else max(2, min(20, int(existing_stt_timeout)))
     cfg.setdefault("brain_stt_fallback_to_vosk", True)
     cfg.setdefault("brain_stt_language", "en")
     cfg.setdefault("brain_stt_hotwords", "")
@@ -1013,6 +1022,12 @@ class BX1RobotBodyService:
             "record_seconds": int(self.cfg.get("record_seconds", 5)),
             "updated_at": now_iso(),
         }
+        # One capture loop owns ALSA. Completed utterances cross this bounded
+        # in-memory hand-off to the STT/Brain worker; audio is never logged or
+        # persisted here.  A full queue is an explicit busy/drop condition.
+        self.voice_stt_queue: queue.Queue[Dict[str, Any]] = queue.Queue(maxsize=1)
+        self.voice_stt_worker_started = False
+        self.voice_stt_lock = threading.Lock()
 
         # Idle-life runtime: this gives BX1 small autonomous behaviour when it
         # has been left alone, without confusing that behaviour with a user
@@ -1468,7 +1483,7 @@ class BX1RobotBodyService:
                     "capture_method": result.get("capture_method", ""),
                     "local_vosk_text": local_text,
                 },
-                timeout_s=int(self.cfg.get("brain_stt_timeout_s", 120) or 120),
+                timeout_s=max(2, min(20, int(self.cfg.get("brain_stt_timeout_s", 12) or 12))),
             )
         except Exception as exc:
             remote = {"ok": False, "error": str(exc)}
@@ -2759,8 +2774,100 @@ class BX1RobotBodyService:
                     continue
             self.handle_user_text(text)
 
+    def _start_voice_stt_worker(self) -> None:
+        with self.voice_stt_lock:
+            if self.voice_stt_worker_started:
+                return
+            self.voice_stt_worker_started = True
+            self._start_thread("voice-stt", self._voice_stt_worker_loop)
+
+    def _queue_voice_stt(self, captured: Dict[str, Any]) -> bool:
+        """Hand an immutable, bounded completed WAV to the non-capture worker."""
+        payload = dict(captured or {})
+        wav_bytes = payload.get("_submitted_wav_bytes", b"") or b""
+        payload["_submitted_wav_bytes"] = bytes(wav_bytes)
+        try:
+            self.voice_stt_queue.put_nowait(payload)
+        except queue.Full:
+            self.set_voice_runtime("busy", "Speech worker busy; one utterance was dropped.", loop_active=True,
+                                   last_error="STT worker queue full; utterance dropped")
+            return False
+        self.set_voice_runtime("recognising", "Speech queued for non-blocking recognition.", loop_active=True, last_error="")
+        return True
+
+    def _voice_stt_worker_loop(self) -> None:
+        """Run desktop STT/Vosk fallback away from the sole ALSA capture loop."""
+        while not self.stop_event.is_set():
+            try:
+                captured = self.voice_stt_queue.get(timeout=0.25)
+            except queue.Empty:
+                continue
+            try:
+                self.set_voice_runtime("recognising", "Recognising queued speech…", loop_active=True, last_error="")
+                resolved = self._apply_primary_stt(captured, source="live_voice", stt_engine=self.stt)
+                self._process_voice_worker_result(resolved)
+            except Exception as exc:
+                resolved = dict(captured)
+                resolved.update({"accepted": False, "text": "", "reason": "STT worker failed", "error": str(exc),
+                                 "transcription_backend": "worker_failed"})
+                self._process_voice_worker_result(resolved)
+    def _process_voice_worker_result(self, stt_result: Dict[str, Any]) -> None:
+        """Apply recognised voice text without returning to or blocking ALSA."""
+        if stt_result.get("cancelled"):
+            return
+        text = str(stt_result.get("text") or "").strip()
+        reason = str(stt_result.get("reason") or stt_result.get("error") or "speech rejected")[:240]
+        metrics = {
+            "confidence": stt_result.get("confidence"),
+            "transcription_backend": stt_result.get("transcription_backend", "unknown"),
+            "brain_stt_roundtrip_ms": stt_result.get("brain_stt_roundtrip_ms"),
+            "primary_stt_error": stt_result.get("primary_stt_error", ""),
+        }
+        if not stt_result.get("accepted", False):
+            self.set_voice_runtime("rejected", f"Rejected microphone input: {reason}", loop_active=True,
+                                   last_rejected=text, last_rejection_reason=reason, last_stt_metrics=metrics)
+            return
+        wake_words = self.get_wake_words()
+        low = self._normalise_spoken_text(text)
+        matched_wake, wake_score, wake_method = self._match_wake_word_detailed(low, wake_words)
+        awake = time.monotonic() < float(getattr(self, "conversation_active_until", 0.0) or 0.0)
+        if wake_words and not matched_wake and not awake:
+            self.set_voice_runtime("ignored", "Heard speech without a configured wake phrase.", loop_active=True,
+                                   last_heard=text, last_rejected=text, last_rejection_reason="wake phrase required",
+                                   last_stt_metrics=metrics)
+            return
+        cleaned = self._strip_wake_words(low, wake_words) if matched_wake else low
+        if matched_wake and not cleaned:
+            hold_s = max(3.0, min(60.0, float(self.cfg.get("wake_command_window_s", 12.0))))
+            self.set_conversation_active_until(time.monotonic() + hold_s)
+            self.set_voice_runtime("awake", f"Wake word detected: {matched_wake}. Listening for command…", loop_active=True,
+                                   last_heard=text, last_wake_word=matched_wake, last_stt_metrics=metrics)
+            self.acknowledge_voice_event("wake")
+            return
+        if not cleaned:
+            cleaned = text
+        self.set_voice_runtime("processing", "Sending recognised command to Brain App…", loop_active=True,
+                               last_heard=text, last_accepted=cleaned, last_stt_metrics=metrics)
+        event_id = self.new_input_event_id("voice")
+        try:
+            with self.command_lock:
+                result = self.handle_user_text(cleaned, source="robot_microphone", trigger="voice_command",
+                                               event_id=event_id, input_metadata=metrics)
+        except Exception as exc:
+            result = {"ok": False, "error": str(exc)}
+        if result.get("ok", False):
+            hold_s = max(5.0, min(600.0, float(self.cfg.get("conversation_followup_window_s", 90.0))))
+            self.set_conversation_active_until(time.monotonic() + hold_s)
+            self.set_voice_runtime("speaking" if self.speech_output_active() else "awake",
+                                   "Reply is playing." if self.speech_output_active() else "Reply complete; listening for follow-up.",
+                                   loop_active=True, last_heard=text, last_accepted=cleaned, last_stt_metrics=metrics)
+        else:
+            error = str(result.get("error") or "Brain request failed")[:240]
+            self.set_voice_runtime("error", f"Voice command failed: {error}", loop_active=True, last_error=error,
+                                   last_stt_metrics=metrics)
     def voice_loop(self) -> None:
         print("[audio] Voice loop active.")
+        self._start_voice_stt_worker()
         self.set_voice_runtime("listening", "Listening for wake word...", loop_active=True, last_error="")
         awake_until = 0.0
 
@@ -2787,19 +2894,6 @@ class BX1RobotBodyService:
             if self.manual_audio_capture_requested.is_set():
                 self.set_voice_runtime("paused", "Wake listener paused while microphone diagnostics use the mic.", loop_active=True)
                 self.stop_event.wait(0.25)
-                continue
-
-            # Manual/web commands run outside this listener thread. Pause the
-            # microphone for the entire Brain request so background noise cannot
-            # become a second command while BX1 is visibly thinking.
-            if self.command_processing.is_set():
-                self.set_voice_runtime(
-                    "processing",
-                    "Brain request in progress; microphone paused.",
-                    loop_active=True,
-                    last_error="",
-                )
-                self.stop_event.wait(0.15)
                 continue
 
             # Echo guard: do not record while BX1 is speaking or while a
@@ -2860,8 +2954,10 @@ class BX1RobotBodyService:
                         level_observer=self.update_live_voice_observation,
                     )
                     if not stt_result.get("cancelled"):
-                        self.set_voice_runtime("recognising", "Recognising captured speech…", loop_active=True)
-                        stt_result = self._apply_primary_stt(stt_result, source="live_voice", stt_engine=self.stt)
+                        self._queue_voice_stt(stt_result)
+                        # The worker owns desktop STT/Vosk fallback and Brain
+                        # dispatch. Do not make the ALSA capture thread wait.
+                        continue
                     text = str(stt_result.get("text") or "").strip()
                 finally:
                     # A manual Listen Once request may have interrupted this live
@@ -4715,8 +4811,17 @@ class BX1RobotBodyService:
 
     def save_config_file(self) -> None:
         """Persist the current runtime config back to python/config.json."""
+        previous = CONFIG_PATH.stat() if CONFIG_PATH.exists() else None
         tmp_path = CONFIG_PATH.with_suffix(".json.tmp")
         tmp_path.write_text(json.dumps(self.cfg, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        if previous is not None:
+            os.chmod(tmp_path, previous.st_mode & 0o777)
+            try:
+                if hasattr(os, "chown"):
+                    os.chown(tmp_path, previous.st_uid, previous.st_gid)
+            except PermissionError:
+                # The normal service account already owns the machine-local file.
+                pass
         tmp_path.replace(CONFIG_PATH)
 
     def save_robot_profile_file(self) -> None:
@@ -5671,11 +5776,89 @@ class BX1RobotBodyService:
         engine = str(metrics.get("transcription_backend") or self.cfg.get("voice_backend", "unknown"))[:80]
         reason = "" if live_available else ("Active ALSA capture heartbeat is stale." if age is not None else "Active ALSA capture has not published a valid heartbeat.")
         heartbeat = {"publisher": str(live.get("publisher") or "none"), "sequence": int(live.get("sequence") or 0), "target_hz": int(live.get("target_hz") or 6), "last_callback_at": sample_at, "age_seconds": age, "fresh": live_available}
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "pipeline_state": state, "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "pipeline_state": state, "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 12.0, "s")}
         return {name: {"current": self.cfg.get(key, default), "effective": self.cfg.get(key, default), "default": default, "minimum": low, "maximum": high, "unit": unit} for name, (key, low, high, default, unit) in specs.items()}
+
+    def web_bx1_voice_settings(self) -> Dict[str, Any]:
+        """Versioned, allowlisted voice configuration for BX1 OS only."""
+        values = {
+            "wake_phrases": self.get_wake_words(),
+            "wake_listen_timeout_s": float(self.cfg.get("wake_command_window_s", 12.0)),
+            "speech_end_timeout_ms": int(self.cfg.get("stt_end_silence_ms", 1350)),
+            "noise_gate_dbfs": float(self.cfg.get("mic_noise_gate_dbfs", -48.0)),
+            "noise_margin_db": float(self.cfg.get("stt_noise_margin_db", 6.0)),
+            "adaptive_margin_db": float(self.cfg.get("stt_adaptive_margin_db", 8.0)),
+            "stt_policy": str(self.cfg.get("stt_transcription_backend", "brain_faster_whisper")),
+        }
+        revision = hashlib.sha256(json.dumps(values, sort_keys=True).encode("utf-8")).hexdigest()[:16]
+        return {
+            "ok": True, "schema": "bx1.body.voice_settings.v1", "revision": revision,
+            "updated_at": now_iso(), "effective": values,
+            "limits": {
+                "wake_phrases": {"minimum_count": 1, "maximum_count": 8, "maximum_length": 48},
+                "wake_listen_timeout_s": {"minimum": 3.0, "maximum": 60.0},
+                "speech_end_timeout_ms": {"minimum": 250, "maximum": 4000},
+                "noise_gate_dbfs": {"minimum": -90.0, "maximum": -5.0},
+                "noise_margin_db": {"minimum": 0.0, "maximum": 30.0},
+                "adaptive_margin_db": {"minimum": 0.0, "maximum": 30.0},
+                "stt_policy": {"allowed": ["brain_faster_whisper", "vosk"]},
+            },
+            "ownership": "Robot Body validates and atomically saves only these voice settings; BX1 OS never edits arbitrary configuration.",
+        }
+
+    def web_update_bx1_voice_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        requested = data.get("settings", data)
+        if not isinstance(requested, dict):
+            return {"ok": False, "error": "settings must be an object"}
+        allowed = {"wake_phrases", "wake_listen_timeout_s", "speech_end_timeout_ms", "noise_gate_dbfs", "noise_margin_db", "adaptive_margin_db", "stt_policy"}
+        unknown = set(requested) - allowed
+        if unknown:
+            return {"ok": False, "error": "unsupported voice setting: " + ", ".join(sorted(unknown))}
+        candidate = self.web_bx1_voice_settings()["effective"]
+        candidate.update({key: requested[key] for key in requested})
+        phrases = candidate.get("wake_phrases")
+        if not isinstance(phrases, list) or not (1 <= len(phrases) <= 8):
+            return {"ok": False, "error": "wake_phrases must contain 1 to 8 phrases"}
+        normalised: List[str] = []
+        for phrase in phrases:
+            if not isinstance(phrase, str):
+                return {"ok": False, "error": "wake phrases must be text"}
+            clean = " ".join(phrase.strip().lower().split())
+            if not clean or len(clean) > 48:
+                return {"ok": False, "error": "each wake phrase must contain 1 to 48 characters"}
+            if clean not in normalised:
+                normalised.append(clean)
+        if not normalised:
+            return {"ok": False, "error": "at least one distinct wake phrase is required"}
+        numeric = {
+            "wake_listen_timeout_s": (3.0, 60.0, float), "speech_end_timeout_ms": (250, 4000, int),
+            "noise_gate_dbfs": (-90.0, -5.0, float), "noise_margin_db": (0.0, 30.0, float),
+            "adaptive_margin_db": (0.0, 30.0, float),
+        }
+        parsed: Dict[str, Any] = {"wake_phrases": normalised}
+        for name, (low, high, convert) in numeric.items():
+            try:
+                value = convert(float(candidate[name]))
+            except (TypeError, ValueError):
+                return {"ok": False, "error": f"{name} must be numeric"}
+            if not low <= value <= high:
+                return {"ok": False, "error": f"{name} must be between {low} and {high}"}
+            parsed[name] = value
+        policy = str(candidate.get("stt_policy") or "").strip().lower()
+        if policy not in {"brain_faster_whisper", "vosk"}:
+            return {"ok": False, "error": "stt_policy is not supported by this Robot Body"}
+        self.cfg.update({"wake_words": parsed["wake_phrases"], "wake_command_window_s": parsed["wake_listen_timeout_s"],
+                         "stt_end_silence_ms": parsed["speech_end_timeout_ms"], "mic_noise_gate_dbfs": parsed["noise_gate_dbfs"],
+                         "stt_noise_margin_db": parsed["noise_margin_db"], "stt_adaptive_margin_db": parsed["adaptive_margin_db"],
+                         "stt_transcription_backend": policy})
+        self._refresh_mic_monitor_settings()
+        self.save_config_file()
+        result = self.web_bx1_voice_settings()
+        result["message"] = "Settings saved atomically by Robot Body. Active capture applies them on its next utterance."
+        return result
 
     def web_update_bx1_audio_bridge_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Allowlisted, atomic configuration update for the OS audio bridge."""
@@ -5845,7 +6028,7 @@ class BX1RobotBodyService:
             "voice_backend": str(self.cfg.get("voice_backend", "vosk")),
             "stt_transcription_backend": str(self.cfg.get("stt_transcription_backend", "brain_faster_whisper")),
             "brain_stt_enabled": bool(self.cfg.get("brain_stt_enabled", True)),
-            "brain_stt_timeout_s": int(self.cfg.get("brain_stt_timeout_s", 120)),
+            "brain_stt_timeout_s": int(self.cfg.get("brain_stt_timeout_s", 12)),
             "brain_stt_fallback_to_vosk": bool(self.cfg.get("brain_stt_fallback_to_vosk", True)),
             "defer_local_vosk_when_brain_enabled": bool(self.cfg.get("stt_defer_local_vosk_when_brain_enabled", True)),
             "brain_stt_language": str(self.cfg.get("brain_stt_language", "en")),

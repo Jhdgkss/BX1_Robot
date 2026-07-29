@@ -728,9 +728,18 @@ tbody tr:last-child td { border-bottom: 0; }
 .live-voice.heard .live-voice-top span { background:#7b4cc2; }.live-voice.speaking .live-voice-top span { background:#26895d; }.live-voice.failure .live-voice-top span { background:#bd6236; }
 .heard-line { margin:0; padding:10px 12px; border-radius:9px; background:#1a2530; color:var(--text); font-size:16px; }
 .voice-session-items { display:grid; gap:7px; max-height:300px; overflow:auto; margin-top:8px; }
-.voice-session-item { padding:9px 11px; border-radius:10px; background:#56616c; color:#fff; }.voice-session-item span { display:block; opacity:.78; font-size:11px; margin-bottom:3px; }
+.voice-session-item { width:fit-content; max-width:84%; min-width:0; padding:9px 11px; border-radius:10px; background:#56616c; color:#fff; overflow-wrap:anywhere; }.voice-session-item span { display:block; opacity:.78; font-size:11px; margin-bottom:3px; }
 .voice-session-item.stt { background:#6c49a9; }.voice-session-item.manual { background:#2467d5; }.voice-session-item.reply { background:#23885b; }.voice-session-item.failure { background:#b14d42; }
+.voice-session-item.manual { margin-left:auto; }
 .voice-connection { margin:0; color:var(--text-soft); font-size:13px; }
+.voice-console-page { display:grid; grid-template-columns:minmax(0,1fr); gap:16px; min-width:0; }
+.voice-console-page > *, .voice-console-page .panel, .voice-console-page .panel-body { min-width:0; }
+.voice-console-top { display:grid; grid-template-columns:minmax(0,1.35fr) minmax(0,.65fr); gap:16px; min-width:0; }
+.voice-console-top > *, .voice-console-top .panel { min-width:0; grid-column:auto; }
+.voice-console-transcript, .voice-console-manual { min-width:0; width:100%; grid-column:auto; }
+.voice-console-transcript .panel, .voice-console-manual { width:100%; }
+.voice-console-transcript .voice-session-items { display:flex; flex-direction:column; align-items:flex-start; min-width:0; width:100%; max-height:420px; }
+.voice-console-manual #talkToLeoText { width:100%; box-sizing:border-box; }
 
 .app-shell[data-sidebar="collapsed"] { grid-template-columns: var(--sidebar-collapsed) minmax(0, 1fr); }
 .app-shell[data-sidebar="collapsed"] .brand { padding: 0 18px; }
@@ -809,6 +818,11 @@ tbody tr:last-child td { border-bottom: 0; }
   .data-row dd { text-align: left; }
   .log-line { grid-template-columns: 65px 50px minmax(0, 1fr); }
   .log-source { display: none; }
+  .voice-console-page, .voice-console-top { grid-template-columns:minmax(0,1fr); gap:12px; }
+  .voice-console-transcript .voice-session-items { max-height:360px; }
+  .voice-session-item { max-width:85%; }
+  .voice-console-manual .button { min-height:44px; }
+  #talkToLeoText { min-height:220px; font-size:18px; }
 }
 @media (max-width: 390px) {
   .quick-actions, .hardware-grid { grid-template-columns: 1fr; }

@@ -292,8 +292,7 @@ function liveVoiceMarkup(bridge, expanded) {
   const thresholdPercent = Math.max(0, Math.min(100, (threshold + 90) / .9));
   const stateTone = audio.state === "failed" ? "failure" : audio.state === "speaking" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
   const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Failure / rejection", recognition.rejection_reason || "None"], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
-  const recent = expanded ? `<div class="voice-session-items">${state.voiceItems.length ? state.voiceItems.slice(-12).map(item => `<div class="voice-session-item ${esc(item.tone)}"><span>${esc(item.role)} · ${esc(item.at)}</span>${esc(item.text)}</div>`).join("") : "No browser-session voice items yet."}</div>` : "";
-  return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Heard: ${esc(recognition.latest_text || "No recognised words yet")}</p>${details}${recent}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
+  return panel(expanded ? "Voice Monitor" : "Live Voice", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line">Heard: ${esc(recognition.latest_text || "No recognised words yet")}</p>${details}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
 }
 
 function sharedVoiceFeed(data, expanded = false) {
@@ -302,12 +301,21 @@ function sharedVoiceFeed(data, expanded = false) {
   const receiver = consoleData.receiver || {};
   const age = receiver.last_received_at ? `${Math.max(0, Date.now() / 1000 - Number(receiver.last_received_at)).toFixed(1)} s` : "never";
   const visible = expanded ? items : items.slice(-3);
-  const rows = visible.length ? visible.map(item => `<div class="voice-session-item ${esc(item.kind)}"><span>${esc(item.source)} · ${esc(formatTimestamp(item.timestamp))}</span>${esc(item.text)}</div>`).join("") : "No temporary shared voice items yet.";
-  return panel(expanded ? "Shared Live Conversation" : "Shared conversation", `<p class="voice-connection">Body receiver ${receiver.body_available ? "connected" : "waiting"} · last OS receipt ${esc(age)} · Body sample ${receiver.body_sample_age_seconds == null ? "unavailable" : `${Number(receiver.body_sample_age_seconds).toFixed(1)} s old`}</p><div class="voice-session-items" id="sharedVoiceItems">${rows}</div>${expanded ? `<div class="page-actions"><button class="button" type="button" data-live-action="clear">Clear session</button><button class="button" type="button" data-live-action="autoscroll">${state.voiceAutoScroll ? "Pause autoscroll" : "Resume autoscroll"}</button></div>` : ""}`, { span: 12, subtitle: "Shared temporary RAM only; cleared on BX1 OS restart" });
+  const rows = visible.length ? visible.map(item => `<div class="voice-session-item ${esc(item.kind)}"><span>${esc(item.source)} · ${esc(formatTimestamp(item.timestamp))}</span>${esc(item.text)}</div>`).join("") : "No live conversation items yet.";
+  return panel(expanded ? "Shared Live Conversation" : "Shared conversation", `<p class="voice-connection">Body receiver ${receiver.body_available ? "connected" : "waiting"} · last OS receipt ${esc(age)} · Body sample ${receiver.body_sample_age_seconds == null ? "unavailable" : `${Number(receiver.body_sample_age_seconds).toFixed(1)} s old`}</p><div class="voice-session-items" id="sharedVoiceItems">${rows}</div>${expanded ? `<div class="page-actions"><button class="button" type="button" data-live-action="clear">Clear session</button><button class="button" type="button" data-live-action="autoscroll">${state.voiceAutoScroll ? "Pause autoscroll" : "Resume autoscroll"}</button></div>` : ""}`, { span: 12, className: "shared-live-conversation", subtitle: "Shared temporary RAM only; cleared on BX1 OS restart" });
+}
+
+function liveVoiceStatusCard(bridge) {
+  const audio = bridge.audio || {}; const recognition = bridge.recognition || {};
+  return panel("Live status", dataList([
+    ["State", audio.state || "Unavailable"], ["Heard", recognition.latest_text || "No recognised words yet"],
+    ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)],
+    ["Failure", recognition.rejection_reason || audio.last_failure_reason || "None"], ["Sample age", audio.age_seconds == null ? "Unavailable" : `${Number(audio.age_seconds).toFixed(1)} s`],
+  ]), { span: 12, className: "voice-console-status", subtitle: "Live Body metadata; no raw audio" });
 }
 
 function voiceConsolePage(data) {
-  return `<div class="grid"><div class="span-12" data-live-voice="console">${liveVoiceMarkup(data.audio_bridge || {}, true)}</div><div data-shared-voice>${sharedVoiceFeed(data, true)}</div>${panel("Manual message", `<label for="talkToLeoText">Message for Leo</label><textarea class="input" id="talkToLeoText" maxlength="1000" rows="10" placeholder="Type a message for Leo"></textarea><p id="talkToLeoHelp" class="mono">Enter sends · Shift+Enter adds a line · temporary shared session.</p><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send">Send</button><button class="button" type="button" data-voice-action="talk-repeat">Repeat</button></div><p id="talkToLeoState" class="mono" role="status">${esc(state.talk.phase)}</p>`, { span: 12, subtitle: "Body → Brain chat/TTS → Body speaker; no action packets" })}</div>`;
+  return `<div class="voice-console-page"><div class="voice-console-top"><div data-live-voice="console">${liveVoiceMarkup(data.audio_bridge || {}, true)}</div><div data-live-voice-status>${liveVoiceStatusCard(data.audio_bridge || {})}</div></div><div class="voice-console-transcript" data-shared-voice>${sharedVoiceFeed(data, true)}</div>${panel("Manual message", `<label for="talkToLeoText">Message for Leo</label><textarea class="input" id="talkToLeoText" maxlength="1000" rows="10" placeholder="Type a message for Leo"></textarea><p id="talkToLeoHelp" class="mono">Enter sends · Shift+Enter adds a line · shared temporary RAM-only session.</p><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send">Send</button><button class="button" type="button" data-voice-action="talk-repeat">Repeat</button></div><p id="talkToLeoState" class="mono" role="status">${esc(state.talk.phase)}</p>`, { span: 12, className: "voice-console-manual", subtitle: "Body → Brain chat/TTS → Body speaker; no action packets" })}</div>`;
 }
 
 function systemPage(data) {
@@ -552,6 +560,25 @@ function audioDeviceTable(devices, category) {
   </table></div>`;
 }
 
+function wakeSpeechSettingsPanel(bridge) {
+  const settings = bridge.voice_settings || {};
+  const value = settings.effective || {};
+  if (!settings.ok) return emptyPanel("brain", "Wake & Speech unavailable", "Robot Body has not supplied its allowlisted voice settings.");
+  const phrases = Array.isArray(value.wake_phrases) ? value.wake_phrases : [];
+  const row = phrase => `<div class="page-actions wake-phrase-row"><input class="input" name="wake_phrase" maxlength="48" value="${esc(phrase)}" aria-label="Wake phrase"><button class="button small" type="button" data-wake-action="remove">Remove</button></div>`;
+  return `<form id="wakeSpeechForm" class="audio-settings">
+    <p class="voice-connection">Settings are applied by Robot Body · revision ${esc(settings.revision || "unknown")} · ${esc(formatTimestamp(settings.updated_at))}</p>
+    <div id="wakePhraseRows">${phrases.map(row).join("")}</div><div class="page-actions"><button class="button small" type="button" data-wake-action="add">Add phrase</button></div>
+    <label>Wake/session listening timeout (s)<input class="input" name="wake_listen_timeout_s" type="number" min="3" max="60" step="0.5" value="${esc(value.wake_listen_timeout_s)}"></label>
+    <label>Speech-end timeout (ms)<input class="input" name="speech_end_timeout_ms" type="number" min="250" max="4000" step="10" value="${esc(value.speech_end_timeout_ms)}"></label>
+    <label>Noise gate (dBFS)<input class="input" name="noise_gate_dbfs" type="number" min="-90" max="-5" step="0.5" value="${esc(value.noise_gate_dbfs)}"></label>
+    <label>Noise margin (dB)<input class="input" name="noise_margin_db" type="number" min="0" max="30" step="0.5" value="${esc(value.noise_margin_db)}"></label>
+    <label>Adaptive margin (dB)<input class="input" name="adaptive_margin_db" type="number" min="0" max="30" step="0.5" value="${esc(value.adaptive_margin_db)}"></label>
+    <label>STT policy<select class="input" name="stt_policy"><option value="brain_faster_whisper" ${value.stt_policy === "brain_faster_whisper" ? "selected" : ""}>Brain faster-whisper with local Vosk fallback</option><option value="vosk" ${value.stt_policy === "vosk" ? "selected" : ""}>Local Vosk</option></select></label>
+    <div class="page-actions"><button class="button primary" type="submit">Save to Robot</button><span id="wakeSpeechState" class="mono">Only allowlisted voice settings are saved.</span></div>
+  </form>`;
+}
+
 function audioPage(data) {
   const bridge = data.audio_bridge || {};
   const live = bridge.audio || {};
@@ -580,10 +607,11 @@ function audioPage(data) {
     ]), { span: 8, subtitle: "Proxied only; BX1 OS never seizes the microphone" })}
     <div class="span-12" data-live-voice="monitor">${liveVoiceMarkup(bridge, true)}</div>
     ${panel("Body audio settings", bridge.ok ? `<form id="audioBridgeForm" class="audio-settings">${Object.entries(bridge.settings || {}).map(([key, value]) => `<label>${esc(key.replaceAll("_", " "))}<input class="input" name="${esc(key)}" type="number" min="${value.minimum}" max="${value.maximum}" step="any" value="${value.current}"><small>Range ${value.minimum}–${value.maximum} ${esc(value.unit)} · default ${value.default} · effective ${value.effective}</small></label>`).join("")}<div class="page-actions"><button class="button primary" type="submit">Apply Body settings</button><span id="audioBridgeState" class="mono">Validated and atomically saved by Robot Body.</span></div></form>` : "", { span: 12, subtitle: "No raw audio, recording, device, GPIO or hardware controls" })}
+    ${panel("Wake & Speech", wakeSpeechSettingsPanel(bridge), { span: 12, subtitle: "Normal operator settings live in BX1 OS; the 8088 Body page is engineering fallback only." })}
     ${panel("Microphones", audioDeviceTable(microphones, "Microphone"), { span: 12, aside: badge(`${microphones.length} observed`, "info", false) })}
     ${panel("Speakers", audioDeviceTable(speakers, "Speaker"), { span: 12, aside: badge(`${speakers.length} observed`, "info", false) })}
     ${panel("DSP", emptyPanel("logs", "Read-only metadata", "DSP configuration and live spectral controls are not exposed in this release."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
-    ${panel("Wake Word and STT", emptyPanel("brain", "Owned by Robot Body", "Wake-word and transcription state is observed through the existing API."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
+    ${panel("Wake Word and STT", dataList([["State", live.state || "Unavailable"], ["Latest heard", bridge.recognition?.latest_text || "None"], ["STT engine", bridge.recognition?.engine || "Unknown"], ["Confidence", bridge.recognition?.confidence ?? "Not reported"], ["Failure", bridge.recognition?.rejection_reason || "None"], ["Sample age", `${Number(live.age_seconds || 0).toFixed(1)} s`]]), { span: 4, aside: badge("Body mediated", "info", false) })}
     ${panel("TTS", emptyPanel("services", "Owned by Robot Body", "Playback configuration is reported without changing volume, mute or device selection."), { span: 4, aside: badge("Future controlled operation", "warn", false) })}
   </div>`;
 }
@@ -804,6 +832,7 @@ function renderPage() {
   bindTalkToLeo();
   enhanceConversationView();
   bindAudioBridgeForm();
+  bindWakeSpeechForm();
   if (["audio", "dashboard", "voice"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
   if (!["audio", "dashboard", "voice"].includes(state.page) && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
   if (state.page === "camera") startCameraPreview();
@@ -844,9 +873,16 @@ function ingestVoiceObservation(bridge) {
 }
 
 function updateLiveVoiceDom() {
+  const feed = $("#sharedVoiceItems");
+  const pausedScrollTop = feed && !state.voiceAutoScroll ? feed.scrollTop : null;
   $$('[data-live-voice]').forEach(node => { node.innerHTML = liveVoiceMarkup(state.data.audio_bridge || {}, node.dataset.liveVoice !== "dashboard"); });
+  $$('[data-live-voice-status]').forEach(node => { node.innerHTML = liveVoiceStatusCard(state.data.audio_bridge || {}); });
   $$('[data-shared-voice]').forEach(node => { node.innerHTML = sharedVoiceFeed(state.data, state.page === "voice"); });
-  const feed = $("#sharedVoiceItems"); if (feed && state.voiceAutoScroll) feed.scrollTop = feed.scrollHeight;
+  const refreshedFeed = $("#sharedVoiceItems");
+  if (refreshedFeed && state.voiceAutoScroll) refreshedFeed.scrollTop = refreshedFeed.scrollHeight;
+  if (refreshedFeed && pausedScrollTop != null) refreshedFeed.scrollTop = pausedScrollTop;
+  const stateLabel = $("#talkToLeoState");
+  if (stateLabel) stateLabel.textContent = `${state.talk.phase}${state.talk.error ? ` — ${state.talk.error}` : ""}`;
 }
 
 function bindAudioBridgeForm() {
@@ -862,6 +898,25 @@ function bindAudioBridgeForm() {
       const payload = await response.json();
       if (!response.ok || !payload.ok) throw new Error(payload.error || "Body rejected settings");
       if (target) target.textContent = payload.restart_required ? "Saved. Restart Robot Body via its approved management route to apply to active capture." : "Saved and effective.";
+      await loadAudioBridge();
+    } catch (error) { if (target) target.textContent = `Failed: ${error.message}`; }
+  });
+}
+
+function bindWakeSpeechForm() {
+  const form = $("#wakeSpeechForm");
+  if (!form) return;
+  form.addEventListener("submit", async event => {
+    event.preventDefault();
+    const settings = Object.fromEntries(new FormData(form).entries());
+    settings.wake_phrases = $$('input[name="wake_phrase"]', form).map(input => input.value.trim()).filter(Boolean);
+    const target = $("#wakeSpeechState");
+    if (target) target.textContent = "Saving through Robot Body…";
+    try {
+      const response = await fetch("/api/audio/voice-settings/v1", { method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ settings }) });
+      const payload = await response.json();
+      if (!response.ok || !payload.ok) throw new Error(payload.error || "Robot Body rejected voice settings");
+      if (target) target.textContent = `Saved by Robot Body · revision ${payload.revision || "updated"}`;
       await loadAudioBridge();
     } catch (error) { if (target) target.textContent = `Failed: ${error.message}`; }
   });
@@ -996,12 +1051,19 @@ async function voiceAction(action) {
 }
 
 async function liveAction(action) {
-  if (action === "autoscroll") { state.voiceAutoScroll = !state.voiceAutoScroll; renderPage(); return; }
+  if (action === "autoscroll") {
+    state.voiceAutoScroll = !state.voiceAutoScroll;
+    const button = $("[data-live-action='autoscroll']");
+    if (button) button.textContent = state.voiceAutoScroll ? "Pause autoscroll" : "Resume autoscroll";
+    return;
+  }
   if (action === "clear") {
     const response = await fetch("/api/voice/console/clear", { method: "POST", headers: { "Content-Type": "application/json" }, body: "{}" });
     const payload = await response.json();
     if (!response.ok || !payload.ok) { toast("Live Voice", payload.error || "Could not clear session"); return; }
-    state.data.voice_console = payload; state.conversation = []; state.voiceItems = []; updateLiveVoiceDom();
+    state.data.voice_console = payload; state.conversation = []; state.voiceItems = [];
+    const draft = $("#talkToLeoText"); if (draft) { draft.value = ""; draft.dispatchEvent(new Event("input")); }
+    updateLiveVoiceDom();
   }
 }
 
@@ -1260,6 +1322,7 @@ async function loadCoreTelemetry() {
     else if (session?.state === "playing") state.talk.phase = "Playing reply";
     state.connected = true;
     if (state.page === "camera") updateCameraPageTelemetry();
+    else if (["voice", "brain", "audio"].includes(state.page)) updateLiveVoiceDom();
     else renderPage();
   } catch (error) {
     state.connected = false;
@@ -1281,6 +1344,15 @@ function init() {
     if (action) voiceAction(action);
     const live = event.target.closest("[data-live-action]")?.dataset.liveAction;
     if (live) liveAction(live);
+    const wake = event.target.closest("[data-wake-action]")?.dataset.wakeAction;
+    if (wake === "add") {
+      const rows = $("#wakePhraseRows");
+      if (rows && $$('input[name="wake_phrase"]', rows).length < 8) rows.insertAdjacentHTML("beforeend", '<div class="page-actions wake-phrase-row"><input class="input" name="wake_phrase" maxlength="48" value="" aria-label="Wake phrase"><button class="button small" type="button" data-wake-action="remove">Remove</button></div>');
+    }
+    if (wake === "remove") {
+      const row = event.target.closest(".wake-phrase-row");
+      if (row && $$('input[name="wake_phrase"]', $("#wakePhraseRows")).length > 1) row.remove();
+    }
     const moduleButton = event.target.closest("[data-module-action]");
     if (moduleButton) moduleAction(moduleButton.dataset.moduleAction, moduleButton.dataset.moduleId || "");
   });

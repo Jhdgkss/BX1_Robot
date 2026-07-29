@@ -100,7 +100,7 @@ details{border:1px solid var(--line);border-radius:10px;background:#08131d;paddi
 </section>
 
 <section class="page" id="page-speech">
-  <div class="page-title"><div><h3>Speech Input</h3><p>Microphone capture, endpointing and recognition. This is the exact path used by live voice.</p></div><span class="badge info">BODY OWNED</span></div>
+  <div class="page-title"><div><h3>Speech Input — Engineering Fallback</h3><p>Normal wake and speech settings are operated from BX1 OS on port 8089. This 8088 page remains a Body engineering fallback.</p></div><span class="badge warn">LEGACY SETTINGS</span></div>
   <div class="grid">
     <article class="card span-7"><h4>Live Input Level</h4><div class="meter-row"><span>Filtered RMS</span><div class="meter"><span id="rmsBar"></span></div><span class="value-right" id="rmsText">-- dBFS</span></div><div class="meter-row"><span>Peak</span><div class="meter"><span id="peakBar"></span></div><span class="value-right" id="peakText">-- dBFS</span></div><canvas class="wave" id="levelCanvas" width="900" height="120"></canvas><div id="micBadges" class="buttons"></div><div class="buttons"><button onclick="startMonitor(this)">Start level meter</button><button onclick="stopMonitor(this)">Stop level meter</button><button onclick="loadDevices(this)">Refresh devices</button></div></article>
     <article class="card span-5"><h4>Production STT Test</h4><div class="help">Waits for speech, keeps the first syllable, and closes after natural end silence. Each test has its own capture ID, so playback cannot silently reuse an older WAV.</div><div class="buttons"><button class="good" onclick="listenOnce(false,this)">Listen once</button><button class="primary" onclick="listenOnce(true,this)">Listen and send to Brain</button></div><div id="sttResult" class="result-box">No diagnostic utterance captured yet.</div><div class="buttons"><button id="playSttRaw" disabled onclick="playDiagnosticAudio('raw',this)">Play raw</button><button id="playSttFiltered" disabled onclick="playDiagnosticAudio('filtered',this)">Play filtered</button><button id="playSttSubmitted" disabled onclick="playDiagnosticAudio('submitted',this)">Play submitted</button></div><div class="help" id="sttCaptureState">No current capture.</div></article>
@@ -375,6 +375,9 @@ class WebControlServer:
                 if path == "/api/bx1-os/audio-bridge":
                     self._json(200, service.web_bx1_audio_bridge())
                     return
+                if path == "/api/bx1-os/voice-settings/v1":
+                    self._json(200, service.web_bx1_voice_settings())
+                    return
                 if path == "/api/mic_devices":
                     self._json(200, service.web_list_mic_devices())
                     return
@@ -637,6 +640,16 @@ class WebControlServer:
                 except Exception as exc:
                     service.web_log("error", f"web request failed: {exc}", {"traceback": traceback.format_exc(limit=6)})
                     self._json(500, {"ok": False, "error": str(exc)})
+
+            def do_PUT(self) -> None:  # noqa: N802
+                if urlparse(self.path).path != "/api/bx1-os/voice-settings/v1":
+                    self._json(404, {"ok": False, "error": "not found"})
+                    return
+                try:
+                    result = service.web_update_bx1_voice_settings(self._read_json())
+                    self._json(200 if result.get("ok") else 400, result)
+                except Exception as exc:
+                    self._json(400, {"ok": False, "error": str(exc)})
 
         self.httpd = ReusableThreadingHTTPServer((self.host, self.port), Handler)
         self.thread = threading.Thread(target=self.httpd.serve_forever, name="bx1-web-control", daemon=True)

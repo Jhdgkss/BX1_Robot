@@ -1,8 +1,8 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS v0.7.5 Shared Live Voice Console",
-  "bx1_os_release_version": "0.7.5-shared-live-voice-console",
-  "bx1_os_release_tag": "BX1_OS_v0.7.5_shared_live_voice_console",
+  "app_version": "BX1 OS v0.7.6 Voice Ownership Migration",
+  "bx1_os_release_version": "0.7.6-voice-ownership-migration",
+  "bx1_os_release_tag": "BX1_OS_v0.7.6_voice_ownership_migration",
   "persistent_modules_root": "/home/arduino/BX1_modules",
   "runtime": { "event_queue_limit": 128 },
   "robot_name": "LEO",

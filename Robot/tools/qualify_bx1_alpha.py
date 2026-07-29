@@ -24,8 +24,8 @@ LIVE_PORT = 8088
 DEFAULT_ROOT = Path("/home/arduino/BX1_OS")
 DEFAULT_SERVICE = "bx1-os-alpha.service"
 DEFAULT_PORT = 8089
-RELEASE_VERSION = "0.7.5-shared-live-voice-console"
-RELEASE_TAG = "BX1_OS_v0.7.5_shared_live_voice_console"
+RELEASE_VERSION = "0.7.6-voice-ownership-migration"
+RELEASE_TAG = "BX1_OS_v0.7.6_voice_ownership_migration"
 SAMPLE_PATHS = (
     "main.py",
     "START_BX1_WEB.sh",

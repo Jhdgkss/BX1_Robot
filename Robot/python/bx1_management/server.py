@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.5-shared-live-voice-console"
-RELEASE_TAG = "BX1_OS_v0.7.5_shared_live_voice_console"
+RELEASE_VERSION = "0.7.6-voice-ownership-migration"
+RELEASE_TAG = "BX1_OS_v0.7.6_voice_ownership_migration"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -421,6 +421,26 @@ class ManagementApplication:
         except (error.URLError, TimeoutError, ValueError, OSError) as exc:
             return {"ok": False, "error": "Body audio settings unavailable", "detail": str(exc)}
 
+    def body_voice_settings(self) -> Dict[str, Any]:
+        try:
+            with request.urlopen("http://127.0.0.1:8088/api/bx1-os/voice-settings/v1", timeout=2.0) as response:
+                payload = json.loads(response.read(16384).decode("utf-8"))
+            return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_voice_settings"}
+        except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "Body voice settings unavailable", "detail": str(exc)}
+
+    def update_body_voice_settings(self, values: Mapping[str, Any]) -> Dict[str, Any]:
+        payload = {"settings": dict(values.get("settings", values))}
+        try:
+            req = request.Request("http://127.0.0.1:8088/api/bx1-os/voice-settings/v1", data=json.dumps(payload).encode("utf-8"), method="PUT", headers={"Content-Type": "application/json"})
+            with request.urlopen(req, timeout=3.0) as response:
+                value = json.loads(response.read(16384).decode("utf-8"))
+            return dict(value) if isinstance(value, Mapping) else {"ok": False, "error": "invalid_body_voice_settings_response"}
+        except error.HTTPError as exc:
+            return {"ok": False, "error": f"Body rejected voice settings ({exc.code})"}
+        except (error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "Body voice settings unavailable", "detail": str(exc)}
+
     def voice_status(self) -> Dict[str, Any]:
         body = self.core.robot_body_snapshot().get("robot_body", {})
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
@@ -666,6 +686,9 @@ class ManagementServer:
                 if path == "/api/audio/bridge":
                     self._json(HTTPStatus.OK, application.body_audio_bridge())
                     return
+                if path == "/api/audio/voice-settings/v1":
+                    self._json(HTTPStatus.OK, application.body_voice_settings())
+                    return
                 if path == "/api/voice/console":
                     self._json(HTTPStatus.OK, application.live_voice_console_snapshot())
                     return
@@ -883,6 +906,13 @@ class ManagementServer:
                 self._reject_write(body_consumed=True)
 
             def do_PUT(self) -> None:  # noqa: N802
+                if urlparse(self.path).path == "/api/audio/voice-settings/v1":
+                    try:
+                        result = application.update_body_voice_settings(self._read_json())
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result)
+                    except (ValueError, json.JSONDecodeError) as exc:
+                        self._json(HTTPStatus.BAD_REQUEST, {"ok": False, "error": str(exc)})
+                    return
                 self._reject_write()
 
             def do_PATCH(self) -> None:  # noqa: N802
