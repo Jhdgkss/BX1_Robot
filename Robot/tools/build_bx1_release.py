@@ -13,8 +13,8 @@ from pathlib import Path, PurePosixPath
 from typing import Any, Dict, Iterable, List, Tuple
 
 
-RELEASE_VERSION = "0.6.1-development"
-RELEASE_TAG = "BX1_OS_v0.6.1-development_voice_conversation"
+RELEASE_VERSION = "0.7.0-developer-preview"
+RELEASE_TAG = "BX1_OS_v0.7.0_modular_runtime_developer_preview"
 
 PRESERVED_PATHS = [
     "python/config.json",
@@ -54,6 +54,8 @@ TOOL_FILES = [
     "test_bx1_core_telemetry.py",
     "test_hardware_audio_integration.py",
     "test_camera_preview_integration.py",
+    "test_modular_runtime.py",
+    "scaffold_bx1_module.py",
 ]
 
 DOCUMENTATION_FILES = [
@@ -79,6 +81,7 @@ DOCUMENTATION_FILES = [
     "BX1_OS_CAMERA_INTEGRATION.md",
     "BX1_OS_ALPHA_V0_5_0_RELEASE_NOTES.md",
     "BX1_OS_ALPHA_V0_5_0_VALIDATION_REPORT.md",
+    "BX1_OS_V0_7_MODULAR_RUNTIME_DEVELOPER_GUIDE.md",
 ]
 
 
@@ -95,7 +98,7 @@ def build_release(
     files = collect_release_files(repo)
     commit, dirty = git_identity(repo)
     created_at = dt.datetime.now(dt.timezone.utc).isoformat()
-    release_id = "bx1-os-v0.6.1-development-voice-conversation-%s" % timestamp.lower()
+    release_id = "bx1-os-v0.7.0-modular-runtime-developer-preview-%s" % timestamp.lower()
 
     entries = []
     for source, target in files:
@@ -200,6 +203,10 @@ def collect_release_files(repo: Path) -> List[Tuple[Path, PurePosixPath]]:
         if _exclude_python(relative):
             continue
         include(source, (PurePosixPath("python") / relative.as_posix()).as_posix())
+
+    for source in sorted((robot / "modules").rglob("*")):
+        if source.is_file() and "__pycache__" not in source.parts:
+            include(source, (PurePosixPath("modules") / source.relative_to(robot / "modules").as_posix()).as_posix())
 
     for name in TOOL_FILES:
         include(robot / "tools" / name, "tools/" + name)

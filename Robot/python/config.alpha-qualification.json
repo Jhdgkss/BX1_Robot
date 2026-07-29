@@ -1,8 +1,9 @@
 {
   "schema": "bx1.alpha.qualification.config.v1",
-  "app_version": "BX1 OS v0.6.1-development voice conversation",
-  "bx1_os_release_version": "0.6.1-development",
-  "bx1_os_release_tag": "BX1_OS_v0.6.1-development_voice_conversation",
+  "app_version": "BX1 OS v0.7.0 modular runtime developer preview",
+  "bx1_os_release_version": "0.7.0-developer-preview",
+  "bx1_os_release_tag": "BX1_OS_v0.7.0_modular_runtime_developer_preview",
+  "runtime": { "event_queue_limit": 128 },
   "robot_name": "LEO",
   "management_interface": {
     "enabled": true,

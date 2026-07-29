@@ -7,6 +7,7 @@ const NAVIGATION = [
   { section: "Manage", id: "audio", label: "Audio", icon: "logs" },
   { section: "Manage", id: "brain", label: "Brain", icon: "brain" },
   { section: "Manage", id: "configuration", label: "Configuration", icon: "config" },
+  { section: "Manage", id: "modules", label: "Modules", icon: "services" },
   { section: "Observe", id: "logs", label: "Logs", icon: "logs" },
   { section: "Observe", id: "deployment", label: "Deployment", icon: "deploy" },
   { section: "Observe", id: "diagnostics", label: "Diagnostics", icon: "diagnostics" },
@@ -23,6 +24,7 @@ const PAGE_META = {
   audio: ["Audio telemetry", "Audio", "Read-only microphone, speaker, level, STT and TTS observations."],
   brain: ["Intelligence layer", "Brain", "Connection, models, voice and memory will be managed from this workspace."],
   configuration: ["Platform settings", "Configuration", "A searchable, categorised configuration workspace with safe revision controls."],
+  modules: ["Developer preview", "Module Manager", "Manifest-first module inventory, lifecycle health and safe declared capabilities."],
   logs: ["System events", "Logs", "Live, filterable BX1 OS logs will appear here without mixing with the legacy UI."],
   deployment: ["Release lifecycle", "Deployment", "Versions, qualification history, rollback points and deployment evidence."],
   diagnostics: ["Platform health", "Diagnostics", "Read-only checks and future guided diagnostics for the BX1 platform."],
@@ -34,8 +36,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.6.1-development",
-    tag: "BX1_OS_v0.6.1-development_voice_conversation",
+    version: "0.7.0-developer-preview",
+    tag: "BX1_OS_v0.7.0_modular_runtime_developer_preview",
     architecture_only: true,
     capabilities: {},
   },
@@ -92,16 +94,17 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.6.1-development",
+    current_version: "0.7.0-developer-preview",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.6.1-development_voice_conversation",
+    tag: "BX1_OS_v0.7.0_modular_runtime_developer_preview",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
     qualification_history: [],
     deployment_history: [],
   },
+  modules: { modules: [], event_bus: {} },
 };
 
 const state = {
@@ -688,6 +691,24 @@ function aboutPage(data) {
   </div>`;
 }
 
+function modulesPage(data) {
+  const modules = data.modules?.modules || [];
+  const rows = modules.length ? modules.map(module => `<tr>
+    <td><strong>${esc(module.name)}</strong><br><small>${esc(module.id)} · ${esc(module.version)}</small></td>
+    <td>${badge(module.state, module.state === "healthy" ? "good" : "bad", false)}</td>
+    <td>${esc((module.capabilities || []).join(", ") || "None")}</td>
+    <td>${esc(module.detail || "")}</td>
+  </tr>`).join("") : `<tr><td colspan="4">No manifests found.</td></tr>`;
+  return `<div class="grid">
+    ${panel("Runtime boundary", dataList([
+      ["Hardware access", "Blocked"], ["Module controls", "Not exposed"],
+      ["Event queue", `${data.modules?.event_bus?.queued || 0} / ${data.modules?.event_bus?.queue_limit || 0}`],
+      ["Dropped events", data.modules?.event_bus?.dropped || 0],
+    ]), { span: 4, subtitle: "Developer preview uses a deny-by-default capability gateway" })}
+    ${panel("Loaded modules", `<div class="table-wrap"><table><thead><tr><th>Module</th><th>Health</th><th>Declared safe capabilities</th><th>Detail</th></tr></thead><tbody>${rows}</tbody></table></div>`, { span: 8, subtitle: "Manifest-first loading; no enable, disable or install operation is available here" })}
+  </div>`;
+}
+
 const RENDERERS = {
   dashboard: dashboardPage,
   system: systemPage,
@@ -697,6 +718,7 @@ const RENDERERS = {
   audio: audioPage,
   brain: brainPage,
   configuration: configurationPage,
+  modules: modulesPage,
   logs: logsPage,
   deployment: deploymentPage,
   diagnostics: diagnosticsPage,
@@ -957,7 +979,7 @@ function updateCameraPageTelemetry() {
 function openMobileNav() { document.body.classList.add("sidebar-open"); }
 function closeMobileNav() { document.body.classList.remove("sidebar-open"); }
 
-function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}) {
+function managementDataFromCore(statePayload, servicesPayload, healthPayload, hardwarePayload, audioPayload, robotBodyPayload, cameraPayload, voicePayload = {}, modulesPayload = {}) {
   const core = statePayload.state || {};
   const deployment = core.deployment || {};
   const system = core.system || {};
@@ -1030,6 +1052,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
       active_faults: observed(robotBodyPayload.robot_body?.active_faults, []),
     },
     voice: voicePayload,
+    modules: modulesPayload,
     deployment: {
       current_version: deployment.version,
       commit: deployment.commit,
@@ -1059,16 +1082,17 @@ async function loadCoreTelemetry() {
       "/api/core/robot-body",
       "/api/core/camera",
       "/api/voice/status",
+      "/api/runtime/modules",
     ];
     const responses = await Promise.all(
       paths.map(path => fetch(path, { cache: "no-store" }))
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules] = await Promise.all(
       responses.map(response => response.json())
     );
-    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice);
+    state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules);
     const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
     if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
     else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };

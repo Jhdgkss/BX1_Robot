@@ -125,6 +125,7 @@ class ManagementHTTPTests(unittest.TestCase):
             ("/api/core/audio/devices", "application/json"),
             ("/api/core/robot-body", "application/json"),
             ("/api/core/robot-body/health", "application/json"),
+            ("/api/runtime/modules", "application/json"),
             ("/api/core/camera", "application/json"),
         ):
             with self.subTest(path=path):
@@ -196,6 +197,7 @@ class ManagementAssetTests(unittest.TestCase):
             "Diagnostics",
             "Updates",
             "About",
+            "Modules",
         }
         for label in required:
             self.assertIn('label: "%s"' % label, self.javascript)

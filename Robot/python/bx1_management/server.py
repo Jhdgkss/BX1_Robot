@@ -24,10 +24,11 @@ from bx1_core.hardware import (
     RobotBodyCameraClient,
 )
 from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
+from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.6.1-development"
-RELEASE_TAG = "BX1_OS_v0.6.1-development_voice_conversation"
+RELEASE_VERSION = "0.7.0-developer-preview"
+RELEASE_TAG = "BX1_OS_v0.7.0_modular_runtime_developer_preview"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -45,6 +46,7 @@ SPA_ROUTES = {
     "/diagnostics",
     "/hardware",
     "/logs",
+    "/modules",
     "/services",
     "/system",
     "/updates",
@@ -121,10 +123,14 @@ class ManagementApplication:
             probe_timeout=float(voice_config.get("body_probe_timeout_seconds", 5.0)),
             request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
+        modules_root = Path(self.config.get("modules_root", Path(__file__).resolve().parents[2] / "modules"))
+        self.modules = ModuleManager(modules_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)))
+        self.modules.load_all()
         self.core.state.set_many(
             {
                 "management.id": INTERFACE_ID,
                 "management.name": "BX1 OS Management",
+                "management.runtime_preview": True,
                 "management.read_only": True,
                 "management.capabilities": self.capabilities.as_dict(),
                 "management.port": int(self.config.get("web_port", 8089)),
@@ -289,6 +295,9 @@ class ManagementApplication:
     def core_robot_body_health(self) -> Dict[str, Any]:
         return self.core.robot_body_health_snapshot()
 
+    def runtime_modules(self) -> Dict[str, Any]:
+        return self.modules.snapshot()
+
     def voice_status(self) -> Dict[str, Any]:
         body = self.core.robot_body_snapshot().get("robot_body", {})
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
@@ -430,6 +439,7 @@ class ManagementServer:
         if self.thread is not None:
             self.thread.join(timeout=3)
         self.application.core.stop()
+        self.application.modules.stop()
         self.httpd = None
         self.thread = None
 
@@ -540,6 +550,9 @@ class ManagementServer:
                         HTTPStatus.OK,
                         application.core_robot_body_health(),
                     )
+                    return
+                if path == "/api/runtime/modules":
+                    self._json(HTTPStatus.OK, application.runtime_modules())
                     return
                 if path == "/api/voice/status":
                     self._json(HTTPStatus.OK, application.voice_status())
