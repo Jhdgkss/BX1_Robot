@@ -426,6 +426,14 @@ class ManagementApplication:
             result["receiver"] = self.live_voice_console.snapshot()["receiver"]
             return result
 
+    def body_speech_scan(self) -> Dict[str, Any]:
+        try:
+            with request.urlopen("http://127.0.0.1:8088/api/speech_scan", timeout=2.0) as response:
+                payload = json.loads(response.read(32768).decode("utf-8"))
+            return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_speech_scan"}
+        except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
+            return {"ok": False, "error": "speech_scan_unavailable", "detail": str(exc)[:240]}
+
     def body_speech_test(self) -> Dict[str, Any]:
         """Run one Body-owned calibration utterance; never proxy WAV data."""
         try:
@@ -759,6 +767,9 @@ class ManagementServer:
                     return
                 if path == "/api/audio/bridge":
                     self._json(HTTPStatus.OK, application.body_audio_bridge())
+                    return
+                if path == "/api/audio/speech-scan":
+                    self._json(HTTPStatus.OK, application.body_speech_scan())
                     return
                 if path == "/api/touchscreen/status":
                     self._json(HTTPStatus.OK, application.touchscreen_status())

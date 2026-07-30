@@ -797,6 +797,26 @@ function modulesPage(data) {
   </div>`;
 }
 
+function operationalVoiceStatus(data, expanded = false) {
+  const bridge = data.audio_bridge || {}, audio = bridge.audio || {}, rec = bridge.recognition || {}, scan = (data.speech_scan || {}).scan || {};
+  const level = Number.isFinite(Number(audio.rms_dbfs)) ? `${Number(audio.rms_dbfs).toFixed(1)} dBFS` : "unavailable";
+  const mic = audio.available === false ? "unavailable" : (audio.state || "stale");
+  const gate = audio.speaker_playback_active ? "closed · speaker active" : (Number(audio.echo_tail_remaining_s || 0) > 0 ? `closed · echo tail ${Number(audio.echo_tail_remaining_s).toFixed(1)}s` : (audio.gate_open === false ? "closed" : "open"));
+  const brain = data.voice?.brain?.state || "unavailable";
+  const engine = rec.engine || rec.handoff?.engine_selected || "unavailable";
+  const status = `<div class="operational-status-row"><div class="op-card"><b>MICROPHONE</b><strong>${esc(level)}</strong><span>${esc(mic)}</span><button class="button small" data-audio-control="mic-mute">Mute Microphone</button><button class="button small" data-audio-control="ptt">Push to Talk</button></div><div class="op-card"><b>LISTENING / WAKE WORD</b><strong>${esc(audio.pipeline_state || audio.state || "unavailable")}</strong><span>${esc((data.voice?.voice_settings?.effective?.wake_phrases || ["configured wake phrases"]).join(", "))}</span><button class="button small" data-audio-control="pause">Pause Listening</button></div><div class="op-card"><b>SPEAKER</b><strong>${audio.speaker_playback_active ? "active" : "idle"}</strong><span>volume ${esc(data.audio?.output?.volume ?? "unavailable")}</span><input type="range" min="0" max="100" value="80" aria-label="Speaker volume"><button class="button small" data-audio-control="speaker-mute">Mute Speaker</button><button class="button small" data-audio-control="stop">Stop Speaking</button></div><div class="op-card"><b>VOICE PIPELINE</b><strong>gate ${esc(gate)}</strong><span>Brain: ${esc(brain)} · STT: ${esc(engine)}</span><span>updated ${esc(audio.timestamp ? formatTimestamp(audio.timestamp) : "stale")}</span></div></div>`;
+  const spans = Array.isArray(scan.spans) ? scan.spans : [];
+  const full = String(scan.full_text || rec.latest_text || "");
+  const highlighted = spans.length ? spans.map(s => `<span class="scan-${esc(s.type)}">${esc(full.slice(Number(s.start), Number(s.end)))}</span>`).join("") : esc(full || "No contextual transcript received yet — state is unavailable, not loading.");
+  const scanPanel = `<section class="panel span-12 live-scan-panel"><header class="panel-header"><div><h3>Live Speech Recognition — Continuous</h3><p>Contextual transcript from Robot Body; only the extracted request is submitted to Brain.</p></div></header><div class="speech-scan-rendered">${highlighted}</div><div class="scan-meta">Wake: ${esc(scan.wake_phrase || "none")} · Request: ${esc(scan.request || rec.last_accepted_request || "none")} · Action: ${esc(scan.action || (rec.last_accepted_request ? "submitted" : "rejected"))} · Interaction: ${esc(scan.interaction_id || "none")} · STT: ${esc(scan.stt_engine || engine)} · Confidence: ${esc(scan.confidence ?? "unavailable")} · Duration: ${esc(scan.audio_duration_s ?? audio.duration_s ?? "unavailable")}s · VAD: ${esc(scan.vad_state || "unavailable")} · Mic: ${esc(mic)} · Speaker: ${audio.speaker_playback_active ? "active" : "idle"} · Gate: ${esc(gate)} · ${esc(scan.timestamp || audio.timestamp || "stale")}</div></section>`;
+  return status + scanPanel;
+}
+
+function operationalConversation(data) { const items = data.voice_console?.items || []; const rows = items.filter(i => ["stt","manual","reply"].includes(i.kind)).map(i => `<div class="conversation-bubble ${i.kind === "reply" ? "robot" : "user"}"><small>${esc(i.source)} · ${esc(formatTimestamp(i.timestamp))}</small><div>${esc(i.text)}</div></div>`).join(""); return `<section class="panel span-12 operational-conversation"><header class="panel-header"><div><h3>Conversation</h3><p>Voice and keyboard requests with processing state.</p></div></header><div class="conversation-thread">${rows || "<span class=muted>No conversation messages yet.</span>"}</div><div class="conversation-compose"><textarea id="talkToLeoText" maxlength="1000" placeholder="Type a message"></textarea><button class="button primary" data-voice-action="talk-send">Send</button><button class="button" data-voice-action="talk-repeat">Repeat Reply</button><button class="button" data-voice-action="talk-clear">Clear Conversation</button><span id="talkToLeoState">${esc(state.talk.phase)}</span></div></section>`; }
+
+function dashboardPage(data) { return `<div class="operational-dashboard">${operationalVoiceStatus(data)}${operationalConversation(data)}<details class="panel system-overview"><summary>System Overview</summary><div class="grid">${panel("BX1 OS", dataList([["Management version", data.interface.version], ["Robot Body version", data.robot_body?.version || "unavailable"], ["Brain version", data.brain?.version || "unavailable"], ["Brain connection", data.brain?.status || "unavailable"]]), {span:6})}${panel("Services and diagnostics", dataList([["Services", data.services.length], ["Camera", data.camera?.health || "unavailable"], ["Hardware", data.hardware?.diagnostics?.state || "unavailable"]]), {span:6})}</div></details></div>`; }
+function voiceConsolePage(data) { return `<div class="operational-live-voice">${operationalVoiceStatus(data, true)}${operationalConversation(data)}${panel("Audio-event timeline", sharedVoiceFeed(data, true), {span:12})}${panel("Diagnostics", `<p>Raw microphone, accepted post-gate, Brain-submitted audio and transcription JSON remain Body-owned diagnostics.</p><div class="page-actions"><button class="button" data-prototype="Download diagnostic package">Download diagnostic package</button><button class="button" data-prototype="Clear diagnostic entry">Clear diagnostic entry</button><label>Recording retention <select class="input"><option>24 hours</option><option>7 days</option><option>30 days</option></select></label></div>`, {span:12})}</div>`; }
+
 const RENDERERS = {
   dashboard: dashboardPage,
   system: systemPage,
@@ -842,6 +862,7 @@ function renderPage() {
     ? button("Refresh status", { iconName: "refresh", className: "primary", coreRefresh: true })
     : "";
   $("#pageContent").innerHTML = RENDERERS[state.page](state.data);
+  updateGlobalAudioControls(state.data);
   if (state.page === "voice" && !$("#speechScanText")) { $("#pageContent").insertAdjacentHTML("afterbegin", '<section class="speech-scan"><strong>Continuous speech scan</strong><p id="speechScanText">Contextual transcript, matched wake phrase and extracted request appear here.</p><div id="speechScanMeta" class="mono">Wake phrase: -- Â· Request: -- Â· VAD: -- Â· Gate: --</div></section>'); }
   $$("[data-bind='version']").forEach(node => { node.textContent = `v${state.data.interface.version}`; });
   renderNavigation();
@@ -876,7 +897,7 @@ async function loadAudioBridge() {
   try {
     const [response, consoleResponse] = await Promise.all([fetch("/api/audio/bridge", { cache: "no-store" }), fetch("/api/voice/console", { cache: "no-store" })]);
     const [payload, consolePayload] = await Promise.all([response.json(), consoleResponse.json()]);
-    if (response.ok && consoleResponse.ok) { state.data.audio_bridge = payload; state.data.voice_console = consolePayload; updateLiveVoiceDom(); }
+    if (response.ok && consoleResponse.ok) { state.data.audio_bridge = payload; state.data.voice_console = consolePayload; if (["dashboard", "voice"].includes(state.page)) renderPage(); else updateLiveVoiceDom(); }
   } catch (_) { /* normal Body-unavailable state remains visible */ }
 }
 
@@ -1251,8 +1272,8 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     interface: {
       id: management.id || "bx1-os-management",
       name: management.name || "BX1 OS Management",
-      version: deployment.version || "0.5.0",
-      tag: deployment.tag || "BX1_OS_ALPHA_v0.5.0",
+      version: "0.8.0-voice-controls",
+      tag: "BX1_OS_v0.8.0_voice_controls",
       architecture_only: true,
       capabilities: management.capabilities || {},
     },
@@ -1317,7 +1338,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     voice_console: voiceConsolePayload,
     widgets: widgetsPayload,
     deployment: {
-      current_version: deployment.version,
+      current_version: "0.8.0-voice-controls",
       commit: deployment.commit,
       branch: deployment.branch,
       tag: deployment.tag,
@@ -1348,6 +1369,7 @@ async function loadCoreTelemetry() {
       "/api/runtime/modules",
       "/api/runtime/widgets",
       "/api/audio/bridge",
+      "/api/audio/speech-scan",
       "/api/voice/console",
     ];
     const responses = await Promise.all(
@@ -1355,10 +1377,11 @@ async function loadCoreTelemetry() {
     );
     const failed = responses.find(response => !response.ok);
     if (failed) throw new Error(`HTTP ${failed.status}`);
-    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge, voiceConsole] = await Promise.all(
+    const [coreState, services, health, , , hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge, speechScan, voiceConsole] = await Promise.all(
       responses.map(response => response.json())
     );
     state.data = managementDataFromCore(coreState, services, health, hardware, audio, robotBody, camera, voice, modules, widgets, audioBridge, voiceConsole);
+    state.data.speech_scan = speechScan;
     const session = state.talk.sessionId && voice.sessions?.[state.talk.sessionId];
     if (session?.state === "complete") state.talk = { phase: "Complete", sessionId: state.talk.sessionId, busy: false, error: "", timer: null };
     else if (session?.state === "failed") state.talk = { phase: "Failed", sessionId: state.talk.sessionId, busy: false, error: session.reason || "voice_fault", timer: null };
@@ -1380,6 +1403,15 @@ function bindGlobalAudioControls() {
   const root = $(".global-audio-controls"); if (!root || root.dataset.bound) return; root.dataset.bound = "1";
   root.addEventListener("click", event => { const button = event.target.closest("[data-audio-control]"); if (!button) return; button.classList.toggle("active"); const action = button.dataset.audioControl; const stateText = $("#globalMicState"); if (action === "mic-mute") stateText.textContent = button.classList.contains("active") ? "Privacy muted" : "Listening"; if (action === "pause") stateText.textContent = button.classList.contains("active") ? "Listening paused" : "Listening"; if (action === "ptt") stateText.textContent = "Push to Talk ready"; if (action === "speaker-mute") $("#globalSpeakerState").textContent = button.classList.contains("active") ? "Muted" : "Idle"; if (action === "stop") $("#globalSpeakerState").textContent = "Stopped"; });
   const volume = $("#globalVolume"); volume?.addEventListener("input", () => { $("#globalSpeakerState").textContent = `Volume ${volume.value}%`; });
+}
+function updateGlobalAudioControls(data) {
+  const bridge = data?.audio_bridge || {}, audio = bridge.audio || {}, rec = bridge.recognition || {};
+  const level = Number.isFinite(Number(audio.rms_dbfs)) ? `${Number(audio.rms_dbfs).toFixed(1)} dBFS` : (audio.available === false ? "unavailable" : "stale");
+  const gate = audio.speaker_playback_active ? "closed · speaker active" : (Number(audio.echo_tail_remaining_s || 0) > 0 ? "closed · echo tail" : (audio.gate_open === false ? "closed" : "open"));
+  const mic = audio.available === false ? "unavailable" : (audio.state || "stale");
+  const speaker = audio.speaker_playback_active ? "active" : "idle";
+  const set = (id, value) => { const node = $(id); if (node) node.textContent = value; };
+  set("#globalMicLevel", level); set("#globalMicState", mic); set("#globalSpeakerState", speaker); set("#globalGateState", `Gate state: ${gate}`);
 }
 async function loadDocumentation() { try { const response = await fetch("/api/documentation", {cache:"no-store"}); const payload = await response.json(); const target = $("#documentationContent"); if (target) target.textContent = payload.content || "No offline documentation found."; } catch (_) {} }
 
