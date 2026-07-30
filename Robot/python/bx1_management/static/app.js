@@ -44,7 +44,7 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.10.0 recovery frontend",
+    version: "0.11.0-mcu-foundation",
     tag: "BX1_OS_v0.8.0_voice_controls",
     architecture_only: true,
     capabilities: {},
@@ -102,7 +102,7 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.10.0 recovery frontend",
+    current_version: "0.11.0-mcu-foundation",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
     tag: "BX1_OS_v0.8.0_voice_controls",
@@ -132,6 +132,7 @@ const state = {
   voiceItems: [], // Browser-session-only recognised/manual/reply display; never exported or sent to OS storage.
   voiceAutoScroll: true,
   audioTimer: null,
+  telemetryRevision: 0,
 };
 
 const $ = (selector, root = document) => root.querySelector(selector);
@@ -462,6 +463,8 @@ function hardwarePage(data) {
   const content = devices.length
     ? `<div class="hardware-grid">${devices.map(deviceCard).join("")}</div>`
     : emptyPanel("hardware", "No devices detected", "Observers completed safely without opening any device. Missing optional hardware is not a global OS fault.");
+  const mcu = data.mcu || data.hardware?.mcu || {};
+  const mcuPanel = panel("MCU foundation", `<div class="mcu-status-grid" id="mcuStatusPanel"><div><span>Connection</span><strong>${esc(mcu.mcu_ok ? "connected" : "disconnected")}</strong></div><div><span>Firmware</span><strong>${esc(mcu.firmware_version || "unavailable")}</strong></div><div><span>Protocol</span><strong>${esc(mcu.protocol_version || "bx1.mcu.v1")}</strong></div><div><span>Heartbeat age</span><strong>${esc(mcu.heartbeat_age_ms ?? "unavailable")}</strong></div><div><span>Safe state</span><strong>${mcu.actuator_inhibit === false ? "check required" : "inhibited"}</strong></div></div><div class="page-actions mcu-actions"><button class="button" data-mcu-action="reconnect">Reconnect MCU</button><button class="button" data-mcu-action="request-status">Request Status</button><button class="button" data-mcu-action="scan-i2c">Scan I2C</button><button class="button" data-mcu-action="start-imu-telemetry">Start IMU Telemetry</button><button class="button" data-mcu-action="stop-imu-telemetry">Stop IMU Telemetry</button><button class="button" data-mcu-action="clear-diagnostic-fault">Clear Diagnostic Fault</button></div><small id="mcuActionState">No command pending</small>`, {span:12, subtitle:"MicroPython telemetry only; wheel, RS485 and servo outputs remain inhibited"});
   return `<div class="grid">
     ${panel("Observer posture", dataList([
       ["Robot Body API", body.connected ? "Connected" : "Unavailable"],
@@ -488,6 +491,7 @@ function hardwarePage(data) {
         span: 12,
         subtitle: "Includes underlying nodes and internal qcom-venus devices; hidden from the robot-level camera view",
       })}
+    ${mcuPanel}
   </div>`;
 }
 
@@ -876,7 +880,7 @@ function renderPage() {
   bindAudioBridgeForm();
   bindWakeSpeechForm();
   bindSpeechTest();
-  if (["audio", "dashboard", "voice"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 250);
+  if (["audio", "dashboard", "voice"].includes(state.page) && !state.audioTimer) state.audioTimer = window.setInterval(loadAudioBridge, 500);
   if (!["audio", "dashboard", "voice"].includes(state.page) && state.audioTimer) { window.clearInterval(state.audioTimer); state.audioTimer = null; }
   if (state.page === "camera") startCameraPreview();
   $("#workspace").focus({ preventScroll: true });
@@ -899,8 +903,30 @@ async function loadAudioBridge() {
   try {
     const [response, consoleResponse] = await Promise.all([fetch("/api/audio/bridge", { cache: "no-store" }), fetch("/api/voice/console", { cache: "no-store" })]);
     const [payload, consolePayload] = await Promise.all([response.json(), consoleResponse.json()]);
-    if (response.ok && consoleResponse.ok) { state.data.audio_bridge = payload; state.data.voice_console = consolePayload; if (["dashboard", "voice"].includes(state.page)) renderPage(); else updateLiveVoiceDom(); }
-  } catch (_) { /* normal Body-unavailable state remains visible */ }
+    if (response.ok && consoleResponse.ok) {
+      state.data.audio_bridge = payload; state.data.voice_console = consolePayload;
+      state.telemetryRevision = Math.max(state.telemetryRevision || 0, Number(payload.revision || payload.sequence || Date.now()));
+      updateLiveVoiceDom(); updateGlobalAudioControls(state.data); updateLiveDataIndicator("live");
+    } else updateLiveDataIndicator("update failed");
+  } catch (_) { updateLiveDataIndicator("disconnected"); }
+}
+
+function updateLiveDataIndicator(stateName = "live") {
+  const node = $("#liveDataIndicator"); if (!node) return;
+  const now = new Date().toLocaleTimeString([], {hour: "2-digit", minute: "2-digit", second: "2-digit"});
+  node.textContent = stateName === "live" ? `Live data · updated ${now}` : `Live data · ${stateName}`;
+  node.dataset.state = stateName;
+}
+
+async function loadMcuStatus() {
+  try {
+    const response = await fetch("/api/mcu/status", {cache: "no-store"});
+    const payload = await response.json();
+    if (!response.ok) throw new Error(payload.error || "MCU unavailable");
+    state.data.mcu = payload;
+    const panel = $("#mcuStatusPanel");
+    if (panel) panel.innerHTML = `<div><span>Connection</span><strong>${esc(payload.mcu_ok ? "connected" : "disconnected")}</strong></div><div><span>Firmware</span><strong>${esc(payload.firmware_version || "unavailable")}</strong></div><div><span>Protocol</span><strong>${esc(payload.protocol_version || "bx1.mcu.v1")}</strong></div><div><span>Heartbeat age</span><strong>${esc(payload.heartbeat_age_ms ?? "unavailable")}</strong></div><div><span>Safe state</span><strong>${payload.actuator_inhibit === false ? "check required" : "inhibited"}</strong></div>`;
+  } catch (_) { const panel = $("#mcuStatusPanel"); if (panel) panel.dataset.state = "disconnected"; }
 }
 
 function ingestVoiceObservation(bridge) {
@@ -995,6 +1021,7 @@ function navigate(page, push = true) {
   state.page = page;
   if (push) history.pushState({ page }, "", page === "dashboard" ? "/" : `/${page}`);
   renderPage();
+  loadMcuStatus();
   closeMobileNav();
 }
 
@@ -1274,7 +1301,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     interface: {
       id: management.id || "bx1-os-management",
       name: management.name || "BX1 OS Management",
-      version: "0.10.0 recovery frontend",
+      version: "0.11.0-mcu-foundation",
       tag: "BX1_OS_v0.8.0_voice_controls",
       architecture_only: true,
       capabilities: management.capabilities || {},
@@ -1340,7 +1367,7 @@ function managementDataFromCore(statePayload, servicesPayload, healthPayload, ha
     voice_console: voiceConsolePayload,
     widgets: widgetsPayload,
     deployment: {
-      current_version: "0.10.0 recovery frontend",
+      current_version: "0.11.0-mcu-foundation",
       commit: deployment.commit,
       branch: deployment.branch,
       tag: deployment.tag,
@@ -1394,7 +1421,7 @@ async function loadCoreTelemetry() {
     state.connected = true;
     if (state.page === "camera") updateCameraPageTelemetry();
     else if (["voice", "brain", "audio"].includes(state.page)) updateLiveVoiceDom();
-    else { const draft = $("#talkToLeoText"); const draftValue = draft?.value || ""; const hadFocus = document.activeElement === draft; renderPage(); const restored = $("#talkToLeoText"); if (restored && draftValue && !state.talk.busy) { restored.value = draftValue; if (hadFocus) restored.focus(); } }
+    else { updateLiveDataIndicator("live"); updateGlobalAudioControls(state.data); }
   } catch (error) {
     state.connected = false;
     toast("Using interface preview", "BX1 OS Core telemetry is not available.");
@@ -1422,11 +1449,25 @@ async function loadDocumentation() { try { const response = await fetch("/api/do
 function init() {
   renderNavigation();
   renderPage();
+  loadMcuStatus();
   $("#primaryNav").addEventListener("click", event => {
     const item = event.target.closest("[data-page]");
     if (item) navigate(item.dataset.page);
   });
   $("#pageContent").addEventListener("click", event => {
+    const mcuButton = event.target.closest("[data-mcu-action]");
+    if (mcuButton) {
+      const action = mcuButton.dataset.mcuAction;
+      const stateNode = $("#mcuActionState");
+      if (stateNode) stateNode.textContent = "Pending…";
+      mcuButton.disabled = true;
+      const path = action === "reconnect" ? "/api/mcu/reconnect" : `/api/mcu/${action}`;
+      fetch(path, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify({})})
+        .then(response => response.json().then(payload => ({response, payload})))
+        .then(({response, payload}) => { if (!response.ok || !payload.ok) throw new Error(payload.error || "MCU command failed"); if (stateNode) stateNode.textContent = "Completed"; })
+        .catch(error => { if (stateNode) stateNode.textContent = `Failed: ${error.message}`; })
+        .finally(() => { mcuButton.disabled = false; });
+    }
     const action = event.target.closest("[data-voice-action]")?.dataset.voiceAction;
     if (action) voiceAction(action);
     const live = event.target.closest("[data-live-action]")?.dataset.liveAction;
@@ -1469,6 +1510,7 @@ function init() {
   });
   loadCoreTelemetry();
   window.setInterval(loadCoreTelemetry, 5000);
+  window.setInterval(loadMcuStatus, 5000);
 }
 
 document.addEventListener("DOMContentLoaded", init);

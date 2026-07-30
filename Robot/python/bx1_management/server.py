@@ -27,10 +27,11 @@ from bx1_core.hardware import (
 )
 from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
+from hardware_bridge import BX1HardwareBridge
 
 
-RELEASE_VERSION = "0.10.1-audio-runtime"
-RELEASE_TAG = "BX1_OS_v0.10.1_audio_runtime"
+RELEASE_VERSION = "0.11.0-mcu-foundation"
+RELEASE_TAG = "BX1_OS_v0.11.0_mcu_foundation"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -240,6 +241,7 @@ class ManagementApplication:
         )
         self.live_voice_console = SharedLiveVoiceConsole(limit=200)
         self.speech_learning = SpeechLearningStore(Path(self.config.get("runtime_dir", "/home/arduino/BX1_OS/runtime")) / "speech-learning.json")
+        self.mcu_bridge = BX1HardwareBridge()
         modules_root = Path(self.config.get("modules_root", Path(__file__).resolve().parents[2] / "modules"))
         persistent_root = Path(self.config.get("persistent_modules_root", "/home/arduino/BX1_modules"))
         self.modules = ModuleManager(modules_root, persistent_root=persistent_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)), led_request=self._body_led_request)
@@ -409,6 +411,16 @@ class ManagementApplication:
 
     def core_audio_devices(self) -> Dict[str, Any]:
         return self.core.audio_devices_snapshot()
+
+    def mcu_status(self) -> Dict[str, Any]:
+        return self.mcu_bridge.get_status()
+
+    def mcu_command(self, command: str, **payload: Any) -> Dict[str, Any]:
+        allowed = {"reconnect": "request_status", "identify": "identify", "request_status": "request_status", "scan_i2c": "scan_i2c", "start_imu_telemetry": "start_imu_telemetry", "stop_imu_telemetry": "stop_imu_telemetry", "clear_diagnostic_fault": "clear_diagnostic_fault", "enter_safe_mode": "enter_safe_mode", "set_imu_sample_rate": "set_imu_sample_rate"}
+        if command not in allowed:
+            raise ValueError("unsupported_mcu_command")
+        result = self.mcu_bridge.call(allowed[command], payload)
+        return {"ok": result.ok, "command": command, "result": result.value, "error": result.error, "status": self.mcu_bridge.last_state}
 
     def core_robot_body(self) -> Dict[str, Any]:
         return self.core.robot_body_snapshot()
@@ -832,6 +844,13 @@ class ManagementServer:
                 if path == "/api/core/hardware":
                     self._json(HTTPStatus.OK, application.core_hardware())
                     return
+                if path == "/api/mcu/status":
+                    self._json(HTTPStatus.OK, application.mcu_status())
+                    return
+                if path == "/api/mcu/rs485":
+                    status = application.mcu_status()
+                    self._json(HTTPStatus.OK, {"ok": True, "rs485": status.get("rs485", {"available": False, "tx_inhibited": True}), "actuator_inhibit": True})
+                    return
                 if path == "/api/core/hardware/inventory":
                     self._json(
                         HTTPStatus.OK,
@@ -1068,6 +1087,11 @@ class ManagementServer:
                         return
                     if path == "/api/audio/bridge/settings":
                         result = application.update_body_audio_bridge(body)
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
+                        return
+                    if path.startswith("/api/mcu/"):
+                        command = path.rsplit("/", 1)[-1].replace("-", "_")
+                        result = application.mcu_command(command, **body)
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/audio/volume":
