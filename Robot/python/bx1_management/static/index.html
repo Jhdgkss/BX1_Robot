@@ -38,7 +38,7 @@
           <span class="status-dot status-dot--green"></span>
           <div><strong>Management online</strong><small>Observer-only mode</small></div>
         </div>
-        <div class="version-label">BX1 OS <span data-bind="version">v0.5.0</span></div>
+    <div class="version-label">BX1 OS <span data-bind="version">v0.8.0</span></div>
       </div>
     </aside>
 
@@ -67,6 +67,11 @@
         </div>
       </header>
 
+      <section class="global-audio-controls" aria-label="Voice controls">
+        <div class="audio-control-heading"><strong>Live audio controls</strong><span id="globalGateState">Gate state: loading</span></div>
+        <div class="audio-control-grid"><div><label>Microphone level</label><div id="globalMicLevel" class="audio-control-value">-- dBFS</div></div><div><label>Microphone state</label><div id="globalMicState" class="audio-control-value">Listening</div></div><div><label>Speaker state</label><div id="globalSpeakerState" class="audio-control-value">Idle</div></div><div><label>Volume</label><input id="globalVolume" type="range" min="0" max="100" value="80" aria-label="Speaker volume"></div></div>
+        <div class="audio-control-actions"><button type="button" data-audio-control="mic-mute">Mute Microphone</button><button type="button" data-audio-control="pause">Pause Listening</button><button type="button" data-audio-control="ptt">Push to Talk</button><button type="button" data-audio-control="speaker-mute">Mute Speaker</button><button type="button" data-audio-control="stop">Stop Speaking</button></div>
+      </section>
       <main class="workspace" id="workspace" tabindex="-1">
         <div class="page-intro">
           <div>

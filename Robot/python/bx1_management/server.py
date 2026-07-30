@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.7.9-conversational-voice-flow-primary-stt-repair"
-RELEASE_TAG = "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair"
+RELEASE_VERSION = "0.8.0-voice-controls"
+RELEASE_TAG = "BX1_OS_v0.8.0_voice_controls"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -52,11 +52,15 @@ SPA_ROUTES = {
     "/system",
     "/updates",
     "/voice",
+    "/themes",
+    "/documentation",
 }
 STATIC_FILES = {
     "/assets/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/assets/styles.css": ("styles.css", "text/css; charset=utf-8"),
 }
+
+DOCUMENTATION_ROOT = Path(__file__).resolve().parents[2] / "docs"
 
 
 @dataclass(frozen=True)
@@ -236,8 +240,8 @@ class ManagementApplication:
         body_value = body.get("value", body) if isinstance(body, Mapping) else {}
         endpoint = self.voice.update_brain_endpoint(body_value if isinstance(body_value, Mapping) else {})
         isolation = dict(self.config.get("observer_isolation", {}))
-        installed_version = self.core.state.get("deployment.version") or self.config.get("bx1_os_release_version") or RELEASE_VERSION
-        installed_tag = self.core.state.get("deployment.tag") or self.config.get("bx1_os_release_tag") or RELEASE_TAG
+        installed_version = RELEASE_VERSION
+        installed_tag = RELEASE_TAG
         return {
             "ok": True,
             "service": INTERFACE_ID,
@@ -293,8 +297,8 @@ class ManagementApplication:
             "interface": {
                 "id": INTERFACE_ID,
                 "name": "BX1 OS Management",
-                "version": deployment.get("version", RELEASE_VERSION),
-                "tag": deployment.get("tag", RELEASE_TAG),
+                "version": RELEASE_VERSION,
+                "tag": RELEASE_TAG,
                 "architecture_only": True,
                 "capabilities": management.get(
                     "capabilities", self.capabilities.as_dict()
@@ -706,6 +710,10 @@ class ManagementServer:
                 path = request.path
                 if path == "/api/status":
                     self._json(HTTPStatus.OK, application.status())
+                    return
+                if path == "/api/documentation":
+                    files = sorted(DOCUMENTATION_ROOT.glob("*.md")) if DOCUMENTATION_ROOT.is_dir() else []
+                    self._json(HTTPStatus.OK, {"ok": True, "offline": True, "files": [p.name for p in files], "content": "\n\n".join(p.read_text(encoding="utf-8", errors="replace") for p in files)})
                     return
                 if path == "/api/core/state":
                     query = parse_qs(request.query)

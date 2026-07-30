@@ -13,6 +13,8 @@ const NAVIGATION = [
   { section: "Observe", id: "deployment", label: "Deployment", icon: "deploy" },
   { section: "Observe", id: "diagnostics", label: "Diagnostics", icon: "diagnostics" },
   { section: "Platform", id: "updates", label: "Updates", icon: "updates" },
+  { section: "Platform", id: "themes", label: "Themes", icon: "config" },
+  { section: "Platform", id: "documentation", label: "Documentation", icon: "about" },
   { section: "Platform", id: "about", label: "About", icon: "about" },
 ];
 
@@ -31,6 +33,8 @@ const PAGE_META = {
   deployment: ["Release lifecycle", "Deployment", "Versions, qualification history, rollback points and deployment evidence."],
   diagnostics: ["Platform health", "Diagnostics", "Read-only checks and future guided diagnostics for the BX1 platform."],
   updates: ["Release channel", "Updates", "Future update discovery, review and controlled installation."],
+  themes: ["Visual system", "Themes", "Edit the shared BX1 OS visual tokens and preview robot identity."],
+  documentation: ["Offline reference", "Documentation", "Repository-backed BX1 OS architecture, voice, diagnostics and deployment guidance."],
   about: ["Platform identity", "About BX1 OS", "Release provenance and architecture information for this installation."],
 };
 
@@ -38,8 +42,8 @@ const fallbackData = {
   interface: {
     id: "bx1-os-management",
     name: "BX1 OS Management",
-    version: "0.7.9-conversational-voice-flow-primary-stt-repair",
-    tag: "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair",
+    version: "0.8.0-voice-controls",
+    tag: "BX1_OS_v0.8.0_voice_controls",
     architecture_only: true,
     capabilities: {},
   },
@@ -96,10 +100,10 @@ const fallbackData = {
   },
   robot_body: { connected: false, version: "unknown", health: "unavailable" },
   deployment: {
-    current_version: "0.7.9-conversational-voice-flow-primary-stt-repair",
+    current_version: "0.8.0-voice-controls",
     commit: "Provided by release manifest",
     branch: "Provided by release manifest",
-    tag: "BX1_OS_v0.7.9_conversational_voice_flow_primary_stt_repair",
+    tag: "BX1_OS_v0.8.0_voice_controls",
     build_date: "Provided by release manifest",
     previous_versions: [],
     rollback_points: [],
@@ -322,6 +326,9 @@ function liveVoiceStatusCard(bridge) {
 function voiceConsolePage(data) {
   return `<div class="voice-console-page"><div class="voice-console-top"><div data-live-voice="console">${liveVoiceMarkup(data.audio_bridge || {}, true)}</div><div data-live-voice-status>${liveVoiceStatusCard(data.audio_bridge || {})}</div></div><div class="voice-console-transcript" data-shared-voice>${sharedVoiceFeed(data, true)}</div>${panel("Manual message", `<label for="talkToLeoText">Message for Leo</label><textarea class="input" id="talkToLeoText" maxlength="1000" rows="10" placeholder="Type a message for Leo"></textarea><p id="talkToLeoHelp" class="mono">Enter sends · Shift+Enter adds a line · shared temporary RAM-only session.</p><div class="page-actions"><span id="talkToLeoCount" class="mono">0 / 1000</span><button class="button primary" type="button" data-voice-action="talk-send">Send</button><button class="button" type="button" data-voice-action="talk-repeat">Repeat</button></div><p id="talkToLeoState" class="mono" role="status">${esc(state.talk.phase)}</p>`, { span: 12, className: "voice-console-manual", subtitle: "Body → Brain chat/TTS → Body speaker; no action packets" })}</div>`;
 }
+
+function themesPage() { return `<div class="grid">${panel("Theme system", `<p>Shared design tokens are separate from robot identity.</p><label>Accent colour<input class="input" type="color" value="#54b9ff"></label><label>Panel colour<input class="input" type="color" value="#102334"></label><div class="page-actions"><button class="button primary" data-prototype="Save theme">Save</button><button class="button" data-prototype="Save As theme">Save As</button><button class="button" data-prototype="Restore BX1 Default">Restore BX1 Default</button></div>`, {span:8, subtitle:"Light/dark modes, import/export and custom themes"})}${panel("Live preview", `<div class="speech-scan"><strong>BX1 OS v0.8.0</strong><p>Robot identity profile preview remains independent of theme.</p></div>`, {span:4})}</div>`; }
+function documentationPage() { return `<div class="grid">${panel("Offline documentation", `<p>Repository documentation is served locally without internet access.</p><pre id="documentationContent">Loading documentation…</pre>`, {span:12, subtitle:"Architecture · voice pipeline · gate · diagnostics · themes · deployment · troubleshooting"})}</div>`; }
 
 function systemPage(data) {
   const platformRows = [
@@ -805,6 +812,8 @@ const RENDERERS = {
   deployment: deploymentPage,
   diagnostics: diagnosticsPage,
   updates: updatesPage,
+  themes: themesPage,
+  documentation: documentationPage,
   about: aboutPage,
 };
 
@@ -833,8 +842,11 @@ function renderPage() {
     ? button("Refresh status", { iconName: "refresh", className: "primary", coreRefresh: true })
     : "";
   $("#pageContent").innerHTML = RENDERERS[state.page](state.data);
+  if (state.page === "voice" && !$("#speechScanText")) { $("#pageContent").insertAdjacentHTML("afterbegin", '<section class="speech-scan"><strong>Continuous speech scan</strong><p id="speechScanText">Contextual transcript, matched wake phrase and extracted request appear here.</p><div id="speechScanMeta" class="mono">Wake phrase: -- Â· Request: -- Â· VAD: -- Â· Gate: --</div></section>'); }
   $$("[data-bind='version']").forEach(node => { node.textContent = `v${state.data.interface.version}`; });
   renderNavigation();
+  bindGlobalAudioControls();
+  if (state.page === "documentation") loadDocumentation();
   bindPrototypeActions();
   bindTalkToLeo();
   enhanceConversationView();
@@ -1363,6 +1375,13 @@ async function loadCoreTelemetry() {
     state.telemetryLoading = false;
   }
 }
+
+function bindGlobalAudioControls() {
+  const root = $(".global-audio-controls"); if (!root || root.dataset.bound) return; root.dataset.bound = "1";
+  root.addEventListener("click", event => { const button = event.target.closest("[data-audio-control]"); if (!button) return; button.classList.toggle("active"); const action = button.dataset.audioControl; const stateText = $("#globalMicState"); if (action === "mic-mute") stateText.textContent = button.classList.contains("active") ? "Privacy muted" : "Listening"; if (action === "pause") stateText.textContent = button.classList.contains("active") ? "Listening paused" : "Listening"; if (action === "ptt") stateText.textContent = "Push to Talk ready"; if (action === "speaker-mute") $("#globalSpeakerState").textContent = button.classList.contains("active") ? "Muted" : "Idle"; if (action === "stop") $("#globalSpeakerState").textContent = "Stopped"; });
+  const volume = $("#globalVolume"); volume?.addEventListener("input", () => { $("#globalSpeakerState").textContent = `Volume ${volume.value}%`; });
+}
+async function loadDocumentation() { try { const response = await fetch("/api/documentation", {cache:"no-store"}); const payload = await response.json(); const target = $("#documentationContent"); if (target) target.textContent = payload.content || "No offline documentation found."; } catch (_) {} }
 
 function init() {
   renderNavigation();

@@ -833,3 +833,7 @@ tbody tr:last-child td { border-bottom: 0; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; animation-duration: .01ms !important; }
 }
+:root{--bx1-accent:#54b9ff}
+.global-audio-controls{margin:14px 28px 0;padding:14px 16px;border:1px solid var(--border,#26384a);border-radius:14px;background:linear-gradient(135deg,#102334,#0a151f);box-shadow:0 8px 24px rgba(0,0,0,.18)}
+.audio-control-heading,.audio-control-grid,.audio-control-actions{display:flex;gap:12px;align-items:center;flex-wrap:wrap}.audio-control-heading{justify-content:space-between;margin-bottom:10px}.audio-control-heading span,.audio-control-value{color:var(--text-muted,#a9b8c8);font-size:.85rem}.audio-control-grid>div{min-width:130px;flex:1}.audio-control-grid label{display:block;font-size:.7rem;color:var(--text-muted,#a9b8c8);text-transform:uppercase;letter-spacing:.08em;margin-bottom:3px}.audio-control-grid input[type=range]{width:100%}.audio-control-actions{margin-top:10px}.audio-control-actions button{border:1px solid #385a73;border-radius:8px;padding:7px 10px;background:#142b3d;color:#edf6ff;cursor:pointer}.audio-control-actions button.active{border-color:#f0b45b;background:#553b1d}
+.speech-scan{border:1px solid #35526d;border-radius:12px;padding:12px;background:#08131d}.speech-scan .wake{color:#45df8a}.speech-scan .request{color:#54b9ff}.speech-scan .uncertain{color:#ffc857}.speech-scan .gated{color:#ff6876}
