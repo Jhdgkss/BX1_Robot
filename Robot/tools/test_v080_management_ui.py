@@ -27,6 +27,14 @@ class ManagementUiTests(unittest.TestCase):
         self.assertIn('function themesPage', APP); self.assertIn('function documentationPage', APP)
         self.assertIn('function voiceConsolePage', APP); self.assertIn('Download diagnostic package', APP)
 
+    def test_canonical_layout_and_five_theme_presets(self):
+        for marker in ("canonical-top-cards", "canonical-main", "canonical-left", "canonical-right", "Conversation", "Audio Diagnostics", "Quick Controls"):
+            self.assertIn(marker, APP)
+        for label in ("Light Mode", "Dark Blue", "Cyber Green", "Industrial Orange", "Soft Pastel"):
+            self.assertIn(label, APP)
+        for token in ("--sidebar", "--panel", "--user-bubble", "--robot-bubble", "--accent"):
+            self.assertIn(token, APP + CSS)
+
     def test_transcript_ranges_are_rendered_structurally(self):
         self.assertIn("spans.map", APP); self.assertIn("slice(Number(s.start), Number(s.end))", APP)
         self.assertIn("/api/audio/speech-scan", APP); self.assertIn("body_speech_scan", SERVER)
