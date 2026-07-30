@@ -1009,6 +1009,9 @@ class BX1RobotBodyService:
         self.speaker_playback_active = False
         self.speaker_playback_started_mono = 0.0
         self.speaker_echo_tail_until_mono = 0.0
+        self.speaker_playback_generation = 0
+        self.speaker_rearm_required = False
+        self.speaker_rearm_quiet_since_mono = 0.0
         self.voice_runtime: Dict[str, Any] = {
             "enabled": bool(self.cfg.get("voice_enabled", False)),
             "loop_active": False,
@@ -1122,6 +1125,7 @@ class BX1RobotBodyService:
             safe = {key: value.get(key) for key in ("rms_dbfs", "peak_dbfs", "noise_floor_dbfs", "threshold_dbfs", "gate_open", "speech_detected", "captured_at")}
             safe.update({"published_at": float(captured_at), "sequence": sequence, "publisher": "active_alsa_capture", "target_hz": 6})
             self.voice_runtime["live_audio"] = safe
+        self._observe_speaker_rearm(safe.get("rms_dbfs"), safe.get("threshold_dbfs"))
 
     def _voice_feedback_wav(self, kind: str) -> Path:
         """Create a short local acknowledgement tone without involving Brain/TTS."""
@@ -1298,23 +1302,71 @@ class BX1RobotBodyService:
         with self.speaker_playback_lock:
             active = bool(self.speaker_playback_active)
             tail_remaining = max(0.0, self.speaker_echo_tail_until_mono - now)
-            return {"playback_active": active, "echo_tail_remaining_s": round(tail_remaining, 2),
-                    "suppressed": active or tail_remaining > 0.0}
+            rearm_required = bool(self.speaker_rearm_required)
+            dwell_s = max(0.15, min(2.0, float(self.cfg.get("speaker_rearm_quiet_dwell_ms", 400)) / 1000.0))
+            quiet_elapsed = max(0.0, now - self.speaker_rearm_quiet_since_mono) if self.speaker_rearm_quiet_since_mono else 0.0
+            return {"playback_active": active, "playback_generation": int(self.speaker_playback_generation),
+                    "echo_tail_remaining_s": round(tail_remaining, 2), "rearm_required": rearm_required,
+                    "quiet_dwell_remaining_s": round(max(0.0, dwell_s - quiet_elapsed), 2) if rearm_required and tail_remaining <= 0.0 else 0.0,
+                    "suppressed": active or tail_remaining > 0.0 or rearm_required}
+
+    def _observe_speaker_rearm(self, rms_dbfs: Any, threshold_dbfs: Any) -> None:
+        """Wake re-arms only after the echo tail and a quiet live-capture dwell."""
+        try:
+            rms, threshold = float(rms_dbfs), float(threshold_dbfs)
+        except (TypeError, ValueError):
+            return
+        now = time.monotonic()
+        ready = False
+        with self.speaker_playback_lock:
+            if self.speaker_playback_active or now < self.speaker_echo_tail_until_mono:
+                self.speaker_rearm_quiet_since_mono = 0.0
+                return
+            if not self.speaker_rearm_required:
+                return
+            if rms > threshold:
+                self.speaker_rearm_quiet_since_mono = 0.0
+                return
+            if not self.speaker_rearm_quiet_since_mono:
+                self.speaker_rearm_quiet_since_mono = now
+                return
+            dwell_s = max(0.15, min(2.0, float(self.cfg.get("speaker_rearm_quiet_dwell_ms", 400)) / 1000.0))
+            if now - self.speaker_rearm_quiet_since_mono >= dwell_s:
+                self.speaker_rearm_required = False
+                ready = True
+        if ready:
+            self.set_voice_runtime("listening", "Ready for wake.", loop_active=True, last_error="")
 
     def _speaker_playback_started(self) -> None:
         with self.speaker_playback_lock:
             self.speaker_playback_active = True
             self.speaker_playback_started_mono = time.monotonic()
             self.speaker_echo_tail_until_mono = 0.0
+            self.speaker_playback_generation += 1
+            self.speaker_rearm_required = True
+            self.speaker_rearm_quiet_since_mono = 0.0
+            generation = self.speaker_playback_generation
+        invalidated = 0
+        while True:
+            try:
+                self.voice_stt_queue.get_nowait()
+                invalidated += 1
+            except queue.Empty:
+                break
+        self.set_conversation_active_until(0.0)
         self.set_voice_runtime("speaking", "Leo speaking — microphone wake detection temporarily suppressed.",
                                loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
-                               speaker_playback_active=True, echo_tail_remaining_s=0.0)
+                               speaker_playback_active=True, echo_tail_remaining_s=0.0,
+                               playback_generation=generation,
+                               last_ignored="Queued microphone audio invalidated at speaker playback start." if invalidated else "")
 
     def _speaker_playback_finished(self) -> None:
         tail_s = self._speaker_echo_tail_s()
         with self.speaker_playback_lock:
             self.speaker_playback_active = False
             self.speaker_echo_tail_until_mono = time.monotonic() + tail_s
+            self.speaker_rearm_required = True
+            self.speaker_rearm_quiet_since_mono = 0.0
         self.set_voice_runtime("echo_suppressed", f"Speaker playback finished — wake detection suppressed for {tail_s:.1f}s.",
                                loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
                                speaker_playback_active=False, echo_tail_remaining_s=round(tail_s, 2))
@@ -2915,6 +2967,7 @@ class BX1RobotBodyService:
         payload = dict(captured or {})
         wav_bytes = payload.get("_submitted_wav_bytes", b"") or b""
         payload["_submitted_wav_bytes"] = bytes(wav_bytes)
+        payload["_playback_generation"] = int(self.speaker_suppression_snapshot().get("playback_generation", 0))
         try:
             self.voice_stt_queue.put_nowait(payload)
         except queue.Full:
@@ -2932,8 +2985,9 @@ class BX1RobotBodyService:
             except queue.Empty:
                 continue
             try:
+                captured_generation = int(captured.get("_playback_generation", -1))
                 suppression = self.speaker_suppression_snapshot()
-                if suppression["suppressed"]:
+                if suppression["suppressed"] or captured_generation != int(suppression.get("playback_generation", 0)):
                     state = "speaking" if suppression["playback_active"] else "echo_suppressed"
                     self.set_voice_runtime(state, "Queued microphone audio suppressed during speaker playback.", loop_active=True,
                                            speaker_playback_active=bool(suppression["playback_active"]),
@@ -2941,6 +2995,7 @@ class BX1RobotBodyService:
                     continue
                 self.set_voice_runtime("transcribing", "Transcribing on Brain", loop_active=True, last_error="")
                 resolved = self._apply_primary_stt(captured, source="live_voice", stt_engine=self.stt)
+                resolved["_playback_generation"] = captured_generation
                 self._process_voice_worker_result(resolved)
             except Exception as exc:
                 resolved = dict(captured)
@@ -2951,7 +3006,9 @@ class BX1RobotBodyService:
         """Apply recognised voice text without returning to or blocking ALSA."""
         if stt_result.get("cancelled"):
             return
-        if self.speaker_suppression_snapshot()["suppressed"]:
+        suppression = self.speaker_suppression_snapshot()
+        if (suppression["suppressed"] or
+                int(stt_result.get("_playback_generation", -1)) != int(suppression.get("playback_generation", 0))):
             self.set_voice_runtime("echo_suppressed", "Recognised audio suppressed during speaker playback; no Brain request sent.",
                                    loop_active=True)
             return
@@ -2992,7 +3049,9 @@ class BX1RobotBodyService:
             cleaned = text
         self.set_voice_runtime("processing", "Sending recognised command to Brain App…", loop_active=True,
                                last_heard=text, last_accepted=cleaned, last_stt_metrics=metrics)
-        if self.speaker_suppression_snapshot()["suppressed"]:
+        suppression = self.speaker_suppression_snapshot()
+        if (suppression["suppressed"] or
+                int(stt_result.get("_playback_generation", -1)) != int(suppression.get("playback_generation", 0))):
             self.set_voice_runtime("echo_suppressed", "Speaker suppression started before Brain submission; request dropped.", loop_active=True)
             return
         event_id = self.new_input_event_id("voice")
@@ -4131,11 +4190,15 @@ class BX1RobotBodyService:
         brain_owns_policy = bool(self.cfg.get("brain_controls_web_memory", True))
         web_allowed: Optional[bool] = None if (brain_owns_policy and use_web is None) else bool(self.cfg.get("use_web_for_robot_questions", False) if use_web is None else use_web)
         memory_allowed: Optional[bool] = None if (brain_owns_policy and use_memory is None) else bool(self.cfg.get("use_memory", True) if use_memory is None else use_memory)
-        vision_allowed = bool(self.cfg.get("auto_camera_on_vision_request", True) if allow_vision is None else allow_vision)
+        # Ordinary voice/manual/idle/repeat conversation cannot inherit a
+        # camera frame.  Only an explicit visual phrase, or a camera-page
+        # action calling handle_vision directly, is allowed to use vision.
+        vision_requested = self.is_vision_request(text)
+        vision_allowed = vision_requested if allow_vision is None else bool(allow_vision)
         local_personality = None if privacy_mode else self.handle_personality_command(text)
         if local_personality is not None:
             return local_personality
-        if vision_allowed and self.is_vision_request(text) and bool(self.cfg.get("camera_enabled", True)):
+        if vision_allowed and vision_requested and bool(self.cfg.get("camera_enabled", True)):
             return self.handle_vision(
                 text,
                 use_web=web_allowed,
@@ -4291,6 +4354,9 @@ class BX1RobotBodyService:
             self.stop_active_thinking_cues("brain_error")
             return {"ok": False, "error": "brain_response_invalid" if privacy_mode else visible, "raw": {} if privacy_mode else result}
 
+        vision_context = str(result.get("vision_context") or (result.get("context_receipt") or {}).get("vision_context") or "off")[:3]
+        with self.voice_state_lock:
+            self.voice_runtime["last_request_vision_context"] = "on" if vision_context == "on" else "off"
         live_tool = result.get("live_tool") if isinstance(result.get("live_tool"), dict) else {}
         if live_tool and not privacy_mode and str(live_tool.get("route") or "") != "idle_local":
             route = str(live_tool.get("route") or "none")
@@ -5932,13 +5998,15 @@ class BX1RobotBodyService:
         if threshold is None: threshold = number(activity.get("threshold_dbfs")) or float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         if noise is None: noise = float(self.cfg.get("mic_noise_gate_dbfs", -48.0))
         raw_state = str(runtime.get("state", "idle")).lower()
-        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "listening", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "recognising", "processing": "Brain request", "speechgen": "Brain request", "speaking": "speaking", "echo_suppressed": "echo suppressed", "timeout": "failed", "error": "failed", "rejected": "failed", "disabled": "idle"}
+        state_map = {"starting": "idle", "awake": "wake detected", "wake_detected": "wake detected", "listening": "ready for wake", "recording": "speech detected", "heard": "speech detected", "recognising": "recognising", "transcribing": "Transcribing on Brain", "processing": "Thinking", "speechgen": "Thinking", "speaking": "Leo speaking", "echo_suppressed": "echo settling", "fallback": "Brain STT unavailable — using local fallback", "timeout": "failed", "error": "failed", "rejected": "failed", "disabled": "idle"}
         state = state_map.get(raw_state, raw_state if raw_state in {"idle", "failed"} else "idle")
         suppression = runtime.get("speaker_suppression", {}) if isinstance(runtime.get("speaker_suppression"), dict) else {}
         if suppression.get("playback_active"):
-            state = "speaking"
+            state = "Leo speaking"
         elif float(suppression.get("echo_tail_remaining_s") or 0.0) > 0:
-            state = "echo suppressed"
+            state = "echo settling"
+        elif suppression.get("rearm_required"):
+            state = "echo settling"
         if live_available and bool(live.get("speech_detected")) and state == "listening": state = "speech detected"
         display_state = state if live_available else ("stale" if age is not None else "unavailable")
         latest_text = str(runtime.get("last_heard") or runtime.get("last_rejected") or "").strip()[:240]
@@ -5953,11 +6021,11 @@ class BX1RobotBodyService:
         state_detail = str(runtime.get("label") or state)
         if state == "wake detected" and wake_remaining > 0:
             state_detail = f"Wake detected — listening for your request ({wake_remaining:.0f} s remaining)"
-        elif state == "speaking":
+        elif state == "Leo speaking":
             state_detail = "Leo speaking — microphone wake detection temporarily suppressed"
         elif state == "echo suppressed":
             state_detail = f"Speaker echo tail — wake detection suppressed ({float(suppression.get('echo_tail_remaining_s') or 0):.1f} s remaining)"
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "playback_generation": suppression.get("playback_generation"), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "quiet_dwell_remaining_s": suppression.get("quiet_dwell_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "vision_context": str(runtime.get("last_request_vision_context") or "off"), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 15.0, "s")}

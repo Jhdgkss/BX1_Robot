@@ -290,9 +290,10 @@ function liveVoiceMarkup(bridge, expanded) {
   }
   const rms = Number(audio.rms_dbfs), peak = Number(audio.peak_dbfs), threshold = Number(audio.threshold_dbfs);
   const handoff = recognition.handoff || {};
+  const visionContext = recognition.vision_context || "off";
   const percent = Math.max(0, Math.min(100, (rms + 90) / .9));
   const thresholdPercent = Math.max(0, Math.min(100, (threshold + 90) / .9));
-  const stateTone = audio.state === "failed" ? "failure" : audio.state === "speaking" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
+  const stateTone = audio.state === "failed" ? "failure" : audio.state === "Leo speaking" || audio.state === "echo settling" ? "speaking" : audio.state === "speech detected" ? "heard" : "listening";
   const details = expanded ? dataList([["Peak", `${peak.toFixed(1)} dBFS`], ["Noise floor", `${Number(audio.noise_floor_dbfs).toFixed(1)} dBFS`], ["Gate", audio.gate_open ? "Open" : "Closed"], ["STT engine", recognition.engine || handoff.engine_selected || "Unknown"], ["Primary STT", `${handoff.primary_request || "not started"} · ${handoff.elapsed_ms ?? "--"} ms`], ["Fallback reason", handoff.fallback_reason || recognition.rejection_reason || "None"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)], ["Sample age", `${Number(audio.age_seconds).toFixed(1)} s`]]) : "";
   const compact = expanded ? "" : `<div class="page-actions"><button class="button primary" type="button" data-page-link="voice">Open Live Voice</button></div>`;
   return panel(expanded ? "Voice Monitor" : "Live Voice summary", `<div class="live-voice ${stateTone}"><div class="live-voice-top"><strong>${esc(audio.state || "idle")}</strong><span>${audio.gate_open ? "Gate open" : "Gate closed"}</span></div><p class="heard-line">${esc(audio.state_detail || audio.state || "Voice state unavailable")}</p><div class="audio-gauge" role="meter" aria-label="Live microphone level" aria-valuemin="-90" aria-valuemax="0" aria-valuenow="${rms}"><div class="audio-gauge-fill" style="width:${percent}%"></div><i class="audio-gauge-threshold" style="left:${thresholdPercent}%"></i></div><div class="audio-levels"><strong>${rms.toFixed(1)} dBFS</strong><span>Peak ${peak.toFixed(1)} dBFS</span></div><p class="heard-line truncate-line">Last accepted request: ${esc(recognition.last_accepted_request || "None")}</p><p class="heard-line">STT: ${esc(recognition.engine || "Unknown")}${recognition.rejection_reason ? ` · ${esc(recognition.rejection_reason)}` : ""}</p>${details}${compact}</div>`, { span: 12, subtitle: "Body-owned live metadata; no raw audio" });
@@ -313,7 +314,7 @@ function liveVoiceStatusCard(bridge) {
   return panel("Live status", dataList([
     ["State", audio.state_detail || audio.state || "Unavailable"], ["Last accepted request", recognition.last_accepted_request || "None"],
     ["Last recognised / discarded", recognition.last_discarded_audio || recognition.latest_text || "None"],
-    ["STT engine", recognition.engine || "Unknown"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)],
+    ["STT engine", recognition.engine || "Unknown"], ["Vision context", recognition.vision_context || "off"], ["Confidence", recognition.confidence == null ? "Not reported" : Number(recognition.confidence).toFixed(2)],
     ["Failure", recognition.rejection_reason || audio.last_failure_reason || "None"], ["Sample age", audio.age_seconds == null ? "Unavailable" : `${Number(audio.age_seconds).toFixed(1)} s`],
   ]), { span: 12, className: "voice-console-status", subtitle: "Live Body metadata; no raw audio" });
 }

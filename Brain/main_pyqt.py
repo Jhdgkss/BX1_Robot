@@ -3795,7 +3795,13 @@ class BX1BrainCore:
         image_b64 = data.get("image_base64") or data.get("image")
         if isinstance(image_b64, str) and image_b64.startswith("data:") and "," in image_b64:
             image_b64 = image_b64.split(",", 1)[1]
-        has_image = bool(image_b64)
+        explicit_vision = bool(data.get("vision_context")) and str(provenance.get("label") or "").upper() == "VISION"
+        if image_b64 and not explicit_vision:
+            # Retained camera frames are for the camera UI only. They cannot
+            # silently become context for voice, manual, idle or repeat chat.
+            self.log("Discarded non-explicit image payload from ordinary conversation request.")
+            image_b64 = ""
+        has_image = bool(image_b64 and explicit_vision)
         fast_voice_mode = self._is_fast_voice_request(message, provenance, has_image)
         if fast_voice_mode:
             self.log(f"Fast voice route selected: chars={len(message)}")
@@ -4111,9 +4117,10 @@ class BX1BrainCore:
             max_sources=int(self.cfg.get("web_max_results", 6) or 6),
         )
 
-        self.conversation_history.append({"role": "user", "content": message})
-        self.conversation_history.append({"role": "assistant", "content": reply})
-        self.conversation_history = self.conversation_history[-16:]
+        if not has_image:
+            self.conversation_history.append({"role": "user", "content": message})
+            self.conversation_history.append({"role": "assistant", "content": reply})
+            self.conversation_history = self.conversation_history[-16:]
 
         actions: List[Dict[str, Any]] = []
         if behaviour_actions_override is not None:
@@ -4206,6 +4213,7 @@ class BX1BrainCore:
             "action_dry_run": bool(self.cfg.get("api_robot_action_dry_run", False)),
             "body_state_seen": bool(body_state),
             "vision_used": has_image,
+            "vision_context": "on" if has_image else "off",
             "document_sources": list(self.last_document_sources),
             "model": payload["model"],
             "fast_voice_mode": bool(fast_voice_mode),
@@ -4226,6 +4234,7 @@ class BX1BrainCore:
                 "document_sources": [str(item.get("name") or "Document") for item in self.last_document_sources if isinstance(item, dict)],
                 "body_connected": bool(body_state),
                 "camera_frame_used": bool(has_image),
+                "vision_context": "on" if has_image else "off",
                 "workshop_execution_available": bool(self.cfg.get("workshop_allow_execution", False)),
                 "behaviour_actions_available": bool(self.cfg.get("workshop_allow_behaviour_actions", True)),
                 "behaviour_requested": str(behaviour_run_request or ""),
@@ -4501,6 +4510,7 @@ class BX1RobotAPIServer:
                         self._send_json(200, {"ok": True, "vision_frame_seen": True, "metadata": meta})
                         return
                     if parsed.path == "/api/vision":
+                        body["vision_context"] = True
                         result = core.generate_reply(body)
                         result["endpoint"] = "/api/vision"
                         status = 200 if result.get("ok") else (409 if result.get("duplicate") else 500)
@@ -10962,6 +10972,8 @@ class MainWindow(QMainWindow):
         # Only include a local attached image if the prompt sounds visual. Last camera frame can be used explicitly via the button.
         if self.current_image_b64 and any(p in text.lower() for p in ("image", "picture", "photo", "camera", "see", "look", "vision")):
             data["image_base64"] = self.current_image_b64
+            data["vision_context"] = True
+            data["trigger"] = "vision_image_attachment"
         self.run_chat_worker(data)
 
     def ask_about_camera_frame(self) -> None:
@@ -10973,7 +10985,7 @@ class MainWindow(QMainWindow):
         self.input_edit.clear()
         if bool(self.cfg.get("processing_filler_always_on_chat", True)) or str(self.cfg.get("speech_output_mode") or "").lower().strip() == "cached_ack_short_summary":
             self.play_processing_filler_if_enabled()
-        self.run_chat_worker({"robot_id": robot_name_from_cfg(self.cfg), "message": prompt, "image_base64": self.current_image_b64, "body_state": self.core.latest_body_context(), "source": "gui"})
+        self.run_chat_worker({"robot_id": robot_name_from_cfg(self.cfg), "message": prompt, "image_base64": self.current_image_b64, "body_state": self.core.latest_body_context(), "source": "gui", "trigger": "vision_camera_action", "vision_context": True})
 
     def run_chat_worker(self, data: Dict[str, Any]) -> None:
         if self.chat_worker and self.chat_worker.isRunning():

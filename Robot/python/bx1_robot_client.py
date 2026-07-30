@@ -136,6 +136,7 @@ class BX1BrainClient:
             "input_metadata": input_metadata or {},
             "speak": False,
             "return_audio": bool(return_audio),
+            "vision_context": False,
         }
         if use_web is not None:
             payload["use_web"] = bool(use_web)
@@ -191,6 +192,7 @@ class BX1BrainClient:
             "speak": False,
             "return_audio": bool(return_audio),
             "mime_type": "image/jpeg",
+            "vision_context": True,
         }
         if use_web is not None:
             payload["use_web"] = bool(use_web)

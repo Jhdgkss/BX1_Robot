@@ -125,6 +125,8 @@ class SharedLiveVoiceConsole:
             "heard": "Speech detected.", "recognising": "Recognising speech.",
             "processing": "Brain request in progress.", "speaking": "Leo speaking.",
             "echo_suppressed": "Speaker echo suppression active.",
+            "leo speaking": "Leo speaking.", "echo settling": "Echo settling; waiting for quiet microphone.",
+            "ready for wake": "Ready for wake.",
             "listening": "Listening for wake word.", "error": "Voice failure.",
         }
         state = state_labels.get(state_key, str(audio.get("state_detail") or audio.get("state") or "unavailable").strip())
