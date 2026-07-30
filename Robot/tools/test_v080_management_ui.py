@@ -39,5 +39,12 @@ class ManagementUiTests(unittest.TestCase):
         self.assertIn("spans.map", APP); self.assertIn("slice(Number(s.start), Number(s.end))", APP)
         self.assertIn("/api/audio/speech-scan", APP); self.assertIn("body_speech_scan", SERVER)
 
+    def test_microphone_gauge_and_shell_refinement(self):
+        for marker in ("function microphoneGauge", "threshold_dbfs", "Threshold:", "speech detected", "speaker-gated"):
+            self.assertIn(marker, APP)
+        self.assertIn("grid-template-columns:minmax(0,45fr) minmax(0,55fr)", CSS)
+        self.assertIn("max-height:112px", CSS)
+        self.assertIn("--sidebar-hover", APP + CSS)
+
 
 if __name__ == "__main__": unittest.main()
