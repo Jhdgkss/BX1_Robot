@@ -553,6 +553,12 @@ class WebControlServer:
                         result = service.web_mic_sample_info()
                         self._json(200 if result.get("ok") else 400, result)
                         return
+                    if path == "/api/mic_keep_recording":
+                        self._json(200, service.web_keep_mic_test(False)); return
+                    if path == "/api/mic_save_speech_learning":
+                        self._json(200, service.web_keep_mic_test(True)); return
+                    if path == "/api/mic_delete_recording":
+                        self._json(200, service.web_delete_mic_test()); return
                     if path == "/api/mic_stt_status":
                         result = service.web_mic_stt_status(data)
                         self._json(200 if result.get("ok") else 400, result)
@@ -664,6 +670,12 @@ class WebControlServer:
                 if urlparse(self.path).path != "/api/bx1-os/voice-settings/v1":
                     self._json(404, {"ok": False, "error": "not found"})
                     return
+                if path == "/api/mic_keep_recording":
+                    self._json(200, service.web_keep_mic_test(False)); return
+                if path == "/api/mic_save_speech_learning":
+                    self._json(200, service.web_keep_mic_test(True)); return
+                if path == "/api/mic_delete_recording":
+                    self._json(200, service.web_delete_mic_test()); return
                 try:
                     result = service.web_update_bx1_voice_settings(self._read_json())
                     self._json(200 if result.get("ok") else 400, result)

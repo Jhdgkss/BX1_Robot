@@ -915,6 +915,7 @@ class BX1RobotBodyService:
             fft_bins=int(config.get("audio_live_fft_bins", 48)),
         )
         self.last_mic_test_wav = str(Path(tempfile.gettempdir()) / "bx1_mic_test.wav")
+        self.manual_retained_recordings: Dict[str, str] = {}
         self._mic_devices_cache: Dict[str, Any] = {"ok": False, "devices": []}
         self._mic_devices_cache_time = 0.0
         self.camera = CameraCapture(CameraConfig(
@@ -6105,7 +6106,22 @@ class BX1RobotBodyService:
         elif suppression.get("rearm_required"):
             state = "echo settling"
         if live_available and bool(live.get("speech_detected")) and state == "listening": state = "speech detected"
-        display_state = state if live_available else ("stale" if age is not None else "unavailable")
+        # A recognition timeout/rejection is not a physical microphone failure.
+        # Fresh RMS/peak telemetry proves the capture path is alive, so expose
+        # the physical microphone state independently from command recognition.
+        if live_available:
+            if bool(suppression.get("playback_active")):
+                display_state = "speaker gated"
+            elif bool(runtime.get("privacy_muted")):
+                display_state = "privacy muted"
+            elif bool(runtime.get("listening_paused")):
+                display_state = "listening paused"
+            elif bool(live.get("speech_detected")):
+                display_state = "speech detected"
+            else:
+                display_state = "available/live"
+        else:
+            display_state = "stale" if age is not None else "unavailable"
         latest_text = str(runtime.get("last_heard") or runtime.get("last_rejected") or "").strip()[:240]
         accepted_request = str(runtime.get("last_accepted") or "").strip()[:240]
         discarded_audio = str(runtime.get("last_rejected") or runtime.get("last_ignored") or "").strip()[:240]
@@ -6262,8 +6278,10 @@ class BX1RobotBodyService:
             sample_rate = int(float(data.get("sample_rate", sample_rate)))
         except Exception:
             pass
-        path = str(Path(tempfile.gettempdir()) / "bx1_mic_test.wav")
-        self.last_mic_test_wav = path
+        # Capture into a unique temporary file.  The previous valid slot is
+        # published only after a complete, validated WAV is available.
+        slot = Path(tempfile.gettempdir()) / "bx1_mic_test.wav"
+        path = str(slot.with_name(f".bx1_mic_test.{os.getpid()}.{uuid.uuid4().hex}.part.wav"))
         self.web_log("system", f"Recording microphone test sample: {seconds}s from {device}")
         t0 = time.perf_counter()
         started_at = now_iso()
@@ -6308,14 +6326,29 @@ class BX1RobotBodyService:
         report["completed_at"] = now_iso()
         report["elapsed_ms"] = elapsed_ms
         if report.get("ok"):
+            try:
+                with wave.open(path, "rb") as wav:
+                    frames = int(wav.getnframes()); rate = int(wav.getframerate()); channels = int(wav.getnchannels()); width = int(wav.getsampwidth())
+                duration = frames / float(rate or 1)
+                if (rate, channels, width) != (16000, 1, 2) or frames <= 0 or duration < max(0.25, float(seconds) * 0.80):
+                    raise ValueError(f"invalid WAV format or duration: {rate}Hz/{channels}ch/{width}B, {duration:.3f}s")
+                os.replace(path, slot)
+                self.last_mic_test_wav = str(slot)
+                report["state"] = "complete"
+                report["actual_duration_s"] = round(duration, 3)
+                report["format"] = {"container": "RIFF/WAVE", "codec": "PCM", "sample_rate": rate, "channels": channels, "sample_width": width}
+            except Exception as exc:
+                report = {**report, "ok": False, "state": "failed", "error": f"WAV validation failed: {exc}"}
+                try: Path(path).unlink(missing_ok=True)
+                except OSError: pass
             # Re-run analysis with the configured software gain so the diagnostic
             # level matches the live level meter the user sees in the web page.
-            report["analysis_gain_adjusted"] = analyse_wav_file(path, float(self.cfg.get("mic_software_gain_db", 0.0)))
+            report["analysis_gain_adjusted"] = analyse_wav_file(str(self.last_mic_test_wav), float(self.cfg.get("mic_software_gain_db", 0.0))) if report.get("ok") else {}
             analysis = report.get("analysis_gain_adjusted") or report.get("analysis") or {}
             self.web_log("system", f"Mic sample recorded. RMS {analysis.get('rms_dbfs')} dBFS, peak {analysis.get('peak_dbfs')} dBFS")
         else:
             self.web_log("error", f"Mic sample failed: {report.get('error') or report.get('stderr')}")
-        return {"ok": bool(report.get("ok")), "recording": report, "filename": path, "sample_info": self.web_mic_sample_info()}
+        return {"ok": bool(report.get("ok")), "recording": report, "filename": str(self.last_mic_test_wav) if report.get("ok") else "", "sample_info": self.web_mic_sample_info(), "state": report.get("state", "failed")}
 
     def web_play_mic_test(self, data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         data = data or {}
@@ -6327,6 +6360,25 @@ class BX1RobotBodyService:
         )
         self.web_log("system" if report.get("ok") else "error", "Mic test playback " + ("complete" if report.get("ok") else "failed"))
         return {"ok": bool(report.get("ok")), "playback": report, "filename": self.last_mic_test_wav, "sample_info": self.web_mic_sample_info()}
+
+    def web_keep_mic_test(self, speech_learning: bool = False) -> Dict[str, Any]:
+        source = Path(str(self.last_mic_test_wav or ""))
+        if not source.is_file(): return {"ok": False, "error": "No completed temporary recording"}
+        recording_id = f"manual-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+        target = source.with_name(f"bx1_manual_recording_{recording_id}.wav")
+        shutil.copyfile(source, target)
+        self.manual_retained_recordings[recording_id] = str(target)
+        return {"ok": True, "recording_id": recording_id, "filename": str(target), "saved_to_speech_learning": bool(speech_learning), "sample_info": self.web_mic_sample_info()}
+
+    def web_delete_mic_test(self) -> Dict[str, Any]:
+        removed = []
+        for path in [self.last_mic_test_wav, *self.manual_retained_recordings.values()]:
+            try:
+                p = Path(str(path));
+                if p.exists(): p.unlink(); removed.append(str(p))
+            except OSError: pass
+        self.manual_retained_recordings.clear()
+        return {"ok": True, "removed": removed}
 
     def web_mic_stt_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
         model_path = str(data.get("vosk_model_path", self.cfg.get("vosk_model_path", "models/vosk-model-small-en-us-0.15"))).strip()

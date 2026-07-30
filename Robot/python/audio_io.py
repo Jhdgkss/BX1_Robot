@@ -1593,11 +1593,26 @@ def record_microphone_sample(filename: str | os.PathLike, device: str = "default
     seconds = max(0.5, min(30.0, _safe_float(seconds, 5.0)))
     rate = int(max(8000, min(48000, _safe_float(sample_rate, 16000))))
     ch = int(max(1, min(2, _safe_float(channels, 1))))
-    cmd = [exe, "-D", str(device or "default"), "-f", "S16_LE", "-r", str(rate), "-c", str(ch), "-d", str(int(round(seconds))), str(path)]
+    # Use arecord's bounded duration plus a monotonic watchdog.  Popen lets us
+    # forcibly terminate a wedged ALSA process instead of allowing a browser
+    # request to remain in recording forever.
+    requested = float(seconds)
+    cmd = [exe, "-D", str(device or "default"), "-t", "wav", "-f", "S16_LE", "-r", str(rate), "-c", str(ch), "-d", str(int(round(requested))), str(path)]
+    started = time.monotonic()
+    proc = None
     try:
-        res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=seconds + 8, check=False)
-        report = {"ok": res.returncode == 0, "command": cmd, "returncode": res.returncode, "stdout": (res.stdout or "")[-1000:], "stderr": (res.stderr or "")[-1000:], "filename": str(path)}
-        if res.returncode == 0:
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        try:
+            stdout, stderr = proc.communicate(timeout=requested + 3.0)
+        except subprocess.TimeoutExpired:
+            proc.terminate()
+            try: stdout, stderr = proc.communicate(timeout=2.0)
+            except subprocess.TimeoutExpired:
+                proc.kill(); stdout, stderr = proc.communicate()
+            return {"ok": False, "error": "capture watchdog exceeded requested duration", "state": "failed", "command": cmd, "returncode": proc.returncode, "stdout": (stdout or "")[-1000:], "stderr": (stderr or "")[-1000:], "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(time.monotonic() - started, 3)}
+        elapsed = time.monotonic() - started
+        report = {"ok": proc.returncode == 0, "command": cmd, "returncode": proc.returncode, "stdout": (stdout or "")[-1000:], "stderr": (stderr or "")[-1000:], "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(elapsed, 3), "state": "complete" if proc.returncode == 0 else "failed"}
+        if proc.returncode == 0:
             report["analysis"] = analyse_wav_file(path)
         return report
     except Exception as exc:

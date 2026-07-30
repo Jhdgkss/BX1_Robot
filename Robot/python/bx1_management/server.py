@@ -531,6 +531,9 @@ class ManagementApplication:
 
     def body_recording_action(self, action: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
         routes = {"start": "/api/mic_record_test", "stop": "/api/mic_record_test", "play": "/api/mic_playback_test", "stt": "/api/mic_stt_test", "status": "/api/mic_sample_info"}
+        if action == "keep": return self._body_post_json("/api/mic_keep_recording", payload)
+        if action == "speech-learning": return self._body_post_json("/api/mic_save_speech_learning", payload)
+        if action == "delete": return self._body_post_json("/api/mic_delete_recording", payload)
         path = routes.get(action)
         if not path: return {"ok": False, "error": "unsupported_recording_action"}
         body = dict(payload)
@@ -540,6 +543,13 @@ class ManagementApplication:
             with request.urlopen(req, timeout=max(8, int(body.get("seconds", 5)) + 8)) as response: return json.loads(response.read(65536).decode("utf-8"))
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:240], "state": "disconnected"}
+
+    def _body_post_json(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        try:
+            req = request.Request("http://127.0.0.1:8088" + path, data=json.dumps(dict(payload)).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            with request.urlopen(req, timeout=8.0) as response: return json.loads(response.read(65536).decode("utf-8"))
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": str(exc)[:240]}
 
     def body_recording_wav(self, download: bool = False) -> Optional[Tuple[bytes, str]]:
         try:
