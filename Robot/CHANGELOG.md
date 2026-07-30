@@ -80,3 +80,7 @@
 - Adds a dated backup, automatic rollback and offline release checks to the updater.
 - Removes the retired voice engine and old separate voice-port assumptions.
 - Does not change or flash the Arduino/MCU sketch.
+# v0.8.0 - Voice controls and diagnostics
+
+- Added shared speaker-active microphone gate diagnostics and recoverable audio controls.
+- Added speech scan/request extraction APIs, custom theme persistence hooks, and offline documentation API.

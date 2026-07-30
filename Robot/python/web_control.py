@@ -60,7 +60,7 @@ details{border:1px solid var(--line);border-radius:10px;background:#08131d;paddi
 <body>
 <div class="app">
 <aside class="sidebar">
-  <div class="logo"><div class="eyebrow">BX1 / LEO</div><h1>ROBOT<br>CONTROL</h1><small>Robot client v10.39</small></div>
+  <div class="logo"><div class="eyebrow">BX1 OS</div><h1>ROBOT<br>CONTROL</h1><small>Generic robot body console</small></div>
   <div class="lcars-bar"></div>
   <nav class="nav" aria-label="Diagnostic sections">
     <button data-page="overview" class="active">Overview</button>
@@ -80,6 +80,7 @@ details{border:1px solid var(--line);border-radius:10px;background:#08131d;paddi
 <header class="topbar">
   <div class="topline"><div><h2 id="headerTitle">Overview</h2><div class="muted" id="headerSubtitle">Body health and active faults</div></div><div class="meta"><div class="clock" id="clock">--:--:--</div><div id="lastRefresh">Waiting for status…</div></div></div>
   <div class="status-rail" id="statusRail"></div>
+  <div class="card" style="margin-top:10px"><div class="fields three"><div><label>Microphone level</label><div id="audioMicLevel" class="metric">--</div></div><div><label>Gate / wake state</label><div id="audioGateState" class="metric">--</div></div><div><label>Speaker volume</label><input id="audioVolume" type="range" min="0" max="100" oninput="updateAudioControl({tts_volume:Number(this.value)})"></div></div><div class="buttons"><button onclick="updateAudioControl({microphone_privacy_muted:true})">Mute Microphone</button><button onclick="updateAudioControl({microphone_privacy_muted:false})">Unmute Microphone</button><button onclick="updateAudioControl({listening_paused:true})">Pause Listening</button><button onclick="updateAudioControl({listening_paused:false})">Resume Listening</button><button onclick="updateAudioControl({speaker_muted:true})">Mute Speaker</button><button onclick="apiAction('/api/stop_speaking',{},this)">Stop Speaking</button></div></div>
 </header>
 <main>
 <section class="page active" id="page-overview">
@@ -252,8 +253,10 @@ cd /home/arduino/Arduino_Q_Client_V1 && ./APPLY_BX1_V10_39_AUDIO_SERVO_FIX.sh
 Editable reference implementation: mcu_micropython/`;}const buses=reg.led_buses||{},zones=reg.led_zones||{},servos=reg.servos||{},drives=reg.drive_buses||{};$('registrySummary').innerHTML=`<table><thead><tr><th>Category</th><th>Configured</th><th>Enabled</th><th>Key detail</th></tr></thead><tbody><tr><td>LED buses</td><td>${Object.keys(buses).length}</td><td>${Object.values(buses).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(buses).map(([k,x])=>k+': D'+x.data_pin+', '+x.total_pixels+' pixels, limit '+x.brightness_limit).join('; '))}</td></tr><tr><td>LED zones</td><td>${Object.keys(zones).length}</td><td>${Object.values(zones).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(zones).map(([k,x])=>k+' '+x.start+'-'+x.end).join('; '))}</td></tr><tr><td>Servos</td><td>${Object.keys(servos).length}</td><td>${Object.values(servos).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(servos).map(([k,x])=>k+': D'+x.pin+' home '+x.home_deg).join('; '))}</td></tr><tr><td>Drive buses</td><td>${Object.keys(drives).length}</td><td>${Object.values(drives).filter(x=>x.enabled).length}</td><td>${esc(Object.entries(drives).map(([k,x])=>k+': '+(x.motor_armed?'ARMED':'DISARMED')+', '+(x.diagnostics_interface||'interface pending')+', protocol '+(x.protocol_confirmed?'confirmed':'pending')).join('; '))}</td></tr></tbody></table>`;renderSimpleHardware(reg);if(!isDirty($('hardwareRegistry')))$('hardwareRegistry').value=JSON.stringify(reg,null,2)}
 function doctorData(d){return (d.hardware_doctor||{}).snapshot||d.hardware_doctor||{}}function renderDoctor(d){const q=doctorData(d),sev=q.severity||'unknown';$('doctorSummary').className='result-box '+(sev==='ok'?'good':sev==='unknown'?'':'bad');$('doctorSummary').innerHTML=`<div class="result-big">${esc(sev.toUpperCase())}</div>${esc(q.summary||'No diagnosis yet')}<br><span class="muted">Last run: ${esc(q.last_run_at||'not run')}</span>`;const e=q.evidence||{};const rows=[['Router socket',e.router_socket_connectable,e.router_socket_error||e.router_socket||''],['MCU RPC',e.mcu_ok,e.bridge_error||e.bridge_mode||''],['Firmware',!!e.firmware_version,e.firmware_version||'unknown'],['Protocol',!!e.protocol_version,e.protocol_version||'unknown'],['Modulino IMU',e.imu_ok,e.imu_error||[e.imu_source,e.imu_bus,e.imu_address].filter(Boolean).join(' · ')||'unknown'],['Automatic flashing',false,'disabled by design']];$('doctorEvidence').innerHTML=rows.map(r=>`<div class="fault"><span class="badge ${r[0]==='Automatic flashing'?'good':r[1]?'good':'bad'}">${esc(r[0])}</span><div><strong>${r[0]==='Automatic flashing'?'OFF':r[1]?'OK':'FAULT'}</strong><small>${esc(r[2])}</small></div></div>`).join('');$('doctorRecommendations').innerHTML=(q.recommendations||['Run a fresh diagnosis to generate recommendations.']).map(x=>`<div class="fault"><span class="badge warn">ACTION</span><div>${esc(x)}</div></div>`).join('');$('doctorRaw').textContent=JSON.stringify(q,null,2)}
 function renderAdvanced(d){setValueIfClean('brainUrl',(d.brain||{}).base_url||'');$('rawSnapshot').textContent=JSON.stringify(d,null,2)}
-function renderAll(d){SNAP=d;EVENTS=d.events||[];renderOverview(d);renderConversation(d);renderSpeech(d);renderVision(d);renderIdle(d);renderMouth(d);renderHardware(d);renderDoctor(d);renderAdvanced(d);renderLogs();$('lastRefresh').textContent='Updated '+new Date().toLocaleTimeString()}
+function renderAll(d){SNAP=d;EVENTS=d.events||[];renderOverview(d);renderConversation(d);renderSpeech(d);renderVision(d);renderIdle(d);renderMouth(d);renderHardware(d);renderDoctor(d);renderAdvanced(d);renderAudioControls(d.audio_controls||{});renderLogs();$('lastRefresh').textContent='Updated '+new Date().toLocaleTimeString()}
 async function refreshAll(manual=false){if(refreshing)return;refreshing=true;try{const d=await req('/api/status');renderAll(d);if(manual)toast('Status refreshed','good')}catch(e){toast('Status failed: '+e.message,'bad')}finally{refreshing=false}}
+async function updateAudioControl(payload){try{const d=await req('/api/audio_controls',payload);renderAudioControls(d.controls||d);toast('Audio control updated','good')}catch(e){toast(e.message,'bad')}}
+function renderAudioControls(c){c=c||{};const a=$('audioGateState');if(a)a.textContent=(c.microphone_gate_closed?'GATED':'OPEN')+' · '+(c.wake_state||'idle');const v=$('audioVolume');if(v&&document.activeElement!==v)v.value=Number(c.speaker_volume??80);const m=$('audioMicLevel');if(m)m.textContent=c.microphone_state||'--'}
 async function pollLevel(){try{const d=await req('/api/mic_level');renderLevel(d.level||{})}catch(e){}}
 async function startMonitor(btn){busy(btn,true);try{await req('/api/mic_monitor_start',{});toast('Level meter started','good');await refreshAll()}catch(e){toast(e.message,'bad')}finally{busy(btn,false)}}
 async function stopMonitor(btn){busy(btn,true);try{await req('/api/mic_monitor_stop',{});toast('Level meter stopped','good');await refreshAll()}catch(e){toast(e.message,'bad')}finally{busy(btn,false)}}
@@ -360,6 +363,15 @@ class WebControlServer:
                     return
                 if path == "/api/status":
                     self._json(200, service.web_snapshot())
+                    return
+                if path == "/api/audio_controls":
+                    self._json(200, service.web_audio_controls())
+                    return
+                if path == "/api/speech_scan":
+                    self._json(200, service.web_speech_scan())
+                    return
+                if path == "/api/documentation":
+                    self._json(200, service.web_documentation())
                     return
                 if path == "/api/camera_snapshot.jpg":
                     try:
@@ -509,6 +521,13 @@ class WebControlServer:
                     if path == "/api/mic_settings":
                         result = service.web_update_mic_settings(data)
                         self._json(200 if result.get("ok") else 400, result)
+                        return
+                    if path == "/api/audio_controls":
+                        result = service.web_update_audio_controls(data)
+                        self._json(200 if result.get("ok") else 400, result)
+                        return
+                    if path == "/api/stop_speaking":
+                        self._json(200, service.web_stop_speaking())
                         return
                     if path == "/api/bx1-os/audio-bridge/settings":
                         result = service.web_update_bx1_audio_bridge_settings(data)

@@ -57,6 +57,7 @@ from hardware_bridge import BX1HardwareBridge
 from hardware_doctor import BX1HardwareDoctor
 from location_io import LocationProvider
 from web_control import WebControlServer
+from voice_pipeline import SpeakerActiveMicrophoneGate, extract_request, highlight_segments
 
 def _read_startup_options(argv: List[str]) -> Dict[str, str]:
     opts = {
@@ -1012,6 +1013,13 @@ class BX1RobotBodyService:
         self.speaker_playback_generation = 0
         self.speaker_rearm_required = False
         self.speaker_rearm_quiet_since_mono = 0.0
+        self.speaker_gate = SpeakerActiveMicrophoneGate(
+            echo_tail_ms=int(self.cfg.get("speaker_echo_tail_ms", 1500)),
+            event=self._speaker_gate_event,
+        )
+        self.microphone_privacy_muted = bool(self.cfg.get("microphone_privacy_muted", False))
+        self.listening_paused = bool(self.cfg.get("listening_paused", False))
+        self.speaker_muted = bool(self.cfg.get("speaker_muted", False))
         self.voice_runtime: Dict[str, Any] = {
             "enabled": bool(self.cfg.get("voice_enabled", False)),
             "loop_active": False,
@@ -1338,6 +1346,7 @@ class BX1RobotBodyService:
             self.set_voice_runtime("listening", "Ready for wake.", loop_active=True, last_error="")
 
     def _speaker_playback_started(self) -> None:
+        self.speaker_gate.start()
         with self.speaker_playback_lock:
             self.speaker_playback_active = True
             self.speaker_playback_started_mono = time.monotonic()
@@ -1367,6 +1376,8 @@ class BX1RobotBodyService:
             self.speaker_echo_tail_until_mono = time.monotonic() + tail_s
             self.speaker_rearm_required = True
             self.speaker_rearm_quiet_since_mono = 0.0
+        self.speaker_gate.finish()
+        self.speaker_gate.flush()
         self.set_voice_runtime("echo_suppressed", f"Speaker playback finished — wake detection suppressed for {tail_s:.1f}s.",
                                loop_active=bool(self.get_voice_runtime_snapshot().get("loop_active", False)),
                                speaker_playback_active=False, echo_tail_remaining_s=round(tail_s, 2))
@@ -3105,6 +3116,12 @@ class BX1RobotBodyService:
             wake_words = self.get_wake_words()
             now_mono = time.monotonic()
             suppression = self.speaker_suppression_snapshot()
+            if self.microphone_privacy_muted or self.listening_paused:
+                self.set_voice_runtime("paused", "Microphone privacy mute or listening pause is active.", loop_active=True,
+                                       microphone_privacy_muted=self.microphone_privacy_muted,
+                                       listening_paused=self.listening_paused)
+                self.stop_event.wait(0.25)
+                continue
             # A person entering view can open the same follow-up window as a
             # spoken wake word. The global value is also used by idle-life.
             external_awake_until = float(getattr(self, "conversation_active_until", 0.0) or 0.0)
@@ -3164,6 +3181,9 @@ class BX1RobotBodyService:
                         cancel_event=self.manual_audio_capture_requested,
                         level_observer=self.update_live_voice_observation,
                     )
+                    if self.speaker_gate.discard_frame(stt_result.get("audio_bytes", b"")):
+                        self.set_voice_runtime("echo_suppressed", "Microphone frame discarded while speaker gate is closed.", loop_active=True)
+                        continue
                     if not stt_result.get("cancelled"):
                         suppression = self.speaker_suppression_snapshot()
                         if suppression["suppressed"]:
@@ -5126,12 +5146,31 @@ class BX1RobotBodyService:
             {"id": "purple", "label": "Purple Lab"},
             {"id": "light", "label": "Light"},
         ]
+        custom = self.cfg.get("custom_themes", {})
+        if not isinstance(custom, dict): custom = {}
+        themes.extend({"id": str(k), "label": str(v.get("label", k)), "custom": True, "tokens": dict(v.get("tokens") or {})}
+                       for k, v in custom.items() if isinstance(v, dict))
         current = str(self.cfg.get("ui_theme", "dark-blue"))
         if current not in {t["id"] for t in themes}:
             current = "dark-blue"
-        return {"ui_theme": current, "themes": themes}
+        return {"ui_theme": current, "themes": themes, "tokens": dict((custom.get(current) or {}).get("tokens") or {})}
 
     def web_update_theme_settings(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        operation = str(data.get("operation", "select") or "select").lower()
+        custom = self.cfg.setdefault("custom_themes", {})
+        if not isinstance(custom, dict): custom = {}; self.cfg["custom_themes"] = custom
+        if operation in {"save", "save_as", "duplicate", "rename"}:
+            source = str(data.get("source", self.cfg.get("ui_theme", "dark-blue")))
+            name = str(data.get("name", data.get("id", source))).strip() or source
+            if operation == "rename": custom.pop(source, None)
+            base = custom.get(source, {}) if isinstance(custom.get(source), dict) else {}
+            custom[name] = {"label": str(data.get("label", name)), "tokens": dict(data.get("tokens", base.get("tokens", {})) or {})}
+            data = {**data, "ui_theme": name}
+        elif operation == "delete":
+            custom.pop(str(data.get("id", "")), None)
+            data = {**data, "ui_theme": "dark-blue"}
+        elif operation == "restore_default":
+            custom.clear(); data = {**data, "ui_theme": "dark-blue"}
         valid = {t["id"] for t in self.get_theme_settings()["themes"]}
         theme = str(data.get("ui_theme", self.cfg.get("ui_theme", "dark-blue"))).strip() or "dark-blue"
         if theme not in valid:
@@ -5144,6 +5183,52 @@ class BX1RobotBodyService:
         self.save_config_file()
         self.web_log("system", f"UI theme saved: {theme}")
         return {"ok": True, "theme": self.get_theme_settings(), "saved_to": str(CONFIG_PATH)}
+
+    def web_update_audio_controls(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        if "microphone_privacy_muted" in data: self.microphone_privacy_muted = bool(data["microphone_privacy_muted"])
+        if "listening_paused" in data: self.listening_paused = bool(data["listening_paused"])
+        if "speaker_muted" in data: self.speaker_muted = bool(data["speaker_muted"])
+        if "tts_volume" in data:
+            try: self.cfg["tts_volume"] = max(0, min(100, int(float(data["tts_volume"]))))
+            except (TypeError, ValueError): pass
+        self.cfg.update({"microphone_privacy_muted": self.microphone_privacy_muted, "listening_paused": self.listening_paused, "speaker_muted": self.speaker_muted})
+        self.save_config_file()
+        return {"ok": True, "controls": self.web_audio_controls()}
+
+    def web_audio_controls(self) -> Dict[str, Any]:
+        gate = self.speaker_gate.snapshot(); runtime = self.get_voice_runtime_snapshot()
+        return {"microphone_privacy_muted": self.microphone_privacy_muted, "listening_paused": self.listening_paused, "speaker_muted": self.speaker_muted,
+                "speaker_active": gate["speaker_active"], "microphone_gate_closed": gate["microphone_gate_closed"], "echo_tail": gate["echo_tail"],
+                "echo_tail_remaining_s": gate["echo_tail_remaining_s"], "wake_matching_suspended": gate["microphone_gate_closed"] or self.listening_paused,
+                "stt_submission_suspended": gate["microphone_gate_closed"] or self.microphone_privacy_muted,
+                "microphone_state": "muted" if self.microphone_privacy_muted else ("paused" if self.listening_paused else "listening"),
+                "wake_state": runtime.get("state", "idle"), "speaker_volume": int(self.cfg.get("tts_volume", 80))}
+
+    def web_stop_speaking(self) -> Dict[str, Any]:
+        for name in ("stop", "stop_speaking", "cancel"):
+            method = getattr(self.tts, name, None)
+            if callable(method):
+                try: method()
+                except Exception: pass
+                break
+        self._speaker_playback_finished()
+        return {"ok": True, "controls": self.web_audio_controls()}
+
+    def web_speech_scan(self) -> Dict[str, Any]:
+        runtime = self.get_voice_runtime_snapshot(); transcript = str(runtime.get("last_heard") or "")
+        extracted = extract_request(transcript, self.get_wake_words())
+        extracted["highlights"] = highlight_segments(transcript, extracted["wake_range"], extracted["request_range"])
+        extracted.update({"interaction_id": runtime.get("last_event_id", ""), "timestamp": runtime.get("updated_at", ""),
+                          "confidence": (runtime.get("last_stt_metrics") or {}).get("confidence"), "vad_state": (runtime.get("live_audio") or {}).get("state", "unknown"),
+                          "microphone": self.web_audio_controls(), "submitted": bool(runtime.get("last_accepted"))})
+        return {"ok": True, "scan": extracted}
+
+    def web_documentation(self) -> Dict[str, Any]:
+        candidates = [Path(PROJECT_ROOT).parent / "Documentation", Path(PROJECT_ROOT).parent / "BX1_OS" / "docs", Path(PROJECT_ROOT) / "docs"]
+        docs = next((p for p in candidates if p.is_dir()), candidates[0])
+        preferred = [docs / n for n in ("BX1_OS_ARCHITECTURE.md", "BX1_OS_AUDIO_INTEGRATION.md", "DEPLOYMENT_GUIDE.md", "CORE_SERVICES.md", "BX1_OS_V0_8_VOICE_CONTROLS.md") if (docs / n).is_file()]
+        selected = preferred or sorted(docs.glob("*.md"))[:12]
+        return {"ok": True, "offline": True, "files": [p.name for p in selected], "content": "\n\n".join(p.read_text(encoding="utf-8", errors="replace") for p in selected)}
 
     def apply_brain_connection(self, base_url: str, api_key: Optional[str] = None, save: bool = True) -> Dict[str, Any]:
         clean_url = self.normalise_brain_base_url(base_url)
@@ -5419,6 +5504,10 @@ class BX1RobotBodyService:
             "brain_tts": report.get("brain_tts", {}),
             "playback_device": self.cfg.get("tts_playback_device", "default"),
         })
+
+    def _speaker_gate_event(self, name: str, data: Dict[str, Any]) -> None:
+        """Expose concise, stable gate diagnostics to Logs and the voice UI."""
+        self.web_log("audio_gate", name, data)
         return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
     def web_snapshot(self) -> Dict[str, Any]:
@@ -5437,6 +5526,8 @@ class BX1RobotBodyService:
             "theme": self.get_theme_settings(),
             "voice": self.get_voice_settings(),
             "voice_runtime": self.get_voice_runtime_snapshot(),
+            "audio_controls": self.web_audio_controls(),
+            "speech_scan": self.web_speech_scan(),
             "mic": self.get_mic_settings(),
             "mic_level": self.web_mic_level(),
             "thinking_cues": self.get_thinking_cue_settings(),
