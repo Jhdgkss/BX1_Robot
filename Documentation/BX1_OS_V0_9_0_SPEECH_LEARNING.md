@@ -19,6 +19,10 @@ The transcription order is: raw Faster-Whisper text → vocabulary-biased result
 
 If the Brain is disconnected, management retains the pending revision and retries on the next update. Check `/api/stt/vocabulary/status` and the Speech Learning sync indicator. A successful vocabulary update does not imply that the model has been retrained.
 
+## v0.10 audio operation
+
+Dashboard and touchscreen now use one linear sequence: Audio Status and Controls, continuous recognition, Conversation, Manual Microphone Recording, Speaker-to-Microphone Recognition Test, Audio Diagnostics, Speech Learning Summary and System Overview. Audio Status is the sole owner of mute, pause, push-to-talk, speaker mute, stop-speaking and volume. Diagnostic captures are isolated from wake matching and command submission. WAV captures remain available while Brain is disconnected and are submitted explicitly when Brain returns.
+
 ## Privacy and retention
 
 Audio capture remains Robot Body-owned. Hard microphone mute prevents capture. Diagnostic retention is configured by the Body; approved examples require manual review. When Brain or Body telemetry is unavailable, the UI reports that state instead of inventing recognition data.

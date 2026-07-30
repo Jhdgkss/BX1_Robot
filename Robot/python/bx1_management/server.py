@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.9.0-speech-learning"
-RELEASE_TAG = "BX1_OS_v0.9.0_speech_learning"
+RELEASE_VERSION = "0.10.0-complete-audio"
+RELEASE_TAG = "BX1_OS_v0.10.0_complete_audio"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -508,6 +508,13 @@ class ManagementApplication:
             }
         except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
             return {"ok": False, "error": "Body speech test unavailable", "detail": str(exc)[:240]}
+
+    def body_stop_speaking(self) -> Dict[str, Any]:
+        try:
+            req = request.Request("http://127.0.0.1:8088/api/stop_speaking", data=b"{}", method="POST", headers={"Content-Type":"application/json"})
+            with request.urlopen(req, timeout=3.0) as response: return json.loads(response.read(8192).decode("utf-8"))
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": str(exc)[:200]}
 
     def touchscreen_status(self) -> Dict[str, Any]:
         path = Path(self.config.get("touchscreen_status_file", "/home/arduino/BX1_OS/runtime/touchscreen-kiosk-status.json"))
@@ -998,6 +1005,8 @@ class ManagementServer:
                         synced = application.sync_speech_learning()
                         self._json(HTTPStatus.OK, {**application.speech_learning.snapshot(), "sync_result": synced})
                         return
+                    if path == "/api/voice/stop-speaking":
+                        result = application.body_stop_speaking(); self._json(HTTPStatus.OK if result.get("ok", True) else HTTPStatus.SERVICE_UNAVAILABLE, result); return
                     if path == "/api/runtime/modules/reload":
                         self._json(HTTPStatus.OK, application.modules.reload())
                         return

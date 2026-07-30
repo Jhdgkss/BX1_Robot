@@ -29,6 +29,12 @@ class SpeechLearningBrainTests(unittest.TestCase):
             self.assertIn(marker, CSS)
         self.assertEqual(APP.count('function canonicalConversation'), 1)
 
+    def test_audio_release_is_linear_and_consolidated(self):
+        for marker in ("Audio Status and Controls", "Manual Microphone Recording", "Speaker-to-Microphone Recognition Test", "Audio Diagnostics", "Speech Learning Summary", "linear-audio-layout"):
+            self.assertIn(marker, APP)
+        self.assertNotIn("${canonicalQuick()}", APP)
+        self.assertIn('RELEASE_VERSION = "0.10.0-complete-audio"', (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8"))
+
 
 if __name__ == "__main__":
     unittest.main()

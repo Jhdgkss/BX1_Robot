@@ -11,7 +11,7 @@ SERVER = (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8")
 
 class ManagementUiTests(unittest.TestCase):
     def test_management_version_is_owned_by_8089(self):
-        self.assertIn('RELEASE_VERSION = "0.9.0-speech-learning"', SERVER)
+        self.assertIn('RELEASE_VERSION = "0.10.0-complete-audio"', SERVER)
         self.assertNotIn('version: deployment.version || "0.5.0"', APP)
 
     def test_dashboard_has_real_operational_sections(self):
@@ -27,7 +27,7 @@ class ManagementUiTests(unittest.TestCase):
         self.assertIn('function voiceConsolePage', APP); self.assertIn('Download diagnostic package', APP)
 
     def test_canonical_layout_and_five_theme_presets(self):
-        for marker in ("canonical-top-cards", "canonical-main", "canonical-left", "canonical-right", "Conversation", "Audio Diagnostics", "Quick Controls"):
+        for marker in ("canonical-top-cards", "Conversation", "Audio Diagnostics", "Audio Status and Controls", "Manual Microphone Recording", "Speaker-to-Microphone Recognition Test"):
             self.assertIn(marker, APP)
         for label in ("Light Mode", "Dark Blue", "Cyber Green", "Industrial Orange", "Soft Pastel"):
             self.assertIn(label, APP)
