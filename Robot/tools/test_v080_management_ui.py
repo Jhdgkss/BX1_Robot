@@ -11,8 +11,7 @@ SERVER = (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8")
 
 class ManagementUiTests(unittest.TestCase):
     def test_management_version_is_owned_by_8089(self):
-        self.assertIn('version: "0.8.0-voice-controls"', APP)
-        self.assertIn('RELEASE_VERSION = "0.8.0-voice-controls"', SERVER)
+        self.assertIn('RELEASE_VERSION = "0.9.0-speech-learning"', SERVER)
         self.assertNotIn('version: deployment.version || "0.5.0"', APP)
 
     def test_dashboard_has_real_operational_sections(self):
@@ -45,6 +44,11 @@ class ManagementUiTests(unittest.TestCase):
         self.assertIn("grid-template-columns:minmax(0,45fr) minmax(0,55fr)", CSS)
         self.assertIn("max-height:112px", CSS)
         self.assertIn("--sidebar-hover", APP + CSS)
+
+    def test_dual_modes_and_speech_learning(self):
+        for marker in ("presentationMode", "touchscreenPage", "touch-frame", "ui=touchscreen", "Speech Learning", "/api/speech-learning", "vocabulary", "corrections"):
+            self.assertIn(marker, APP + SERVER)
+        self.assertIn("BX1 OS v0.9.0", (ROOT / "../Documentation/BX1_OS_V0_9_0_SPEECH_LEARNING.md").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__": unittest.main()

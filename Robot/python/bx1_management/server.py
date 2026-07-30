@@ -28,8 +28,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.8.0-voice-controls"
-RELEASE_TAG = "BX1_OS_v0.8.0_voice_controls"
+RELEASE_VERSION = "0.9.0-speech-learning"
+RELEASE_TAG = "BX1_OS_v0.9.0_speech_learning"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -159,6 +159,35 @@ class SharedLiveVoiceConsole:
             return {"ok": True, "schema": "bx1.live_voice_console.v1", "items": list(self._items), "limit": self._limit, "receiver": dict(self._receiver), "storage": "temporary_memory_only_cleared_on_restart"}
 
 
+class SpeechLearningStore:
+    """Small validated JSON store for review examples and vocabulary metadata."""
+    def __init__(self, path: Path) -> None:
+        self.path, self._lock = path, threading.RLock()
+        self.data = {"entries": [], "vocabulary": [], "corrections": [], "speakers": [{"id": "john", "name": "John"}, {"id": "household", "name": "Household User"}, {"id": "visitor", "name": "Visitor"}, {"id": "unknown", "name": "Unknown"}], "retention_days": 30}
+        try:
+            loaded = json.loads(path.read_text(encoding="utf-8")); self.data.update(loaded if isinstance(loaded, dict) else {})
+        except (OSError, ValueError, json.JSONDecodeError):
+            pass
+
+    def _save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True); tmp = self.path.with_suffix(".tmp"); tmp.write_text(json.dumps(self.data, indent=2), encoding="utf-8"); tmp.replace(self.path)
+
+    def snapshot(self) -> Dict[str, Any]:
+        with self._lock:
+            entries = list(self.data.get("entries", [])); approved = [e for e in entries if e.get("approved")]
+            return {"ok": True, "entries": entries, "vocabulary": list(self.data.get("vocabulary", [])), "corrections": list(self.data.get("corrections", [])), "speakers": list(self.data.get("speakers", [])), "retention_days": self.data.get("retention_days", 30), "summary": {"total": len(entries), "reviewed": sum(1 for e in entries if e.get("reviewed")), "approved": len(approved), "corrected": sum(1 for e in entries if e.get("corrected_text")), "ignored": sum(1 for e in entries if e.get("ignored"))}}
+
+    def update(self, body: Mapping[str, Any]) -> Dict[str, Any]:
+        with self._lock:
+            for key in ("entries", "vocabulary", "corrections", "speakers"):
+                if key in body:
+                    value = body[key]
+                    if not isinstance(value, list) or len(value) > 5000 or any(not isinstance(x, dict) for x in value): raise ValueError(f"invalid_{key}")
+                    self.data[key] = value
+            if "retention_days" in body: self.data["retention_days"] = max(1, min(3650, int(body["retention_days"])))
+            self._save(); return self.snapshot()
+
+
 class ManagementApplication:
     """Read-only application model for the management UI framework."""
 
@@ -206,6 +235,7 @@ class ManagementApplication:
             request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
         self.live_voice_console = SharedLiveVoiceConsole(limit=200)
+        self.speech_learning = SpeechLearningStore(Path(self.config.get("runtime_dir", "/home/arduino/BX1_OS/runtime")) / "speech-learning.json")
         modules_root = Path(self.config.get("modules_root", Path(__file__).resolve().parents[2] / "modules"))
         persistent_root = Path(self.config.get("persistent_modules_root", "/home/arduino/BX1_modules"))
         self.modules = ModuleManager(modules_root, persistent_root=persistent_root, event_limit=int(self.config.get("runtime", {}).get("event_queue_limit", 128)), led_request=self._body_led_request)
@@ -723,6 +753,12 @@ class ManagementServer:
                     files = sorted(DOCUMENTATION_ROOT.glob("*.md")) if DOCUMENTATION_ROOT.is_dir() else []
                     self._json(HTTPStatus.OK, {"ok": True, "offline": True, "files": [p.name for p in files], "content": "\n\n".join(p.read_text(encoding="utf-8", errors="replace") for p in files)})
                     return
+                if path == "/api/speech-learning":
+                    self._json(HTTPStatus.OK, application.speech_learning.snapshot())
+                    return
+                if path == "/api/ui/presentation-mode":
+                    self._json(HTTPStatus.OK, {"ok": True, "mode": "desktop"})
+                    return
                 if path == "/api/core/state":
                     query = parse_qs(request.query)
                     raw_since = query.get("since", [None])[0]
@@ -939,6 +975,9 @@ class ManagementServer:
                         self._json(HTTPStatus.OK, application.runtime_install(self.rfile.read(length)))
                         return
                     body = self._read_json()
+                    if path == "/api/speech-learning":
+                        self._json(HTTPStatus.OK, application.speech_learning.update(body))
+                        return
                     if path == "/api/runtime/modules/reload":
                         self._json(HTTPStatus.OK, application.modules.reload())
                         return
