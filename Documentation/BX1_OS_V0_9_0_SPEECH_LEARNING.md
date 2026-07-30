@@ -11,6 +11,14 @@ Speech Learning reviews Body recognition metadata before dataset inclusion. Raw 
 
 Vocabulary and correction data are stored in the management runtime JSON store and exposed at `/api/speech-learning`. Imports must contain bounded JSON arrays of objects; dataset export remains an explicit operator action.
 
+## Brain hotword synchronisation
+
+BX1 OS sends enabled vocabulary terms, variants, categories, speaker scope and a monotonically increasing revision to the Brain `/api/stt/vocabulary` contract. The Brain reports acceptance, active count, revision, model and rejected terms. Faster-Whisper receives the active terms through its supported `hotwords` argument. Disabled terms are omitted and unchanged revisions are not resent.
+
+The transcription order is: raw Faster-Whisper text → vocabulary-biased result → safe, case-insensitive phrase corrections → wake/request extraction. Raw text and applied correction IDs remain in diagnostics. Vocabulary biasing improves decoder context; it is not model training or fine-tuning.
+
+If the Brain is disconnected, management retains the pending revision and retries on the next update. Check `/api/stt/vocabulary/status` and the Speech Learning sync indicator. A successful vocabulary update does not imply that the model has been retrained.
+
 ## Privacy and retention
 
 Audio capture remains Robot Body-owned. Hard microphone mute prevents capture. Diagnostic retention is configured by the Body; approved examples require manual review. When Brain or Body telemetry is unavailable, the UI reports that state instead of inventing recognition data.

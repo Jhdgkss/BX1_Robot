@@ -163,7 +163,7 @@ class SpeechLearningStore:
     """Small validated JSON store for review examples and vocabulary metadata."""
     def __init__(self, path: Path) -> None:
         self.path, self._lock = path, threading.RLock()
-        self.data = {"entries": [], "vocabulary": [], "corrections": [], "speakers": [{"id": "john", "name": "John"}, {"id": "household", "name": "Household User"}, {"id": "visitor", "name": "Visitor"}, {"id": "unknown", "name": "Unknown"}], "retention_days": 30}
+        self.data = {"entries": [], "vocabulary": [], "corrections": [], "speakers": [{"id": "john", "name": "John"}, {"id": "household", "name": "Household User"}, {"id": "visitor", "name": "Visitor"}, {"id": "unknown", "name": "Unknown"}], "retention_days": 30, "vocabulary_revision": 0, "sync": {"state": "pending", "last_success": "", "error": ""}}
         try:
             loaded = json.loads(path.read_text(encoding="utf-8")); self.data.update(loaded if isinstance(loaded, dict) else {})
         except (OSError, ValueError, json.JSONDecodeError):
@@ -175,7 +175,7 @@ class SpeechLearningStore:
     def snapshot(self) -> Dict[str, Any]:
         with self._lock:
             entries = list(self.data.get("entries", [])); approved = [e for e in entries if e.get("approved")]
-            return {"ok": True, "entries": entries, "vocabulary": list(self.data.get("vocabulary", [])), "corrections": list(self.data.get("corrections", [])), "speakers": list(self.data.get("speakers", [])), "retention_days": self.data.get("retention_days", 30), "summary": {"total": len(entries), "reviewed": sum(1 for e in entries if e.get("reviewed")), "approved": len(approved), "corrected": sum(1 for e in entries if e.get("corrected_text")), "ignored": sum(1 for e in entries if e.get("ignored"))}}
+            return {"ok": True, "entries": entries, "vocabulary": list(self.data.get("vocabulary", [])), "corrections": list(self.data.get("corrections", [])), "speakers": list(self.data.get("speakers", [])), "retention_days": self.data.get("retention_days", 30), "vocabulary_revision": self.data.get("vocabulary_revision", 0), "sync": dict(self.data.get("sync", {})), "summary": {"total": len(entries), "reviewed": sum(1 for e in entries if e.get("reviewed")), "approved": len(approved), "corrected": sum(1 for e in entries if e.get("corrected_text")), "ignored": sum(1 for e in entries if e.get("ignored"))}}
 
     def update(self, body: Mapping[str, Any]) -> Dict[str, Any]:
         with self._lock:
@@ -184,6 +184,9 @@ class SpeechLearningStore:
                     value = body[key]
                     if not isinstance(value, list) or len(value) > 5000 or any(not isinstance(x, dict) for x in value): raise ValueError(f"invalid_{key}")
                     self.data[key] = value
+            if "vocabulary" in body or "corrections" in body:
+                self.data["vocabulary_revision"] = int(self.data.get("vocabulary_revision", 0)) + 1
+                self.data["sync"] = {"state": "pending", "last_success": self.data.get("sync", {}).get("last_success", ""), "error": ""}
             if "retention_days" in body: self.data["retention_days"] = max(1, min(3650, int(body["retention_days"])))
             self._save(); return self.snapshot()
 
@@ -516,6 +519,21 @@ class ManagementApplication:
 
     def live_voice_console_snapshot(self) -> Dict[str, Any]:
         return self.live_voice_console.snapshot()
+
+    def sync_speech_learning(self) -> Dict[str, Any]:
+        snapshot = self.speech_learning.snapshot(); endpoint = str(getattr(self.voice, "brain_endpoint", "") or "").rstrip("/")
+        if not endpoint:
+            return {"ok": False, "state": "pending", "error": "brain_endpoint_not_configured", "vocabulary_revision": snapshot.get("vocabulary_revision", 0)}
+        payload = {"revision": snapshot.get("vocabulary_revision", 0), "terms": snapshot.get("vocabulary", [])}
+        try:
+            req = request.Request(endpoint + "/api/stt/vocabulary", data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            with request.urlopen(req, timeout=4.0) as response: result = json.loads(response.read(16384).decode("utf-8"))
+            if not isinstance(result, Mapping) or not result.get("ok"): raise ValueError(str(result))
+            self.speech_learning.data["sync"] = {"state": "active", "last_success": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "error": "", "brain": dict(result)}; self.speech_learning._save()
+            return {"ok": True, "state": "active", **dict(result)}
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            self.speech_learning.data["sync"] = {"state": "pending", "last_success": snapshot.get("sync", {}).get("last_success", ""), "error": str(exc)[:200]}; self.speech_learning._save()
+            return {"ok": False, "state": "pending", "error": str(exc)[:200], "vocabulary_revision": snapshot.get("vocabulary_revision", 0)}
 
     def update_body_audio_bridge(self, values: Mapping[str, Any]) -> Dict[str, Any]:
         payload = {"settings": dict(values.get("settings", values))}
@@ -976,7 +994,9 @@ class ManagementServer:
                         return
                     body = self._read_json()
                     if path == "/api/speech-learning":
-                        self._json(HTTPStatus.OK, application.speech_learning.update(body))
+                        application.speech_learning.update(body)
+                        synced = application.sync_speech_learning()
+                        self._json(HTTPStatus.OK, {**application.speech_learning.snapshot(), "sync_result": synced})
                         return
                     if path == "/api/runtime/modules/reload":
                         self._json(HTTPStatus.OK, application.modules.reload())

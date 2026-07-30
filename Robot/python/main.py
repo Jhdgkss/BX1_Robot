@@ -1684,6 +1684,8 @@ class BX1RobotBodyService:
         handoff["response_request_id"] = remote_request_id
         remote_text = str(remote.get("text") or "").strip() if isinstance(remote, dict) else ""
         if bool(remote.get("ok")) and remote_text:
+            correction = apply_speech_corrections(remote_text, self.cfg.get("speech_correction_rules", []), str(self.cfg.get("active_speaker_id", "")))
+            corrected_text = correction["corrected_text"]
             tokens = re.findall(r"[A-Za-z0-9']+", remote_text)
             fillers = {"huh", "uh", "um", "umm", "mm", "mmm", "hmm", "hm", "ah", "oh", "er", "erm", "eh"}
             quality = remote.get("transcript_quality") if isinstance(remote.get("transcript_quality"), dict) else analyse_transcript_quality(
@@ -1697,7 +1699,11 @@ class BX1RobotBodyService:
                 "accepted": accepted,
                 "reason": reason,
                 "transcript_quality": quality,
-                "text": remote_text,
+                "text": corrected_text,
+                "raw_text": remote_text,
+                "vocabulary_biased_text": str(remote.get("vocabulary_biased_text") or remote_text),
+                "corrected_text": corrected_text,
+                "applied_corrections": correction["applied_corrections"],
                 "confidence": remote.get("confidence"),
                 "words": [w for seg in remote.get("segments", []) if isinstance(seg, dict) for w in seg.get("words", [])],
                 "transcription_backend": "brain_faster_whisper",
@@ -6788,3 +6794,16 @@ if __name__ == "__main__":
         App.run(user_loop=app_lab_loop)
     else:
         run_service_standalone()
+def apply_speech_corrections(text: str, rules: List[Dict[str, Any]], speaker_id: str = "") -> Dict[str, Any]:
+    """Apply phrase-safe corrections after Whisper without changing raw text."""
+    corrected = str(text or ""); applied = []
+    for index, rule in enumerate(rules or []):
+        if not isinstance(rule, dict) or not rule.get("enabled", True): continue
+        recognised, canonical = str(rule.get("recognised") or "").strip(), str(rule.get("canonical") or "").strip()
+        if not recognised or not canonical: continue
+        scope = str(rule.get("speaker_id") or "").strip()
+        if scope and scope != speaker_id: continue
+        pattern = r"(?<![A-Za-z0-9])" + re.escape(recognised) + r"(?![A-Za-z0-9])"
+        corrected, count = re.subn(pattern, canonical, corrected, flags=re.IGNORECASE)
+        if count: applied.append({"id": str(rule.get("id") or f"rule-{index}"), "recognised": recognised, "canonical": canonical, "count": count})
+    return {"raw_text": str(text or ""), "corrected_text": corrected, "applied_corrections": applied}

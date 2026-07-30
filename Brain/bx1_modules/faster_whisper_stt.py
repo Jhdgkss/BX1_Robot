@@ -104,6 +104,7 @@ class FasterWhisperSTTService:
         self._last_transcription_at = ""
         self._last_latency_ms: Optional[float] = None
         self._last_text = ""
+        self._vocabulary: Dict[str, Any] = {"revision": 0, "terms": [], "updated_at": "", "rejected_terms": []}
         self._preload_thread: Optional[threading.Thread] = None
         self._package_available_cache: Optional[bool] = None
 
@@ -325,6 +326,25 @@ class FasterWhisperSTTService:
             "words": words,
         }
 
+    def update_vocabulary(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        terms = payload.get("terms", [])
+        if not isinstance(terms, list) or len(terms) > 2000 or any(not isinstance(item, dict) for item in terms):
+            return {"ok": False, "error": "invalid_terms"}
+        cleaned, rejected = [], []
+        for item in terms:
+            term = str(item.get("term") or "").strip()
+            if 1 <= len(term) <= 80 and any(ch.isalnum() for ch in term):
+                cleaned.append({"term": term, "enabled": bool(item.get("enabled", True)), "variants": list(item.get("variants", []))[:12], "category": str(item.get("category") or "")[:40], "speaker_id": str(item.get("speaker_id") or "")[:80]})
+            else:
+                rejected.append(term[:80])
+        with self._lock:
+            self._vocabulary = {"revision": int(payload.get("revision") or 0), "terms": cleaned, "updated_at": self._now_iso(), "rejected_terms": rejected}
+        return {"ok": True, "accepted": True, "active_hotword_count": sum(1 for item in cleaned if item["enabled"]), "vocabulary_revision": self._vocabulary["revision"], "last_update_time": self._vocabulary["updated_at"], "rejected_terms": rejected, "model": self._model_signature[0] or self._configured_model()}
+
+    def vocabulary_status(self) -> Dict[str, Any]:
+        with self._lock:
+            return {"accepted": True, "active_hotword_count": sum(1 for item in self._vocabulary.get("terms", []) if item.get("enabled", True)), "vocabulary_revision": self._vocabulary.get("revision", 0), "last_update_time": self._vocabulary.get("updated_at", ""), "rejected_terms": list(self._vocabulary.get("rejected_terms", [])), "model": self._model_signature[0] or self._configured_model()}
+
     def transcribe_payload(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         metadata = payload.get("metadata") if isinstance(payload.get("metadata"), dict) else {}
         request_id = str(metadata.get("request_id") or payload.get("request_id") or "").strip()[:96]
@@ -346,7 +366,8 @@ class FasterWhisperSTTService:
             tmp.close()
             model = self.ensure_loaded()
             language = str(payload.get("language") or self.cfg.get("stt_language", "en") or "en").strip() or "en"
-            hotwords = str(payload.get("hotwords") or self.cfg.get("stt_hotwords", "") or "").strip() or None
+            dynamic_terms = [str(item.get("term") or "").strip() for item in self._vocabulary.get("terms", []) if isinstance(item, dict) and item.get("enabled", True)]
+            hotwords = ", ".join(dict.fromkeys([part.strip() for source in (str(payload.get("hotwords") or ""), str(self.cfg.get("stt_hotwords", "") or ""), ", ".join(dynamic_terms)) for part in source.split(",") if part.strip()])) or None
             if "initial_prompt" in payload:
                 initial_prompt = str(payload.get("initial_prompt") or "").strip() or None
             else:
@@ -390,6 +411,9 @@ class FasterWhisperSTTService:
                 "outcome": "accepted" if accepted else "rejected",
                 "request_id": request_id,
                 "text": text,
+                "raw_text": text,
+                "vocabulary_biased_text": text,
+                "hotword_context": {"revision": self._vocabulary.get("revision", 0), "terms": dynamic_terms, "accepted": True, "count": len(dynamic_terms)},
                 "language": str(getattr(info, "language", language) or language),
                 "language_probability": round(float(getattr(info, "language_probability", 0.0) or 0.0), 4),
                 "duration_s": round(float(getattr(info, "duration", wav_info.get("duration_s", 0.0)) or 0.0), 3),

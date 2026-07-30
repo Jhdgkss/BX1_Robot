@@ -4505,6 +4505,13 @@ class BX1RobotAPIServer:
                         # its Vosk transport fallback.
                         self._send_json(200, result)
                         return
+                    if parsed.path == "/api/stt/vocabulary":
+                        result = core.stt_service.update_vocabulary(body)
+                        self._send_json(200 if result.get("ok") else 400, result)
+                        return
+                    if parsed.path == "/api/stt/vocabulary/status":
+                        self._send_json(200, {"ok": True, **core.stt_service.vocabulary_status()})
+                        return
                     if parsed.path in {"/api/vision_frame", "/api/camera_frame"}:
                         meta = core.remember_vision_frame(body)
                         self._send_json(200, {"ok": True, "vision_frame_seen": True, "metadata": meta})
