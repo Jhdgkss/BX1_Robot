@@ -3,6 +3,8 @@ from pathlib import Path
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+APP = (ROOT / "python/bx1_management/static/app.js").read_text(encoding="utf-8")
+CSS = (ROOT / "python/bx1_management/static/styles.css").read_text(encoding="utf-8")
 sys.path.insert(0, str(ROOT / "python"))
 sys.path.insert(0, str(ROOT.parent / "Brain"))
 
@@ -20,6 +22,12 @@ class SpeechLearningBrainTests(unittest.TestCase):
         result = apply_speech_corrections("make a base", [{"recognised": "make a base", "canonical": "Makerbase", "enabled": False}, {"recognised": "base", "canonical": "BASE", "speaker_id": "john"}], "visitor")
         self.assertEqual(result["corrected_text"], "make a base")
         self.assertFalse(result["applied_corrections"])
+
+    def test_ui_ownership_and_overflow_safety(self):
+        self.assertNotIn("${canonicalQuick()}", APP)
+        for marker in ("max-width:100%", "overflow-wrap:anywhere", "minmax(min(100%,150px),1fr)", "json-viewer", "chat-input-row"):
+            self.assertIn(marker, CSS)
+        self.assertEqual(APP.count('function canonicalConversation'), 1)
 
 
 if __name__ == "__main__":
