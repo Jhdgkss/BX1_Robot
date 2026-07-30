@@ -33,7 +33,7 @@ class SpeechLearningBrainTests(unittest.TestCase):
         for marker in ("Audio Status and Controls", "Manual Microphone Recording", "Speaker-to-Microphone Recognition Test", "Audio Diagnostics", "Speech Learning Summary", "linear-audio-layout"):
             self.assertIn(marker, APP)
         self.assertNotIn("${canonicalQuick()}", APP)
-        self.assertIn('RELEASE_VERSION = "0.10.0-complete-audio"', (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8"))
+        self.assertIn('RELEASE_VERSION = "0.10.1-audio-runtime"', (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8"))
 
 
 if __name__ == "__main__":

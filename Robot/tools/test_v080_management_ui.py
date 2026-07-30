@@ -11,7 +11,7 @@ SERVER = (ROOT / "python/bx1_management/server.py").read_text(encoding="utf-8")
 
 class ManagementUiTests(unittest.TestCase):
     def test_management_version_is_owned_by_8089(self):
-        self.assertIn('RELEASE_VERSION = "0.10.0-complete-audio"', SERVER)
+        self.assertIn('RELEASE_VERSION = "0.10.1-audio-runtime"', SERVER)
         self.assertNotIn('version: deployment.version || "0.5.0"', APP)
 
     def test_dashboard_has_real_operational_sections(self):

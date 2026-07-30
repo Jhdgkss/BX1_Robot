@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional
 from urllib.parse import parse_qs, urlparse
 from urllib import error, request
+from urllib import request as url_request
 
 if __package__ in {None, ""}:
     sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
@@ -28,8 +29,8 @@ from bx1_management.voice_vertical import VoiceTimeline, VoiceVerticalSlice
 from bx1_runtime import ModuleManager
 
 
-RELEASE_VERSION = "0.10.0-complete-audio"
-RELEASE_TAG = "BX1_OS_v0.10.0_complete_audio"
+RELEASE_VERSION = "0.10.1-audio-runtime"
+RELEASE_TAG = "BX1_OS_v0.10.1_audio_runtime"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -516,6 +517,25 @@ class ManagementApplication:
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:200]}
 
+    def body_recording_action(self, action: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+        routes = {"start": "/api/mic_record_test", "stop": "/api/mic_record_test", "play": "/api/mic_playback_test", "stt": "/api/mic_stt_test", "status": "/api/mic_sample_info"}
+        path = routes.get(action)
+        if not path: return {"ok": False, "error": "unsupported_recording_action"}
+        body = dict(payload)
+        if action == "start": body["seconds"] = max(1, min(30, int(body.get("seconds", 5))))
+        try:
+            req = request.Request("http://127.0.0.1:8088" + path, data=json.dumps(body).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"})
+            with request.urlopen(req, timeout=max(8, int(body.get("seconds", 5)) + 8)) as response: return json.loads(response.read(65536).decode("utf-8"))
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": str(exc)[:240], "state": "disconnected"}
+
+    def body_recording_wav(self, download: bool = False) -> Optional[Tuple[bytes, str]]:
+        try:
+            with request.urlopen("http://127.0.0.1:8088/api/mic_sample.wav" + ("?download=1" if download else ""), timeout=4.0) as response:
+                return response.read(12 * 1024 * 1024), "audio/wav"
+        except (error.URLError, TimeoutError, OSError):
+            return None
+
     def touchscreen_status(self) -> Dict[str, Any]:
         path = Path(self.config.get("touchscreen_status_file", "/home/arduino/BX1_OS/runtime/touchscreen-kiosk-status.json"))
         try:
@@ -829,6 +849,21 @@ class ManagementServer:
                 if path == "/api/audio/bridge":
                     self._json(HTTPStatus.OK, application.body_audio_bridge())
                     return
+                if path == "/api/audio/volume":
+                    try:
+                        with url_request.urlopen("http://127.0.0.1:8088/api/audio_controls", timeout=3.0) as response: settings = json.loads(response.read(16384).decode("utf-8"))
+                    except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError): settings = {}
+                    self._json(HTTPStatus.OK, {"ok": True, "volume": settings.get("tts_volume", settings.get("volume", settings.get("speaker_volume"))), "confirmed_at": time.time(), "source": "Robot Body", "raw": settings}); return
+                if path == "/api/audio/recordings/status":
+                    self._json(HTTPStatus.OK, application.body_recording_action("status", {}))
+                    return
+                if path in {"/api/audio/recordings/audio", "/api/audio/recordings/download"}:
+                    wav = application.body_recording_wav(path.endswith("download"))
+                    if wav is None:
+                        self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "No microphone WAV sample found yet."})
+                    else:
+                        body, ctype = wav; self._send(HTTPStatus.OK, body, ctype, extra_headers={"Content-Disposition": 'attachment; filename="bx1_mic_test.wav"'} if path.endswith("download") else {})
+                    return
                 if path == "/api/audio/speech-scan":
                     self._json(HTTPStatus.OK, application.body_speech_scan())
                     return
@@ -1010,6 +1045,8 @@ class ManagementServer:
                     if path == "/api/runtime/modules/reload":
                         self._json(HTTPStatus.OK, application.modules.reload())
                         return
+                    if path.startswith("/api/audio/recordings/"):
+                        action = path.rsplit("/", 1)[-1]; result = application.body_recording_action(action, body); self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result); return
                     if path == "/api/runtime/modules/clear-faults":
                         self._json(HTTPStatus.OK, application.modules.clear_faults())
                         return
@@ -1033,6 +1070,12 @@ class ManagementServer:
                         result = application.update_body_audio_bridge(body)
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
+                    if path == "/api/audio/volume":
+                        value = max(0, min(100, int(float(body.get("volume", body.get("tts_volume", 80)))))); req = request.Request("http://127.0.0.1:8088/api/audio_controls", data=json.dumps({"tts_volume": value}).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"});
+                        try:
+                            with request.urlopen(req, timeout=4.0) as response: result = json.loads(response.read(16384).decode("utf-8"))
+                        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc: result = {"ok": False, "error": str(exc)[:200]}
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, {**result, "volume": value}); return
                     if path == "/api/audio/speech-test":
                         result = application.body_speech_test()
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
