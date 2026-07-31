@@ -916,6 +916,10 @@ class BX1RobotBodyService:
         )
         self.last_mic_test_wav = str(Path(tempfile.gettempdir()) / "bx1_mic_test.wav")
         self.manual_retained_recordings: Dict[str, str] = {}
+        self.loopback_lock = threading.Lock()
+        self.loopback_cancel = threading.Event()
+        self.loopback_state: Dict[str, Any] = {"state": "ready", "capture_id": "", "error_code": "", "error": ""}
+        self.loopback_wav = ""
         self._mic_devices_cache: Dict[str, Any] = {"ok": False, "devices": []}
         self._mic_devices_cache_time = 0.0
         self.camera = CameraCapture(CameraConfig(
@@ -6379,6 +6383,153 @@ class BX1RobotBodyService:
             except OSError: pass
         self.manual_retained_recordings.clear()
         return {"ok": True, "removed": removed}
+
+    def web_loopback_status(self) -> Dict[str, Any]:
+        return {"ok": True, "loopback": dict(self.loopback_state), "filename": self.loopback_wav if Path(self.loopback_wav).is_file() else ""}
+
+    def web_loopback_test(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Run an isolated speaker-to-microphone diagnostic.
+
+        This deliberately uses the existing Body capture lock and playback
+        lifecycle. It never enters the voice command worker or conversation.
+        """
+        if not self.loopback_lock.acquire(blocking=False):
+            return {"ok": False, "state": "failed", "error_code": "already_running", "error": "A loopback test is already running."}
+        phrase_value = data.get("expected_phrase")
+        phrase = str(phrase_value or "").strip()
+        if not phrase:
+            self.loopback_lock.release()
+            return {"ok": False, "state": "failed", "error_code": "missing_phrase", "error": "Expected phrase is required.", "field": "expected_phrase", "received_value": phrase_value}
+        try:
+            volume_value = data.get("speaker_volume", self.cfg.get("tts_volume", 80))
+            post_roll_value = data.get("post_roll_seconds", data.get("post_roll_s", 1.0))
+            volume = max(0, min(100, int(float(volume_value))))
+            post_roll = max(0.0, min(5.0, float(post_roll_value)))
+        except (TypeError, ValueError, OverflowError):
+            self.loopback_lock.release()
+            return {"ok": False, "state": "failed", "error_code": "invalid_parameters", "error": "Speaker volume and post-roll must be numeric.", "field": "speaker_volume or post_roll_seconds"}
+        capture_id = f"loopback-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+        part = Path(tempfile.gettempdir()) / f".{capture_id}.part.wav"
+        target = Path(tempfile.gettempdir()) / f"{capture_id}.wav"
+        with self.loopback_lock:
+            self.loopback_cancel.clear()
+            self.loopback_wav = ""
+            self.loopback_state = {"state": "preparing", "capture_id": capture_id, "expected_phrase": phrase,
+                                   "speaker_volume": volume, "post_roll_s": post_roll, "error_code": "", "error": "",
+                                   "started_at": now_iso()}
+        old_volume = self.cfg.get("tts_volume", 80)
+        monitor_was_running = bool(self.mic_monitor.is_running())
+        got_capture_lock = False
+        capture_report: Dict[str, Any] = {}
+        playback_report: Dict[str, Any] = {}
+        try:
+            self.manual_audio_capture_requested.set()
+            got_capture_lock = self.audio_capture_lock.acquire(timeout=4.0)
+            if not got_capture_lock:
+                raise RuntimeError("microphone_handover_timeout")
+            if monitor_was_running:
+                self.mic_monitor.stop()
+                time.sleep(0.15)
+            # Include pre-roll before playback and a bounded post-roll after it.
+            capture_seconds = max(2.0, min(30.0, self.estimate_speech_guard_s(phrase, 1.2) + post_roll + 0.5))
+            self.loopback_state.update({"state": "capturing", "capture_seconds": capture_seconds})
+            capture_done = threading.Event()
+            def capture() -> None:
+                nonlocal capture_report
+                try:
+                    capture_report = record_microphone_sample(
+                        part, device=str(self.cfg.get("mic_device", "default")),
+                        sample_rate=int(self.cfg.get("sample_rate", 16000)), seconds=capture_seconds,
+                        channels=int(self.cfg.get("mic_channels", 1)), cancel_event=self.loopback_cancel,
+                    )
+                finally:
+                    capture_done.set()
+            thread = threading.Thread(target=capture, name="bx1-loopback-capture", daemon=True)
+            thread.start()
+            time.sleep(0.4)  # pre-roll before the speaker is driven
+            self.loopback_state["state"] = "playing"
+            self.cfg["tts_volume"] = volume
+            try:
+                self.tts.update_config(self.build_audio_config())
+            except Exception:
+                pass
+            playback_done = threading.Event()
+            def play_phrase() -> None:
+                nonlocal playback_report
+                try: playback_report = self.web_test_speech(phrase) or {"ok": True, "message": "speech test completed"}
+                finally: playback_done.set()
+            threading.Thread(target=play_phrase, name="bx1-loopback-playback", daemon=True).start()
+            if not playback_done.wait(timeout=max(8.0, self.estimate_speech_guard_s(phrase, 1.0) + 6.0)):
+                try: self.web_stop_speaking()
+                except Exception: pass
+                raise RuntimeError("speaker_playback_timeout")
+            if playback_report and not playback_report.get("ok", True):
+                raise RuntimeError(str(playback_report.get("message") or "speaker_playback_failed"))
+            self.loopback_state["state"] = "transcribing"
+            capture_done.wait(timeout=capture_seconds + 4.0)
+            if not capture_report.get("ok"):
+                raise RuntimeError(str(capture_report.get("error") or capture_report.get("stderr") or "microphone_capture_failed"))
+            with wave.open(str(part), "rb") as wav:
+                if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth(), wav.getnframes()) != (16000, 1, 2, wav.getnframes()) or wav.getnframes() <= 0:
+                    raise RuntimeError("invalid_loopback_wav")
+            os.replace(part, target)
+            self.loopback_wav = str(target)
+            audio_bytes = target.read_bytes()
+            stt_result = self._apply_primary_stt({"_submitted_wav_bytes": audio_bytes, "captured_at": now_iso(), "capture_method": "loopback"}, source="loopback", stt_engine=self.stt)
+            stt_state = "completed" if bool(stt_result.get("accepted")) or bool(stt_result.get("text")) else "stt_unavailable"
+            self.loopback_state.update({"state": stt_state, "recognised_phrase": str(stt_result.get("text") or ""),
+                                        "stt": {k: v for k, v in stt_result.items() if not k.startswith("_")},
+                                        "playback": playback_report, "completed_at": now_iso(), "duration_s": capture_report.get("actual_duration_s")})
+            return {"ok": True, "state": stt_state, "capture_id": capture_id, "filename": str(target), "expected_phrase": phrase,
+                    "recognised_phrase": str(stt_result.get("text") or ""), "stt": self.loopback_state.get("stt", {}), "playback": playback_report}
+        except Exception as exc:
+            code = str(exc).split(":", 1)[0] or "loopback_failed"
+            self.loopback_state.update({"state": "failed", "error_code": code, "error": str(exc)[:240], "playback": playback_report, "capture": capture_report})
+            try: part.unlink(missing_ok=True)
+            except OSError: pass
+            return {"ok": False, "state": "failed", "capture_id": capture_id, "error_code": code, "error": str(exc)[:240], "playback": playback_report}
+        finally:
+            self.cfg["tts_volume"] = old_volume
+            try: self.tts.update_config(self.build_audio_config())
+            except Exception: pass
+            if got_capture_lock:
+                self.audio_capture_lock.release()
+            self.manual_audio_capture_requested.clear()
+            if monitor_was_running:
+                try:
+                    self._refresh_mic_monitor_settings(); self.mic_monitor.start()
+                except Exception: pass
+            self.loopback_lock.release()
+
+    def web_loopback_action(self, action: str) -> Dict[str, Any]:
+        if action == "cancel":
+            self.loopback_cancel.set()
+            self.manual_audio_capture_requested.set()
+            try: self.web_stop_speaking()
+            except Exception: pass
+            self.loopback_state.update({"state": "failed", "error_code": "cancelled", "error": "Loopback test cancelled."})
+            return {"ok": True, "state": "failed", "error_code": "cancelled"}
+        if action == "delete":
+            path = Path(self.loopback_wav) if self.loopback_wav else None
+            if path and path.is_file(): path.unlink(missing_ok=True)
+            self.loopback_wav = ""; self.loopback_state = {"state": "ready", "capture_id": "", "error_code": "", "error": ""}
+            return {"ok": True, "state": "ready"}
+        if action in {"play", "download"}:
+            if not self.loopback_wav or not Path(self.loopback_wav).is_file(): return {"ok": False, "error": "No completed loopback capture."}
+            if action == "play": return {"ok": True, "playback": self.play_body_audio_file(self.loopback_wav, text="loopback playback", tag="loopback", backend="loopback")}
+            return {"ok": True, "filename": self.loopback_wav}
+        if action == "save":
+            if not self.loopback_wav or not Path(self.loopback_wav).is_file(): return {"ok": False, "error": "No completed loopback capture."}
+            recording_id = f"loopback-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+            target = Path(tempfile.gettempdir()) / f"bx1_manual_recording_{recording_id}.wav"
+            shutil.copyfile(self.loopback_wav, target); self.manual_retained_recordings[recording_id] = str(target)
+            return {"ok": True, "recording_id": recording_id, "filename": str(target), "saved_to_speech_learning": True}
+        if action == "stt":
+            if not self.loopback_wav or not Path(self.loopback_wav).is_file(): return {"ok": False, "error": "No completed loopback capture."}
+            stt = self._apply_primary_stt({"_submitted_wav_bytes": Path(self.loopback_wav).read_bytes(), "captured_at": now_iso(), "capture_method": "loopback"}, source="loopback", stt_engine=self.stt)
+            self.loopback_state.update({"state": "completed", "recognised_phrase": str(stt.get("text") or ""), "stt": stt})
+            return {"ok": True, "state": "completed", "stt": stt}
+        return {"ok": False, "error": "unsupported_loopback_action"}
 
     def web_mic_stt_status(self, data: Dict[str, Any]) -> Dict[str, Any]:
         model_path = str(data.get("vosk_model_path", self.cfg.get("vosk_model_path", "models/vosk-model-small-en-us-0.15"))).strip()

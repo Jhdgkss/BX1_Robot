@@ -1584,7 +1584,7 @@ def set_alsa_capture_volume(percent: int | float | str, control: str = "Capture"
     return {"ok": False, "error": "no ALSA capture control accepted the requested volume", "percent": pct, "attempts": attempts}
 
 
-def record_microphone_sample(filename: str | os.PathLike, device: str = "default", sample_rate: int = 16000, seconds: float = 5.0, channels: int = 1) -> dict:
+def record_microphone_sample(filename: str | os.PathLike, device: str = "default", sample_rate: int = 16000, seconds: float = 5.0, channels: int = 1, cancel_event: Any = None) -> dict:
     exe = shutil.which("arecord")
     if not exe:
         return {"ok": False, "error": "arecord not found"}
@@ -1602,14 +1602,25 @@ def record_microphone_sample(filename: str | os.PathLike, device: str = "default
     proc = None
     try:
         proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        try:
-            stdout, stderr = proc.communicate(timeout=requested + 3.0)
-        except subprocess.TimeoutExpired:
+        deadline = started + requested + 3.0
+        while proc.poll() is None:
+            if cancel_event is not None and cancel_event.is_set():
+                proc.terminate()
+                stdout, stderr = proc.communicate(timeout=2.0)
+                return {"ok": False, "cancelled": True, "error": "capture cancelled", "state": "cancelled", "command": cmd, "returncode": proc.returncode, "stdout": (stdout or "")[-1000:], "stderr": (stderr or "")[-1000:], "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(time.monotonic() - started, 3)}
+            if time.monotonic() >= deadline:
+                break
+            try:
+                proc.wait(timeout=0.1)
+            except subprocess.TimeoutExpired:
+                continue
+        if proc.poll() is None:
             proc.terminate()
             try: stdout, stderr = proc.communicate(timeout=2.0)
             except subprocess.TimeoutExpired:
                 proc.kill(); stdout, stderr = proc.communicate()
             return {"ok": False, "error": "capture watchdog exceeded requested duration", "state": "failed", "command": cmd, "returncode": proc.returncode, "stdout": (stdout or "")[-1000:], "stderr": (stderr or "")[-1000:], "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(time.monotonic() - started, 3)}
+        stdout, stderr = proc.communicate()
         elapsed = time.monotonic() - started
         report = {"ok": proc.returncode == 0, "command": cmd, "returncode": proc.returncode, "stdout": (stdout or "")[-1000:], "stderr": (stderr or "")[-1000:], "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(elapsed, 3), "state": "complete" if proc.returncode == 0 else "failed"}
         if proc.returncode == 0:

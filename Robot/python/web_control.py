@@ -5,6 +5,7 @@ import html
 import re
 import threading
 import traceback
+import tempfile
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Dict, Optional
@@ -399,6 +400,18 @@ class WebControlServer:
                 if path == "/api/mic_sample_info":
                     self._json(200, service.web_mic_sample_info())
                     return
+                if path == "/api/loopback/status":
+                    self._json(200, service.web_loopback_status())
+                    return
+                if path in {"/api/loopback/audio", "/api/loopback/download"}:
+                    info = service.web_loopback_status(); filename = str(info.get("filename") or "")
+                    sample = Path(filename)
+                    if sample.is_file() and sample.parent == Path(tempfile.gettempdir()):
+                        body = sample.read_bytes(); self.send_response(200); self.send_header("Content-Type", "audio/wav"); self.send_header("Content-Length", str(len(body))); self.send_header("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+                        if path.endswith("download"): self.send_header("Content-Disposition", f'attachment; filename="{sample.name}"')
+                        self.end_headers(); self.wfile.write(body)
+                    else: self._json(404, {"ok": False, "error": "No completed loopback capture."})
+                    return
                 if path in {"/api/stt_audio/raw.wav", "/api/stt_audio/filtered.wav", "/api/stt_audio/submitted.wav"}:
                     kind = {
                         "/api/stt_audio/raw.wav": "raw",
@@ -559,6 +572,13 @@ class WebControlServer:
                         self._json(200, service.web_keep_mic_test(True)); return
                     if path == "/api/mic_delete_recording":
                         self._json(200, service.web_delete_mic_test()); return
+                    if path == "/api/loopback/test":
+                        result = service.web_loopback_test(data)
+                        self._json(200 if result.get("ok") else 400, result); return
+                    if path.startswith("/api/loopback/"):
+                        action = path.rsplit("/", 1)[-1]
+                        result = service.web_loopback_action(action)
+                        self._json(200 if result.get("ok") else 400, result); return
                     if path == "/api/mic_stt_status":
                         result = service.web_mic_stt_status(data)
                         self._json(200 if result.get("ok") else 400, result)

@@ -30,8 +30,8 @@ from bx1_runtime import ModuleManager
 from hardware_bridge import BX1HardwareBridge
 
 
-RELEASE_VERSION = "0.11.0-mcu-foundation"
-RELEASE_TAG = "BX1_OS_v0.11.0_mcu_foundation"
+RELEASE_VERSION = "0.10.2-stt-loopback"
+RELEASE_TAG = "BX1_OS_v0.10.2_stt_loopback"
 INTERFACE_ID = "bx1-os-management"
 STATIC_ROOT = Path(__file__).resolve().parent / "static"
 DEFAULT_CONFIG = Path(
@@ -544,10 +544,18 @@ class ManagementApplication:
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:240], "state": "disconnected"}
 
-    def _body_post_json(self, path: str, payload: Mapping[str, Any]) -> Dict[str, Any]:
+    def _body_post_json(self, path: str, payload: Mapping[str, Any], timeout: float = 8.0) -> Dict[str, Any]:
         try:
             req = request.Request("http://127.0.0.1:8088" + path, data=json.dumps(dict(payload)).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
-            with request.urlopen(req, timeout=8.0) as response: return json.loads(response.read(65536).decode("utf-8"))
+            with request.urlopen(req, timeout=timeout) as response: return json.loads(response.read(65536).decode("utf-8"))
+        except error.HTTPError as exc:
+            try:
+                body = json.loads(exc.read(65536).decode("utf-8"))
+                body_map = dict(body) if isinstance(body, Mapping) else {"error": str(body)}
+                body_map["http_status"] = exc.code
+                return body_map
+            except (ValueError, OSError):
+                return {"ok": False, "error_code": "body_http_error", "error": f"Robot Body returned HTTP {exc.code}", "http_status": exc.code}
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:240]}
 
@@ -556,6 +564,24 @@ class ManagementApplication:
             with request.urlopen("http://127.0.0.1:8088/api/mic_sample.wav" + ("?download=1" if download else ""), timeout=4.0) as response:
                 return response.read(12 * 1024 * 1024), "audio/wav"
         except (error.URLError, TimeoutError, OSError):
+            return None
+
+    def body_loopback(self, action: str, payload: Mapping[str, Any] | None = None) -> Dict[str, Any]:
+        path = "/api/loopback/test" if action == "test" else f"/api/loopback/{action}"
+        return self._body_post_json(path, payload or {}, timeout=45.0 if action == "test" else 8.0)
+
+    def body_loopback_status(self) -> Dict[str, Any]:
+        try:
+            with request.urlopen("http://127.0.0.1:8088/api/loopback/status", timeout=2.0) as response:
+                return json.loads(response.read(16384).decode("utf-8"))
+        except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+            return {"ok": False, "error": str(exc)[:240]}
+
+    def body_loopback_wav(self, download: bool = False) -> Optional[Tuple[bytes, str]]:
+        try:
+            with request.urlopen(f"http://127.0.0.1:8088/api/loopback/{'download' if download else 'audio'}", timeout=5.0) as response:
+                return response.read(8 * 1024 * 1024), "audio/wav"
+        except (error.HTTPError, error.URLError, TimeoutError, OSError):
             return None
 
     def touchscreen_status(self) -> Dict[str, Any]:
@@ -893,6 +919,14 @@ class ManagementServer:
                     else:
                         body, ctype = wav; self._send(HTTPStatus.OK, body, ctype, extra_headers={"Content-Disposition": 'attachment; filename="bx1_mic_test.wav"'} if path.endswith("download") else {})
                     return
+                if path == "/api/audio/loopback/status":
+                    self._json(HTTPStatus.OK, application.body_loopback_status()); return
+                if path in {"/api/audio/loopback/audio", "/api/audio/loopback/download"}:
+                    wav = application.body_loopback_wav(path.endswith("download"))
+                    if wav is None: self._json(HTTPStatus.NOT_FOUND, {"ok": False, "error": "No completed loopback capture."})
+                    else:
+                        body, ctype = wav; self._send(HTTPStatus.OK, body, ctype, extra_headers={"Cache-Control": "no-store", "Content-Disposition": 'attachment; filename="bx1_loopback.wav"'} if path.endswith("download") else {"Cache-Control": "no-store"})
+                    return
                 if path == "/api/audio/speech-scan":
                     self._json(HTTPStatus.OK, application.body_speech_scan())
                     return
@@ -1114,6 +1148,12 @@ class ManagementServer:
                         result = application.body_speech_test()
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
+                    if path == "/api/audio/loopback/test":
+                        result = application.body_loopback("test", body)
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result); return
+                    if path.startswith("/api/audio/loopback/"):
+                        result = application.body_loopback(path.rsplit("/", 1)[-1], body)
+                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result); return
                     if path == "/api/voice/typed-test":
                         typed = str(body.get("text") or "")
                         application.live_voice_console.add("manual", "John", typed)
