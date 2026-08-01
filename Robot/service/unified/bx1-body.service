@@ -1,0 +1,24 @@
+[Unit]
+Description=BX1 Robot Body
+After=network-online.target
+Wants=network-online.target
+ConditionPathIsDirectory=/home/arduino/BX1/current/body
+
+[Service]
+Type=simple
+User=arduino
+Group=arduino
+WorkingDirectory=/home/arduino/BX1/current/body
+EnvironmentFile=-/home/arduino/BX1/config/bx1.env
+Environment=BX1_ROOT=/home/arduino/BX1
+Environment=BX1_BODY_CONFIG=/home/arduino/BX1/config/config.json
+Environment=BX1_RUNTIME_DIR=/home/arduino/BX1/runtime
+Environment=BX1_LOG_DIR=/home/arduino/BX1/logs
+ExecStart=/home/arduino/BX1/current/body/tools/run_robot_body.sh
+Restart=on-failure
+RestartSec=3
+NoNewPrivileges=true
+ReadWritePaths=/home/arduino/BX1/config /home/arduino/BX1/runtime /home/arduino/BX1/logs
+
+[Install]
+WantedBy=multi-user.target

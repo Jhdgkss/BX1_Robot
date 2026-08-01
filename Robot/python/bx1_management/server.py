@@ -239,6 +239,22 @@ class ManagementApplication:
             probe_timeout=float(voice_config.get("body_probe_timeout_seconds", 5.0)),
             request_timeout=float(voice_config.get("body_request_timeout_seconds", 240.0)),
         )
+        observer = dict(self.config.get("hardware_observer", {}))
+        configured_candidates = observer.get("robot_body_endpoint_candidates") or observer.get("body_endpoint_candidates") or []
+        self._body_candidates = list(dict.fromkeys([
+            "http://192.168.68.54:8088",
+            "http://100.72.130.12:8088",
+            *[str(item).rstrip("/") for item in configured_candidates if str(item).strip()],
+            str(observer.get("robot_body_url", "http://127.0.0.1:8088")).rstrip("/"),
+        ]))
+        self._body_preferred_url = self._body_candidates[0] if self._body_candidates else ""
+        self._body_active_url = self._body_candidates[0] if self._body_candidates else ""
+        self._body_last_failure = ""
+        self._body_last_latency_ms = None
+        self._body_probe_at = 0.0
+        self._body_last_success_at = ""
+        self._body_local_probe: Dict[str, Any] = {"state": "not_probed"}
+        self._body_fallback_probe: Dict[str, Any] = {"state": "not_probed"}
         self.live_voice_console = SharedLiveVoiceConsole(limit=200)
         self.speech_learning = SpeechLearningStore(Path(self.config.get("runtime_dir", "/home/arduino/BX1_OS/runtime")) / "speech-learning.json")
         self.mcu_bridge = BX1HardwareBridge()
@@ -259,6 +275,57 @@ class ManagementApplication:
             },
             source="management.registration",
         )
+
+    def _body_url(self, path: str, *, probe: bool = True, timeout: float = 1.2) -> str:
+        """Resolve Body local-first with Tailscale fallback; never retries a POST."""
+        now = time.monotonic()
+        if not probe and self._body_active_url:
+            return self._body_active_url.rstrip("/") + path
+        if self._body_active_url and (now - self._body_probe_at) < 10.0:
+            return self._body_active_url.rstrip("/") + path
+        last = ""
+        for candidate in self._body_candidates:
+            started = time.perf_counter()
+            try:
+                with request.urlopen(candidate.rstrip("/") + "/api/status", timeout=timeout) as response:
+                    if response.status >= 500:
+                        raise RuntimeError(f"HTTP {response.status}")
+                self._body_active_url = candidate
+                self._body_last_latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
+                self._body_last_failure = ""
+                self._body_last_success_at = time.strftime("%Y-%m-%dT%H:%M:%S%z")
+                probe = {"state": "available", "latency_ms": self._body_last_latency_ms, "at": self._body_last_success_at}
+                if "192.168." in candidate or "127.0.0.1" in candidate:
+                    self._body_local_probe = probe
+                elif "100.72.130.12" in candidate:
+                    self._body_fallback_probe = probe
+                self._body_probe_at = now
+                return candidate.rstrip("/") + path
+            except Exception as exc:
+                last = str(exc)
+                probe = {"state": "unavailable", "error": last}
+                if "192.168." in candidate or "127.0.0.1" in candidate:
+                    self._body_local_probe = probe
+                elif "100.72.130.12" in candidate:
+                    self._body_fallback_probe = probe
+        self._body_probe_at = now
+        self._body_last_failure = last or "no_body_endpoint"
+        return self._body_active_url.rstrip("/") + path
+
+    def body_endpoint_status(self) -> Dict[str, Any]:
+        active = self._body_active_url or ""
+        route = "local" if ("192.168." in active or "127.0.0.1" in active) else "tailscale" if "100.72.130.12" in active else "unavailable"
+        return {
+            "preferred_endpoint": self._body_preferred_url,
+            "active_endpoint": active if not self._body_last_failure else active,
+            "active_route": route if active else "unavailable",
+            "candidates": list(self._body_candidates),
+            "local_probe": dict(self._body_local_probe),
+            "fallback_probe": dict(self._body_fallback_probe),
+            "latency_ms": self._body_last_latency_ms,
+            "last_failure_reason": self._body_last_failure,
+            "last_successful_connection": self._body_last_success_at,
+        }
 
     @classmethod
     def from_config_file(cls, config_path: Path) -> "ManagementApplication":
@@ -314,6 +381,7 @@ class ManagementApplication:
                 "voice_vertical_slice": {
                     "schema": "bx1.voice.vertical_slice.v1",
                     "brain_endpoint": endpoint,
+                    "body_endpoint": self.body_endpoint_status(),
                     "timeline": self.voice_timeline.snapshot(),
                 },
             },
@@ -450,7 +518,7 @@ class ManagementApplication:
         """High-level, loopback-only Body request; Body remains the hardware authority."""
         payload = {key: value.get(key) for key in ("module_id", "target", "colour", "effect")}
         try:
-            req = request.Request("http://127.0.0.1:8088/api/bx1-os/led-status", data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            req = request.Request(self._body_url("/api/bx1-os/led-status"), data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
             with request.urlopen(req, timeout=1.5) as response:
                 result = json.loads(response.read(4096).decode("utf-8"))
             return dict(result) if isinstance(result, Mapping) and bool(result.get("ok")) else {"ok": False, "state": "unavailable", "reason": "Body LED capability unavailable"}
@@ -460,7 +528,7 @@ class ManagementApplication:
     def body_audio_bridge(self) -> Dict[str, Any]:
         """Fetch Body-owned, metadata-only audio diagnostics without opening ALSA."""
         try:
-            with request.urlopen("http://127.0.0.1:8088/api/bx1-os/audio-bridge", timeout=1.2) as response:
+            with request.urlopen(self._body_url("/api/bx1-os/audio-bridge"), timeout=1.2) as response:
                 payload = json.loads(response.read(16384).decode("utf-8"))
             result = dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_audio_metadata"}
             self.live_voice_console.observe_body(result)
@@ -472,9 +540,37 @@ class ManagementApplication:
             result["receiver"] = self.live_voice_console.snapshot()["receiver"]
             return result
 
+    @staticmethod
+    def _flatten_body_audio_controls(payload: Mapping[str, Any]) -> Dict[str, Any]:
+        """Expose the Body speaker controller as a stable Management contract."""
+        source = dict(payload)
+        controls = source.get("controls") if isinstance(source.get("controls"), Mapping) else source
+        speaker = controls.get("speaker_controller") if isinstance(controls.get("speaker_controller"), Mapping) else {}
+        effective = speaker.get("effective_volume_percent")
+        requested = speaker.get("requested_volume_percent")
+        volume = controls.get("speaker_volume", effective)
+        return {
+            "ok": bool(source.get("ok", True)),
+            "volume": volume,
+            "speaker_volume": volume,
+            "requested_volume_percent": requested,
+            "effective_volume_percent": effective,
+            "muted": speaker.get("muted", controls.get("speaker_muted")),
+            "physical_playback_device": speaker.get("playback_device"),
+            "mixer_card": speaker.get("mixer_card"),
+            "mixer_control": speaker.get("mixer_control"),
+            "apply_ok": speaker.get("apply_ok"),
+            "last_error": speaker.get("last_error", ""),
+            "last_change_at": speaker.get("last_change_at", ""),
+            "output": controls.get("output", {}),
+            "source": "Robot Body",
+            "confirmed_at": time.time(),
+            "raw": source,
+        }
+
     def body_speech_scan(self) -> Dict[str, Any]:
         try:
-            with request.urlopen("http://127.0.0.1:8088/api/speech_scan", timeout=2.0) as response:
+            with request.urlopen(self._body_url("/api/speech_scan"), timeout=2.0) as response:
                 payload = json.loads(response.read(32768).decode("utf-8"))
             return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_speech_scan"}
         except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
@@ -484,7 +580,7 @@ class ManagementApplication:
         """Run one Body-owned calibration utterance; never proxy WAV data."""
         try:
             req = request.Request(
-                "http://127.0.0.1:8088/api/stt_once", data=b'{"send":false}', method="POST",
+                self._body_url("/api/stt_once"), data=b'{"send":false}', method="POST",
                 headers={"Content-Type": "application/json"},
             )
             with request.urlopen(req, timeout=25.0) as response:
@@ -524,7 +620,7 @@ class ManagementApplication:
 
     def body_stop_speaking(self) -> Dict[str, Any]:
         try:
-            req = request.Request("http://127.0.0.1:8088/api/stop_speaking", data=b"{}", method="POST", headers={"Content-Type":"application/json"})
+            req = request.Request(self._body_url("/api/stop_speaking"), data=b"{}", method="POST", headers={"Content-Type":"application/json"})
             with request.urlopen(req, timeout=3.0) as response: return json.loads(response.read(8192).decode("utf-8"))
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:200]}
@@ -539,14 +635,14 @@ class ManagementApplication:
         body = dict(payload)
         if action == "start": body["seconds"] = max(1, min(30, int(body.get("seconds", 5))))
         try:
-            req = request.Request("http://127.0.0.1:8088" + path, data=json.dumps(body).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"})
+            req = request.Request(self._body_url(path), data=json.dumps(body).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"})
             with request.urlopen(req, timeout=max(8, int(body.get("seconds", 5)) + 8)) as response: return json.loads(response.read(65536).decode("utf-8"))
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:240], "state": "disconnected"}
 
     def _body_post_json(self, path: str, payload: Mapping[str, Any], timeout: float = 8.0) -> Dict[str, Any]:
         try:
-            req = request.Request("http://127.0.0.1:8088" + path, data=json.dumps(dict(payload)).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            req = request.Request(self._body_url(path), data=json.dumps(dict(payload)).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
             with request.urlopen(req, timeout=timeout) as response: return json.loads(response.read(65536).decode("utf-8"))
         except error.HTTPError as exc:
             try:
@@ -561,25 +657,25 @@ class ManagementApplication:
 
     def body_recording_wav(self, download: bool = False) -> Optional[Tuple[bytes, str]]:
         try:
-            with request.urlopen("http://127.0.0.1:8088/api/mic_sample.wav" + ("?download=1" if download else ""), timeout=4.0) as response:
+            with request.urlopen(self._body_url("/api/mic_sample.wav") + ("?download=1" if download else ""), timeout=4.0) as response:
                 return response.read(12 * 1024 * 1024), "audio/wav"
         except (error.URLError, TimeoutError, OSError):
             return None
 
     def body_loopback(self, action: str, payload: Mapping[str, Any] | None = None) -> Dict[str, Any]:
         path = "/api/loopback/test" if action == "test" else f"/api/loopback/{action}"
-        return self._body_post_json(path, payload or {}, timeout=45.0 if action == "test" else 8.0)
+        return self._body_post_json(path, payload or {}, timeout=8.0)
 
     def body_loopback_status(self) -> Dict[str, Any]:
         try:
-            with request.urlopen("http://127.0.0.1:8088/api/loopback/status", timeout=2.0) as response:
+            with request.urlopen(self._body_url("/api/loopback/status"), timeout=2.0) as response:
                 return json.loads(response.read(16384).decode("utf-8"))
         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
             return {"ok": False, "error": str(exc)[:240]}
 
     def body_loopback_wav(self, download: bool = False) -> Optional[Tuple[bytes, str]]:
         try:
-            with request.urlopen(f"http://127.0.0.1:8088/api/loopback/{'download' if download else 'audio'}", timeout=5.0) as response:
+            with request.urlopen(self._body_url(f"/api/loopback/{'download' if download else 'audio'}"), timeout=5.0) as response:
                 return response.read(8 * 1024 * 1024), "audio/wav"
         except (error.HTTPError, error.URLError, TimeoutError, OSError):
             return None
@@ -611,9 +707,27 @@ class ManagementApplication:
             return {"ok": False, "state": "pending", "error": str(exc)[:200], "vocabulary_revision": snapshot.get("vocabulary_revision", 0)}
 
     def update_body_audio_bridge(self, values: Mapping[str, Any]) -> Dict[str, Any]:
-        payload = {"settings": dict(values.get("settings", values))}
+        settings = dict(values.get("settings", values))
+        # Operational mute/pause controls belong to the Body audio-controls
+        # authority; the bridge endpoint is configuration-only.
+        operational = {key: settings[key] for key in ("microphone_privacy_muted", "listening_paused", "speaker_muted", "tts_volume") if key in settings}
+        if operational:
+            try:
+                req = request.Request(self._body_url("/api/audio_controls"), data=json.dumps(operational).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+                with request.urlopen(req, timeout=3.0) as response:
+                    result = json.loads(response.read(16384).decode("utf-8"))
+                if isinstance(result, Mapping) and result.get("ok") is False:
+                    return dict(result)
+                return dict(result) if isinstance(result, Mapping) else {"ok": False, "error": "invalid_body_audio_controls_response"}
+            except error.HTTPError as exc:
+                try: detail = json.loads(exc.read(16384).decode("utf-8"))
+                except (ValueError, OSError, json.JSONDecodeError): detail = {"error": f"Body rejected audio controls ({exc.code})"}
+                return {**(dict(detail) if isinstance(detail, Mapping) else {}), "ok": False, "http_status": exc.code}
+            except (error.URLError, TimeoutError, ValueError, OSError) as exc:
+                return {"ok": False, "error": "Body audio controls unavailable", "detail": str(exc)[:240]}
+        payload = {"settings": settings}
         try:
-            req = request.Request("http://127.0.0.1:8088/api/bx1-os/audio-bridge/settings", data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
+            req = request.Request(self._body_url("/api/bx1-os/audio-bridge/settings"), data=json.dumps(payload).encode("utf-8"), method="POST", headers={"Content-Type": "application/json"})
             with request.urlopen(req, timeout=3.0) as response:
                 value = json.loads(response.read(16384).decode("utf-8"))
             return dict(value) if isinstance(value, Mapping) else {"ok": False, "error": "invalid_body_audio_response"}
@@ -624,7 +738,7 @@ class ManagementApplication:
 
     def body_voice_settings(self) -> Dict[str, Any]:
         try:
-            with request.urlopen("http://127.0.0.1:8088/api/bx1-os/voice-settings/v1", timeout=2.0) as response:
+            with request.urlopen(self._body_url("/api/bx1-os/voice-settings/v1"), timeout=2.0) as response:
                 payload = json.loads(response.read(16384).decode("utf-8"))
             return dict(payload) if isinstance(payload, Mapping) else {"ok": False, "error": "invalid_body_voice_settings"}
         except (error.HTTPError, error.URLError, TimeoutError, ValueError, OSError) as exc:
@@ -633,7 +747,7 @@ class ManagementApplication:
     def update_body_voice_settings(self, values: Mapping[str, Any]) -> Dict[str, Any]:
         payload = {"settings": dict(values.get("settings", values))}
         try:
-            req = request.Request("http://127.0.0.1:8088/api/bx1-os/voice-settings/v1", data=json.dumps(payload).encode("utf-8"), method="PUT", headers={"Content-Type": "application/json"})
+            req = request.Request(self._body_url("/api/bx1-os/voice-settings/v1"), data=json.dumps(payload).encode("utf-8"), method="PUT", headers={"Content-Type": "application/json"})
             with request.urlopen(req, timeout=3.0) as response:
                 value = json.loads(response.read(16384).decode("utf-8"))
             return dict(value) if isinstance(value, Mapping) else {"ok": False, "error": "invalid_body_voice_settings_response"}
@@ -906,9 +1020,21 @@ class ManagementServer:
                     return
                 if path == "/api/audio/volume":
                     try:
-                        with url_request.urlopen("http://127.0.0.1:8088/api/audio_controls", timeout=3.0) as response: settings = json.loads(response.read(16384).decode("utf-8"))
-                    except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError): settings = {}
-                    self._json(HTTPStatus.OK, {"ok": True, "volume": settings.get("tts_volume", settings.get("volume", settings.get("speaker_volume"))), "confirmed_at": time.time(), "source": "Robot Body", "raw": settings}); return
+                        with url_request.urlopen(application._body_url("/api/audio_controls"), timeout=3.0) as response:
+                            settings = json.loads(response.read(16384).decode("utf-8"))
+                        value = application._flatten_body_audio_controls(settings if isinstance(settings, Mapping) else {})
+                        self._json(HTTPStatus.OK if value.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, value)
+                    except error.HTTPError as exc:
+                        try:
+                            detail = json.loads(exc.read(16384).decode("utf-8"))
+                        except (ValueError, OSError, json.JSONDecodeError):
+                            detail = {"error": f"Robot Body returned HTTP {exc.code}"}
+                        value = application._flatten_body_audio_controls(detail if isinstance(detail, Mapping) else {})
+                        value.update({"ok": False, "http_status": exc.code})
+                        self._json(HTTPStatus.BAD_GATEWAY, value)
+                    except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc:
+                        self._json(HTTPStatus.SERVICE_UNAVAILABLE, {"ok": False, "error": "Robot Body audio controls unavailable", "detail": str(exc)[:240]})
+                    return
                 if path == "/api/audio/recordings/status":
                     self._json(HTTPStatus.OK, application.body_recording_action("status", {}))
                     return
@@ -1139,18 +1265,24 @@ class ManagementServer:
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/audio/volume":
-                        value = max(0, min(100, int(float(body.get("volume", body.get("tts_volume", 80)))))); req = request.Request("http://127.0.0.1:8088/api/audio_controls", data=json.dumps({"tts_volume": value}).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"});
+                        value = max(0, min(100, int(float(body.get("volume", body.get("tts_volume", 80)))))); req = request.Request(application._body_url("/api/audio_controls"), data=json.dumps({"tts_volume": value}).encode("utf-8"), method="POST", headers={"Content-Type":"application/json"});
                         try:
                             with request.urlopen(req, timeout=4.0) as response: result = json.loads(response.read(16384).decode("utf-8"))
+                        except error.HTTPError as exc:
+                            try: result = json.loads(exc.read(16384).decode("utf-8"))
+                            except (ValueError, OSError, json.JSONDecodeError): result = {"ok": False, "error": f"Robot Body returned HTTP {exc.code}"}
+                            result = {**(result if isinstance(result, Mapping) else {}), "ok": False, "http_status": exc.code}
                         except (error.URLError, TimeoutError, OSError, ValueError, json.JSONDecodeError) as exc: result = {"ok": False, "error": str(exc)[:200]}
-                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, {**result, "volume": value}); return
+                        flattened = application._flatten_body_audio_controls(result if isinstance(result, Mapping) else {})
+                        flattened.update({"ok": bool(result.get("ok")) if isinstance(result, Mapping) else False, "volume": value, "requested_volume_percent": value})
+                        self._json(HTTPStatus.OK if flattened.get("ok") else HTTPStatus.BAD_REQUEST, flattened); return
                     if path == "/api/audio/speech-test":
                         result = application.body_speech_test()
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.SERVICE_UNAVAILABLE, result)
                         return
                     if path == "/api/audio/loopback/test":
                         result = application.body_loopback("test", body)
-                        self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result); return
+                        self._json(HTTPStatus.ACCEPTED if result.get("ok") and result.get("state") == "preparing" else (HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST), result); return
                     if path.startswith("/api/audio/loopback/"):
                         result = application.body_loopback(path.rsplit("/", 1)[-1], body)
                         self._json(HTTPStatus.OK if result.get("ok") else HTTPStatus.BAD_REQUEST, result); return

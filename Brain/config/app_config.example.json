@@ -69,6 +69,7 @@
   "api_enabled": true,
   "api_host": "0.0.0.0",
   "api_port": 8765,
+  "robot_endpoint_candidates": ["http://192.168.68.54:8088", "http://100.72.130.12:8088"],
   "api_key": "",
   "api_speak_replies": false,
   "api_allow_web": true,

@@ -46,9 +46,15 @@ class SpeakerActiveMicrophoneGate:
         self._emit("playback_finished")
         self._emit("echo_tail_started", duration_ms=int(tail * 1000))
 
-    def discard_frame(self, frame: Any = b"") -> bool:
+    def discard_frame(self, frame: Any = b"", *, force: bool = False) -> bool:
+        """Return whether a frame must be excluded from production capture.
+
+        ``force`` is used while the post-playback quiet dwell is still active:
+        the playback tail may have elapsed, but production listening must not
+        reopen until the Body has observed a quiet microphone.
+        """
         with self._lock:
-            suppressed = self._active or time.monotonic() < self._tail_until
+            suppressed = force or self._active or time.monotonic() < self._tail_until
             if suppressed:
                 self.discarded_frames += 1
                 try:

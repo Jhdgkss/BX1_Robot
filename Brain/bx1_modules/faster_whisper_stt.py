@@ -106,6 +106,9 @@ class FasterWhisperSTTService:
         self._last_text = ""
         self._vocabulary: Dict[str, Any] = {"revision": 0, "terms": [], "updated_at": "", "rejected_terms": []}
         self._preload_thread: Optional[threading.Thread] = None
+        self._preload_started_at = ""
+        self._preload_completed_at = ""
+        self._preload_error = ""
         self._package_available_cache: Optional[bool] = None
 
     @staticmethod
@@ -230,9 +233,13 @@ class FasterWhisperSTTService:
                 return
 
             def worker() -> None:
+                self._preload_started_at = self._now_iso()
                 try:
                     self.ensure_loaded()
+                    self._preload_completed_at = self._now_iso()
+                    self._preload_error = ""
                 except Exception as exc:
+                    self._preload_error = str(exc)
                     self.log(f"faster-whisper preload unavailable: {exc}")
 
             self._preload_thread = threading.Thread(
@@ -266,6 +273,11 @@ class FasterWhisperSTTService:
             "last_transcription_at": self._last_transcription_at,
             "last_latency_ms": self._last_latency_ms,
             "last_text": self._last_text,
+            "load_mode": "lazy_with_optional_startup_preload",
+            "preload_enabled": bool(self.cfg.get("stt_preload_on_start", True)),
+            "preload_started_at": self._preload_started_at,
+            "preload_completed_at": self._preload_completed_at,
+            "preload_error": self._preload_error,
         }
 
     @staticmethod

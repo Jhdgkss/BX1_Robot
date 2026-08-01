@@ -23,6 +23,10 @@ from pathlib import Path
 from typing import Any, Callable, Optional
 
 
+def _bx1_now_iso() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%S%z")
+
+
 @dataclass
 class AudioConfig:
     tts_enabled: bool = True
@@ -41,6 +45,8 @@ class AudioConfig:
     tts_volume: int = 80
     # ALSA output device used by TTS players. Use "default" or e.g. "plughw:1,0".
     tts_playback_device: str = "default"
+    tts_mixer_card: int = 1
+    tts_mixer_control: str = "Speaker"
     # Remote Brain App TTS service. Use this when the PC Brain App should generate
     # Dot.TTS audio and the UNO Q should only download/play the finished file.
     # This keeps the robot voice identical to the Brain App without running heavy
@@ -141,6 +147,57 @@ class AudioConfig:
     tts_fallback_to_espeak: bool = False
 
 
+class SpeakerController:
+    """Authoritative ALSA speaker state shared by normal and diagnostic playback."""
+    def __init__(self, playback_device: str = "plughw:CARD=Device,DEV=0", mixer_card: int = 1, mixer_control: str = "Speaker") -> None:
+        self.requested_volume_percent = 80
+        self.effective_volume_percent: Optional[int] = None
+        self.muted = False
+        self.playback_device = playback_device
+        self.mixer_card = int(mixer_card)
+        self.mixer_control = mixer_control
+        self.apply_ok = False
+        self.last_error = ""
+        self.last_change_at = ""
+        self._lock = threading.RLock()
+
+    def _amixer(self) -> Optional[str]:
+        return shutil.which("amixer")
+
+    def snapshot(self) -> dict[str, Any]:
+        with self._lock:
+            return {"requested_volume_percent": self.requested_volume_percent, "effective_volume_percent": self.effective_volume_percent,
+                    "muted": self.muted, "playback_device": self.playback_device, "mixer_card": self.mixer_card,
+                    "mixer_control": self.mixer_control, "apply_ok": self.apply_ok, "last_error": self.last_error,
+                    "last_change_at": self.last_change_at}
+
+    def _readback(self) -> Optional[int]:
+        exe = self._amixer()
+        if not exe: raise RuntimeError("amixer unavailable")
+        result = subprocess.run([exe, "-c", str(self.mixer_card), "get", self.mixer_control], capture_output=True, text=True, timeout=2, check=False)
+        if result.returncode != 0: raise RuntimeError((result.stderr or result.stdout or "amixer read failed").strip())
+        values = [int(x) for x in re.findall(r"\[(\d+)%\]", result.stdout)]
+        return values[0] if values else None
+
+    def apply(self, volume_percent: Optional[int] = None, muted: Optional[bool] = None) -> dict[str, Any]:
+        with self._lock:
+            if volume_percent is not None: self.requested_volume_percent = _bx1_normalised_volume(volume_percent)
+            if muted is not None: self.muted = bool(muted)
+            target = 0 if self.muted else self.requested_volume_percent
+            try:
+                exe = self._amixer()
+                if not exe: raise RuntimeError("amixer unavailable")
+                result = subprocess.run([exe, "-c", str(self.mixer_card), "set", self.mixer_control, f"{target}%"], capture_output=True, text=True, timeout=2, check=False)
+                if result.returncode != 0: raise RuntimeError((result.stderr or result.stdout or "amixer set failed").strip())
+                readback = self._readback()
+                if readback is None: raise RuntimeError("amixer returned no Speaker percentage")
+                self.effective_volume_percent = readback
+                self.apply_ok = True; self.last_error = ""; self.last_change_at = _bx1_now_iso()
+            except Exception as exc:
+                self.apply_ok = False; self.last_error = str(exc)
+            return self.snapshot()
+
+
 def _bx1_build_wav_mouth_profile(filename: str | os.PathLike, frame_s: float = 0.055) -> dict:
     """Return a compact RMS envelope for mouth LED animation.
 
@@ -203,6 +260,12 @@ class TextToSpeech:
     def __init__(self, cfg: AudioConfig) -> None:
         self.cfg = cfg
         self._last_volume: Optional[int] = None
+        self.speaker_controller = SpeakerController(
+            playback_device=str(getattr(cfg, "tts_playback_device", "plughw:CARD=Device,DEV=0") or "plughw:CARD=Device,DEV=0"),
+            mixer_card=int(getattr(cfg, "tts_mixer_card", 1) or 1),
+            mixer_control=str(getattr(cfg, "tts_mixer_control", "Speaker") or "Speaker"),
+        )
+        self.last_playback_report: dict[str, Any] = {}
         self._speak_queue: "queue.Queue[Optional[tuple[str, str]]]" = queue.Queue(maxsize=max(2, int(getattr(cfg, "tts_queue_max", 20) or 20)))
         self._worker_started = False
         self._worker_lock = threading.Lock()
@@ -226,6 +289,7 @@ class TextToSpeech:
 
     def update_config(self, cfg: AudioConfig) -> None:
         self.cfg = cfg
+        self.speaker_controller.playback_device = str(getattr(cfg, "tts_playback_device", self.speaker_controller.playback_device) or self.speaker_controller.playback_device)
         self.apply_volume(force=True)
 
     def clear_queue(self) -> None:
@@ -306,6 +370,7 @@ class TextToSpeech:
         except Exception:
             return
         volume = max(0, min(100, volume))
+        self.speaker_controller.apply(volume_percent=volume)
         if not force and self._last_volume == volume:
             return
         self._last_volume = volume
@@ -675,6 +740,7 @@ class TextToSpeech:
                 if on_playback_started is not None:
                     on_playback_started()
                 play = _bx1_play_file(player, filename, self.cfg.tts_volume, wav=wav, playback_device=self.cfg.tts_playback_device)
+                self.last_playback_report = dict(play)
             finally:
                 print(f"[audio] Reply playback finished: elapsed={time.perf_counter() - playback_started:.3f}s")
                 if emit_mouth_events:
@@ -1584,7 +1650,7 @@ def set_alsa_capture_volume(percent: int | float | str, control: str = "Capture"
     return {"ok": False, "error": "no ALSA capture control accepted the requested volume", "percent": pct, "attempts": attempts}
 
 
-def record_microphone_sample(filename: str | os.PathLike, device: str = "default", sample_rate: int = 16000, seconds: float = 5.0, channels: int = 1, cancel_event: Any = None) -> dict:
+def record_microphone_sample(filename: str | os.PathLike, device: str = "default", sample_rate: int = 16000, seconds: float = 5.0, channels: int = 1, cancel_event: Any = None, frame_sink: Optional[Callable[[bytes], None]] = None, stop_event: Any = None) -> dict:
     exe = shutil.which("arecord")
     if not exe:
         return {"ok": False, "error": "arecord not found"}
@@ -1597,6 +1663,46 @@ def record_microphone_sample(filename: str | os.PathLike, device: str = "default
     # forcibly terminate a wedged ALSA process instead of allowing a browser
     # request to remain in recording forever.
     requested = float(seconds)
+    if frame_sink is not None:
+        cmd = [exe, "-q", "-D", str(device or "default"), "-t", "raw", "-f", "S16_LE", "-r", str(rate), "-c", str(ch), "-"]
+        started = time.monotonic()
+        proc = None
+        raw = bytearray()
+        frame_bytes = max(2, int(rate * 0.02) * ch * 2)
+        try:
+            proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+            deadline = started + requested + 3.0
+            while time.monotonic() < deadline and proc.poll() is None:
+                if cancel_event is not None and cancel_event.is_set():
+                    proc.terminate()
+                    proc.communicate(timeout=2.0)
+                    return {"ok": False, "cancelled": True, "state": "cancelled", "error": "capture cancelled", "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(time.monotonic() - started, 3)}
+                if stop_event is not None and stop_event.is_set():
+                    break
+                block = proc.stdout.read(frame_bytes) if proc.stdout is not None else b""
+                if not block:
+                    break
+                raw.extend(block)
+                try:
+                    frame_sink(bytes(block))
+                except Exception:
+                    pass
+            if proc.poll() is None:
+                proc.terminate()
+            stdout, stderr = proc.communicate(timeout=2.0)
+            if not raw:
+                return {"ok": False, "error": "diagnostic capture returned no audio", "state": "failed", "filename": str(path), "requested_duration_s": requested}
+            _write_pcm16_wav(path, bytes(raw), rate, ch)
+            elapsed = time.monotonic() - started
+            report = {"ok": True, "command": cmd, "returncode": proc.returncode, "stdout": (stdout or b"")[-1000:].decode(errors="replace"), "stderr": (stderr or b"")[-1000:].decode(errors="replace"), "filename": str(path), "requested_duration_s": requested, "elapsed_duration_s": round(elapsed, 3), "actual_duration_s": round(len(raw) / float(rate * ch * 2), 3), "state": "complete"}
+            report["analysis"] = analyse_wav_file(path)
+            return report
+        except Exception as exc:
+            try:
+                if proc is not None and proc.poll() is None: proc.terminate()
+            except Exception:
+                pass
+            return {"ok": False, "error": str(exc), "state": "failed", "filename": str(path), "requested_duration_s": requested}
     cmd = [exe, "-D", str(device or "default"), "-t", "wav", "-f", "S16_LE", "-r", str(rate), "-c", str(ch), "-d", str(int(round(requested))), str(path)]
     started = time.monotonic()
     proc = None
@@ -1722,6 +1828,7 @@ def record_microphone_utterance(
     frame_ms: int = 20,
     cancel_event: Optional[threading.Event] = None,
     level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
+    frame_guard: Optional[Callable[[bytes], bool]] = None,
 ) -> dict[str, Any]:
     """Capture one natural utterance from ALSA using lightweight endpointing.
 
@@ -1812,6 +1919,36 @@ def record_microphone_utterance(
             if len(block) < frame_bytes:
                 block += b"\x00" * (frame_bytes - len(block))
             frame_level = _pcm16_level(block, software_gain_db=software_gain_db)
+            # The Body-owned speaker gate is evaluated on every frame, not
+            # after endpointing has produced a completed utterance. This
+            # prevents speaker audio from entering pre-roll, VAD or the STT
+            # handoff queue when playback overlaps an open capture.
+            if frame_guard is not None:
+                try:
+                    if frame_guard(block):
+                        if level_observer is not None:
+                            try:
+                                level_observer({"rms_dbfs": float(frame_level["rms_dbfs"]), "peak_dbfs": float(frame_level["peak_dbfs"]), "noise_floor_dbfs": None, "threshold_dbfs": fixed_gate, "gate_open": False, "speech_detected": False, "speaker_inhibited": True, "captured_at": time.time()})
+                            except Exception:
+                                pass
+                        pre.clear()
+                        captured.clear()
+                        noise_levels.clear()
+                        level_trace.clear()
+                        speech_started = False
+                        speech_started_at = 0.0
+                        start_run = 0
+                        silence_run = 0
+                        resume_run = 0
+                        post_remaining = 0
+                        started_mono = time.monotonic()
+                        close_reason = "speaker inhibited"
+                        continue
+                except Exception:
+                    # A faulty diagnostic guard must not break microphone
+                    # capture; the normal generation/suppression checks remain
+                    # in the caller as a secondary safety net.
+                    pass
             level = float(frame_level["rms_dbfs"])
             peak_dbfs = max(peak_dbfs, level)
             level_trace.append(round(level, 1))
@@ -2441,6 +2578,7 @@ class VoskSpeechToText:
     def _listen_once_alsa_detailed(
         self, timeout_s: float, *, defer_local_recognition: bool = False,
         cancel_event: Optional[threading.Event] = None, level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
+        frame_guard: Optional[Callable[[bytes], bool]] = None,
     ) -> dict[str, Any]:
         if not shutil.which("arecord"):
             return {"accepted": False, "text": "", "reason": "arecord not found", "error": "arecord not found", "capture_method": "alsa"}
@@ -2480,6 +2618,7 @@ class VoskSpeechToText:
                     software_gain_db=float(getattr(self.cfg, "mic_software_gain_db", 0.0)),
                     cancel_event=cancel_event,
                     level_observer=level_observer,
+                    frame_guard=frame_guard,
                 )
             else:
                 capture = record_microphone_sample(
@@ -2590,6 +2729,7 @@ class VoskSpeechToText:
     def _listen_once_sounddevice_detailed(
         self, timeout_s: float, *, defer_local_recognition: bool = False,
         cancel_event: Optional[threading.Event] = None,
+        frame_guard: Optional[Callable[[bytes], bool]] = None,
     ) -> dict[str, Any]:
         if not self._sounddevice_import_ok or self.sd is None or self.KaldiRecognizer is None or self.model is None:
             return {"accepted": False, "text": "", "reason": "sounddevice unavailable", "error": "sounddevice is not available"}
@@ -2597,7 +2737,13 @@ class VoskSpeechToText:
         collected = bytearray()
         def callback(indata, frames, time_info, status):  # type: ignore[no-untyped-def]
             if status: print(f"[audio] input status: {status}")
-            data = bytes(indata); collected.extend(data); q.put(data)
+            data = bytes(indata)
+            try:
+                if frame_guard is not None and frame_guard(data):
+                    return
+            except Exception:
+                pass
+            collected.extend(data); q.put(data)
         started = time.monotonic()
         try:
             kwargs: dict[str, Any] = {"samplerate": self.cfg.sample_rate, "blocksize": 4000, "dtype": "int16", "channels": 1, "callback": callback}
@@ -2647,6 +2793,7 @@ class VoskSpeechToText:
     def listen_once_detailed(
         self, timeout_s: Optional[float] = None, *, defer_local_recognition: bool = False,
         cancel_event: Optional[threading.Event] = None, level_observer: Optional[Callable[[dict[str, Any]], None]] = None,
+        frame_guard: Optional[Callable[[bytes], bool]] = None,
     ) -> dict[str, Any]:
         if not self.ready:
             self.last_result = {"accepted": False, "text": "", "reason": "STT not ready", "error": self.error}
@@ -2658,6 +2805,7 @@ class VoskSpeechToText:
         if method in {"auto", "alsa", "arecord"}:
             result = self._listen_once_alsa_detailed(
                 timeout, defer_local_recognition=defer_local_recognition, cancel_event=cancel_event, level_observer=level_observer
+                , frame_guard=frame_guard
             )
             attempts.append(result)
             # ALSA is the selected and preferred UNO Q path. A normal rejection
@@ -2677,7 +2825,8 @@ class VoskSpeechToText:
                 return dict(result)
 
         result = self._listen_once_sounddevice_detailed(
-            timeout, defer_local_recognition=defer_local_recognition, cancel_event=cancel_event
+            timeout, defer_local_recognition=defer_local_recognition, cancel_event=cancel_event,
+            frame_guard=frame_guard,
         )
         attempts.append(result)
         self.last_result = result
@@ -2780,19 +2929,66 @@ def _bx1_player_command(player: str, filename: str, volume: int | float | str = 
     return [player, filename]
 
 
+def _bx1_audio_duration_s(filename: str) -> Optional[float]:
+    """Return the media duration when it can be measured without playback."""
+    try:
+        suffix = Path(filename).suffix.lower()
+        if suffix == ".wav":
+            with wave.open(filename, "rb") as wf:
+                return round(wf.getnframes() / float(wf.getframerate() or 1), 3)
+        probe = shutil.which("ffprobe")
+        if probe:
+            result = subprocess.run(
+                [probe, "-v", "error", "-show_entries", "format=duration", "-of", "default=noprint_wrappers=1:nokey=1", filename],
+                capture_output=True, text=True, timeout=3, check=False,
+            )
+            value = float((result.stdout or "").strip())
+            return round(value, 3) if value > 0 else None
+    except (OSError, ValueError, TypeError, wave.Error, subprocess.SubprocessError):
+        pass
+    return None
+
+
 def _bx1_play_file(player: str, filename: str, volume: int | float | str = 80, wav: bool = False, playback_device: str = "default") -> dict:
     cmd = _bx1_player_command(player, filename, volume, wav=wav, playback_device=playback_device)
+    signal: dict[str, Any] = {"output_rms_dbfs": None, "output_peak_dbfs": None, "output_non_silent": False, "output_active": False, "output_source": filename, "output_device": playback_device, "output_started_at": "", "output_finished_at": "", "generated_audio_duration_s": _bx1_audio_duration_s(filename), "playback_elapsed_s": None, "playback_termination_state": "not_started"}
+    if wav:
+        try:
+            with wave.open(filename, "rb") as wf:
+                raw = wf.readframes(wf.getnframes())
+            samples = array("h"); samples.frombytes(raw)
+            if sys.byteorder != "little": samples.byteswap()
+            if samples:
+                peak = max(abs(int(s)) for s in samples) / 32768.0
+                rms = math.sqrt(sum(float(s) * float(s) for s in samples) / len(samples)) / 32768.0
+                signal.update({"output_rms_dbfs": round(20 * math.log10(max(rms, 1e-9)), 2), "output_peak_dbfs": round(20 * math.log10(max(peak, 1e-9)), 2), "output_non_silent": peak > 0.003, "output_active": peak > 0.003})
+        except Exception as exc:
+            signal["output_error"] = str(exc)
+    signal["output_started_at"] = _bx1_now_iso()
+    started = time.perf_counter()
     try:
         res = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=60, check=False)
+        signal["output_finished_at"] = _bx1_now_iso()
+        signal["playback_elapsed_s"] = round(time.perf_counter() - started, 3)
+        signal["playback_termination_state"] = "completed" if res.returncode == 0 else "returned_nonzero"
         return {
             "ok": res.returncode == 0,
             "command": cmd,
             "returncode": res.returncode,
             "stdout": (res.stdout or "").strip()[:500],
             "stderr": (res.stderr or "").strip()[:500],
+            **signal,
         }
+    except subprocess.TimeoutExpired as exc:
+        signal["output_finished_at"] = _bx1_now_iso()
+        signal["playback_elapsed_s"] = round(time.perf_counter() - started, 3)
+        signal["playback_termination_state"] = "timeout"
+        return {"ok": False, "command": cmd, "error": str(exc), "returncode": None, **signal}
     except Exception as exc:
-        return {"ok": False, "command": cmd, "error": str(exc)}
+        signal["output_finished_at"] = _bx1_now_iso()
+        signal["playback_elapsed_s"] = round(time.perf_counter() - started, 3)
+        signal["playback_termination_state"] = "exception"
+        return {"ok": False, "command": cmd, "error": str(exc), **signal}
 
 
 def _bx1_tts_diagnostics(self: TextToSpeech) -> dict:
@@ -2850,7 +3046,7 @@ def _bx1_tts_diagnostics(self: TextToSpeech) -> dict:
     return diag
 
 
-def _bx1_test_speech_blocking(self: TextToSpeech, text: str) -> dict:
+def _bx1_test_speech_blocking(self: TextToSpeech, text: str, on_audio_ready: Optional[Callable[[dict[str, Any]], None]] = None) -> dict:
     """Blocking diagnostic speech with the same mouth events as normal replies.
 
     Older diagnostics played the generated file directly and bypassed the TTS
@@ -2925,8 +3121,13 @@ def _bx1_test_speech_blocking(self: TextToSpeech, text: str) -> dict:
                     report["message"] = "Edge TTS did not generate a valid MP3. Check internet access and the selected Edge voice."
                     return report
                 self._emit_mouth_event("speech_start", dict(event_info, filename=tmp_name, wav=False, audio_profile={}))
+                if on_audio_ready is not None:
+                    on_audio_ready({"generated_audio_duration_s": _bx1_audio_duration_s(tmp_name), "filename": tmp_name, "wav": False, "player": player})
                 play = _bx1_play_file(player, tmp_name, self.cfg.tts_volume, wav=False, playback_device=self.cfg.tts_playback_device)
+                self.last_playback_report = dict(play)
                 report["playback"] = play
+                report["speaker"] = self.speaker_controller.snapshot()
+                report["generated_audio_duration_s"] = play.get("generated_audio_duration_s")
                 report["ok"] = bool(play.get("ok"))
                 report["message"] = "Edge TTS natural voice generated and played." if report["ok"] else "Edge TTS generated MP3, but playback failed."
                 return report
@@ -2947,6 +3148,7 @@ def _bx1_test_speech_blocking(self: TextToSpeech, text: str) -> dict:
             report["fallback_reason"] = tts_report.get("fallback_reason", "")
             report["audio_format"] = tts_report.get("audio_format")
             report["audio_duration_sec"] = tts_report.get("audio_duration_sec")
+            report["generated_audio_duration_s"] = tts_report.get("audio_duration_sec")
             if not tts_report.get("ok"):
                 report["message"] = "Brain voice service did not generate audio: " + str(tts_report.get("error") or tts_report)
                 return report
@@ -2961,8 +3163,13 @@ def _bx1_test_speech_blocking(self: TextToSpeech, text: str) -> dict:
                 profile = _bx1_build_wav_mouth_profile(filename) if wav else {"ok": False, "levels": [], "frame_s": 0.055, "duration_s": 0.0, "source": filename}
                 event_name = "speech_audio_file_start" if wav else "speech_start"
                 self._emit_mouth_event(event_name, dict(event_info, filename=filename, wav=wav, audio_profile=profile))
+                if on_audio_ready is not None:
+                    on_audio_ready({"generated_audio_duration_s": profile.get("duration_s") or _bx1_audio_duration_s(filename), "filename": filename, "wav": wav, "player": player})
                 play = _bx1_play_file(player, filename, self.cfg.tts_volume, wav=wav, playback_device=self.cfg.tts_playback_device)
+                self.last_playback_report = dict(play)
                 report["playback"] = play
+                report["speaker"] = self.speaker_controller.snapshot()
+                report["generated_audio_duration_s"] = play.get("generated_audio_duration_s") or report.get("generated_audio_duration_s")
                 report["mouth_profile"] = {
                     "ok": bool(profile.get("ok")),
                     "frames": len(profile.get("levels", [])) if isinstance(profile.get("levels"), list) else 0,

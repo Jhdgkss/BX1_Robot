@@ -4,6 +4,8 @@ from __future__ import annotations
 import sys
 import tempfile
 import threading
+import queue
+from collections import deque
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -21,12 +23,23 @@ class SpeakerSuppressionTests(unittest.TestCase):
         self.service.speaker_playback_active = False
         self.service.speaker_playback_started_mono = 0.0
         self.service.speaker_echo_tail_until_mono = 0.0
+        self.service.speaker_playback_generation = 0
+        self.service.speaker_rearm_required = False
+        self.service.speaker_rearm_quiet_since_mono = 0.0
+        self.service.speaker_playback_started_at = ""
+        self.service.speaker_playback_finished_at = ""
+        self.service.discarded_speaker_frames_total = 0
+        self.service.cleared_pre_roll_frames_total = 0
+        self.service.voice_stt_queue = queue.Queue(maxsize=1)
+        self.service.speaker_gate = main.SpeakerActiveMicrophoneGate(echo_tail_ms=1500)
         self.events = []
         self.service.set_voice_runtime = lambda state, label="", **updates: self.events.append((state, label, updates))
         self.service.get_voice_runtime_snapshot = lambda: {"loop_active": True}
+        self.service.recent_robot_speech = deque()
+        self.service._normalise_spoken_text = lambda text: " ".join(str(text).lower().split())
 
     def test_actual_playback_then_tail_transitions(self) -> None:
-        with patch.object(main.time, "monotonic", side_effect=[10.0, 10.0, 12.0, 12.2]):
+        with patch.object(main.time, "monotonic", side_effect=[10.0, 10.0, 12.0, 12.2, 12.2, 12.2, 12.2, 12.2]):
             self.service._speaker_playback_started()
             self.assertTrue(self.service.speaker_suppression_snapshot()["playback_active"])
             self.service._speaker_playback_finished()
@@ -60,6 +73,19 @@ class SpeakerSuppressionTests(unittest.TestCase):
         self.service._process_voice_worker_result({"accepted": True, "text": "hello leo", "confidence": 0.9})
         self.assertEqual(submitted, [])
         self.assertEqual(self.events[-1][0], "echo_suppressed")
+
+    def test_per_frame_guard_blocks_playback_and_tail_frames(self) -> None:
+        self.service._speaker_playback_started()
+        self.assertTrue(self.service.production_microphone_frame_guard(b"speaker"))
+        self.service._speaker_playback_finished()
+        self.assertTrue(self.service.production_microphone_frame_guard(b"tail"))
+
+    def test_near_verbatim_tts_copy_is_rejected_with_minor_stt_errors(self) -> None:
+        self.service.recent_robot_speech.append((0.0, "Hey there I was wondering about the battery level today"))
+        with patch.object(main.time, "monotonic", return_value=10.0):
+            rejected, score = self.service.is_likely_tts_echo("hey there i was wonderin about the battery level today")
+        self.assertTrue(rejected)
+        self.assertGreaterEqual(score, 0.78)
 
     def test_idle_life_playback_suppression_never_submits_its_audio(self) -> None:
         submitted = []

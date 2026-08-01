@@ -864,6 +864,7 @@ class BX1RobotBodyService:
             chat_timeout_s=int(config.get("chat_timeout_s", 180)),
             vision_timeout_s=int(config.get("vision_timeout_s", 180)),
             command_ack_timeout_s=int(config.get("command_ack_timeout_s", 10)),
+            endpoint_candidates=list(config.get("brain_endpoint_candidates", []) or []) or None,
         ))
         self.tts = TextToSpeech(self.build_audio_config())
         if hasattr(self.tts, "set_mouth_event_handler"):
@@ -918,6 +919,8 @@ class BX1RobotBodyService:
         self.manual_retained_recordings: Dict[str, str] = {}
         self.loopback_lock = threading.Lock()
         self.loopback_cancel = threading.Event()
+        self.loopback_capture_stop = threading.Event()
+        self.loopback_session: Dict[str, Any] = {"capture_id": "", "running": False, "worker": None}
         self.loopback_state: Dict[str, Any] = {"state": "ready", "capture_id": "", "error_code": "", "error": ""}
         self.loopback_wav = ""
         self._mic_devices_cache: Dict[str, Any] = {"ok": False, "devices": []}
@@ -1014,7 +1017,11 @@ class BX1RobotBodyService:
         self.speaker_playback_lock = threading.Lock()
         self.speaker_playback_active = False
         self.speaker_playback_started_mono = 0.0
+        self.speaker_playback_started_at = ""
+        self.speaker_playback_finished_at = ""
         self.speaker_echo_tail_until_mono = 0.0
+        self.discarded_speaker_frames_total = 0
+        self.cleared_pre_roll_frames_total = 0
         self.speaker_playback_generation = 0
         self.speaker_rearm_required = False
         self.speaker_rearm_quiet_since_mono = 0.0
@@ -1323,6 +1330,22 @@ class BX1RobotBodyService:
                     "quiet_dwell_remaining_s": round(max(0.0, dwell_s - quiet_elapsed), 2) if rearm_required and tail_remaining <= 0.0 else 0.0,
                     "suppressed": active or tail_remaining > 0.0 or rearm_required}
 
+    def production_microphone_frame_guard(self, frame: bytes = b"") -> bool:
+        """Authoritative per-frame production microphone inhibition.
+
+        Frames captured during playback, echo tail, or quiet-dwell rearming
+        are discarded before they can enter endpointing, VAD, pre-roll or the
+        STT queue. The hardware stream stays open for telemetry.
+        """
+        suppression = self.speaker_suppression_snapshot()
+        if not suppression.get("suppressed"):
+            return False
+        # Keep the gate's discard counters/events authoritative even after the
+        # echo-tail timer has elapsed but before quiet dwell completes.
+        self.speaker_gate.discard_frame(frame, force=True)
+        self.discarded_speaker_frames_total = int(getattr(self, "discarded_speaker_frames_total", 0)) + 1
+        return True
+
     def _observe_speaker_rearm(self, rms_dbfs: Any, threshold_dbfs: Any) -> None:
         """Wake re-arms only after the echo tail and a quiet live-capture dwell."""
         try:
@@ -1348,6 +1371,10 @@ class BX1RobotBodyService:
                 self.speaker_rearm_required = False
                 ready = True
         if ready:
+            # Explicitly reopen the shared gate only after tail and quiet
+            # dwell have both completed; this emits the matching diagnostic
+            # event and keeps all capture paths on the same lifecycle.
+            self.speaker_gate.open()
             self.set_voice_runtime("listening", "Ready for wake.", loop_active=True, last_error="")
 
     def _speaker_playback_started(self) -> None:
@@ -1355,6 +1382,8 @@ class BX1RobotBodyService:
         with self.speaker_playback_lock:
             self.speaker_playback_active = True
             self.speaker_playback_started_mono = time.monotonic()
+            self.speaker_playback_started_at = now_iso()
+            self.speaker_playback_finished_at = ""
             self.speaker_echo_tail_until_mono = 0.0
             self.speaker_playback_generation += 1
             self.speaker_rearm_required = True
@@ -1376,11 +1405,14 @@ class BX1RobotBodyService:
 
     def _speaker_playback_finished(self) -> None:
         tail_s = self._speaker_echo_tail_s()
+        discarded_since_start = int(self.speaker_gate.snapshot().get("discarded_frames", 0))
         with self.speaker_playback_lock:
             self.speaker_playback_active = False
+            self.speaker_playback_finished_at = now_iso()
             self.speaker_echo_tail_until_mono = time.monotonic() + tail_s
             self.speaker_rearm_required = True
             self.speaker_rearm_quiet_since_mono = 0.0
+            self.cleared_pre_roll_frames_total = int(getattr(self, "cleared_pre_roll_frames_total", 0)) + discarded_since_start
         self.speaker_gate.finish()
         self.speaker_gate.flush()
         self.set_voice_runtime("echo_suppressed", f"Speaker playback finished — wake detection suppressed for {tail_s:.1f}s.",
@@ -1450,7 +1482,9 @@ class BX1RobotBodyService:
             tts_rate=int(self.cfg.get("tts_rate", 155)),
             tts_pitch=int(self.cfg.get("tts_pitch", 35)),
             tts_volume=int(self.cfg.get("tts_volume", 80)),
-            tts_playback_device=str(self.cfg.get("tts_playback_device", "default")),
+            tts_playback_device=str(self.cfg.get("tts_playback_device", "plughw:CARD=Device,DEV=0")),
+            tts_mixer_card=int(self.cfg.get("tts_mixer_card", 1)),
+            tts_mixer_control=str(self.cfg.get("tts_mixer_control", "Speaker")),
             brain_tts_base_url=brain_tts_url,
             brain_tts_engine=str(self.cfg.get("brain_tts_engine", "dottts")),
             brain_tts_voice=str(self.cfg.get("brain_tts_voice", "active_profile")),
@@ -3191,6 +3225,7 @@ class BX1RobotBodyService:
                         defer_local_recognition=self._defer_local_vosk_for_primary_stt(),
                         cancel_event=self.manual_audio_capture_requested,
                         level_observer=self.update_live_voice_observation,
+                        frame_guard=self.production_microphone_frame_guard,
                     )
                     if self.speaker_gate.discard_frame(stt_result.get("audio_bytes", b"")):
                         self.set_voice_runtime("echo_suppressed", "Microphone frame discarded while speaker gate is closed.", loop_active=True)
@@ -5199,21 +5234,44 @@ class BX1RobotBodyService:
         if "microphone_privacy_muted" in data: self.microphone_privacy_muted = bool(data["microphone_privacy_muted"])
         if "listening_paused" in data: self.listening_paused = bool(data["listening_paused"])
         if "speaker_muted" in data: self.speaker_muted = bool(data["speaker_muted"])
+        if "speaker_muted" in data:
+            speaker_result = self.tts.speaker_controller.apply(muted=self.speaker_muted)
+            if not speaker_result.get("apply_ok"):
+                return {"ok": False, "error": speaker_result.get("last_error") or "speaker mute apply failed", "controls": self.web_audio_controls()}
         if "tts_volume" in data:
-            try: self.cfg["tts_volume"] = max(0, min(100, int(float(data["tts_volume"]))))
-            except (TypeError, ValueError): pass
+            try:
+                requested = max(0, min(100, int(float(data["tts_volume"]))))
+                previous = int(self.cfg.get("tts_volume", 80))
+                self.cfg["tts_volume"] = requested
+                self.tts.update_config(self.build_audio_config())
+                if not self.tts.speaker_controller.snapshot().get("apply_ok"):
+                    self.cfg["tts_volume"] = previous
+                    self.tts.update_config(self.build_audio_config())
+                    return {"ok": False, "error": self.tts.speaker_controller.snapshot().get("last_error") or "speaker volume apply failed", "controls": self.web_audio_controls()}
+            except (TypeError, ValueError):
+                return {"ok": False, "error": "tts_volume must be numeric", "controls": self.web_audio_controls()}
         self.cfg.update({"microphone_privacy_muted": self.microphone_privacy_muted, "listening_paused": self.listening_paused, "speaker_muted": self.speaker_muted})
         self.save_config_file()
         return {"ok": True, "controls": self.web_audio_controls()}
 
     def web_audio_controls(self) -> Dict[str, Any]:
         gate = self.speaker_gate.snapshot(); runtime = self.get_voice_runtime_snapshot()
+        speaker = self.tts.speaker_controller.snapshot()
         return {"microphone_privacy_muted": self.microphone_privacy_muted, "listening_paused": self.listening_paused, "speaker_muted": self.speaker_muted,
                 "speaker_active": gate["speaker_active"], "microphone_gate_closed": gate["microphone_gate_closed"], "echo_tail": gate["echo_tail"],
                 "echo_tail_remaining_s": gate["echo_tail_remaining_s"], "wake_matching_suspended": gate["microphone_gate_closed"] or self.listening_paused,
                 "stt_submission_suspended": gate["microphone_gate_closed"] or self.microphone_privacy_muted,
                 "microphone_state": "muted" if self.microphone_privacy_muted else ("paused" if self.listening_paused else "listening"),
-                "wake_state": runtime.get("state", "idle"), "speaker_volume": int(self.cfg.get("tts_volume", 80))}
+                "wake_state": runtime.get("state", "idle"), "speaker_volume": int(speaker.get("effective_volume_percent") if speaker.get("effective_volume_percent") is not None else self.cfg.get("tts_volume", 80)), "speaker_controller": speaker, "output": dict(getattr(self.tts, "last_playback_report", {}) or {}),
+                "microphone_submission_inhibited": bool(gate["microphone_gate_closed"] or self.microphone_privacy_muted or self.listening_paused),
+                "inhibit_reason": "speaker_playback" if gate["speaker_active"] else ("echo_tail" if gate["echo_tail"] else ("privacy_mute" if self.microphone_privacy_muted else ("listening_paused" if self.listening_paused else ""))),
+                "playback_started_at": self.speaker_playback_started_at,
+                "playback_finished_at": self.speaker_playback_finished_at,
+                "echo_tail_remaining_ms": int(round(float(gate["echo_tail_remaining_s"]) * 1000)),
+                "quiet_dwell_active": bool(runtime.get("speaker_suppression", {}).get("rearm_required")),
+                "discarded_speaker_frames": int(getattr(self, "discarded_speaker_frames_total", 0)),
+                "cleared_pre_roll_frames": int(getattr(self, "cleared_pre_roll_frames_total", 0)),
+                "pending_stt_queue_depth": int(self.voice_stt_queue.qsize())}
 
     def web_stop_speaking(self) -> Dict[str, Any]:
         for name in ("stop", "stop_speaking", "cancel"):
@@ -5480,18 +5538,27 @@ class BX1RobotBodyService:
             self.web_log("error", f"TTS diagnostics failed: {exc}")
             return {"ok": False, "error": str(exc)}
 
-    def web_test_speech(self, text: str = "") -> Dict[str, Any]:
+    def web_test_speech(self, text: str = "", volume_percent: Optional[int] = None, playback_device: Optional[str] = None, source: str = "robot_web_speech_test", playback_observer: Optional[Callable[[Dict[str, Any]], None]] = None) -> Dict[str, Any]:
         test_text = str(text or f"Speech test. {self.robot_name} voice system online. Gravity remains suspicious.").strip()
         forced_brain_defaults = False
         old_tts_cfg = getattr(self.tts, "cfg", None)
         try:
+            temporary_tts_cfg = None
+            if old_tts_cfg is not None and (volume_percent is not None or playback_device):
+                temporary_tts_cfg = self.build_audio_config()
+                if volume_percent is not None: temporary_tts_cfg.tts_volume = clamp_int_value(volume_percent, 0, 100, int(self.cfg.get("tts_volume", 80)))
+                if playback_device: temporary_tts_cfg.tts_playback_device = str(playback_device)
+                self.tts.update_config(temporary_tts_cfg)
             if str(self.resolve_brain_tts_base_url(update_config=False) or "").strip():
-                tts_cfg = self.build_audio_config()
+                tts_cfg = temporary_tts_cfg or self.build_audio_config()
                 tts_cfg.tts_backend = "brain-tts"
                 tts_cfg.brain_tts_use_brain_defaults = True
                 self.tts.update_config(tts_cfg)
                 forced_brain_defaults = True
-            report = self.tts.test_speech_blocking(test_text)  # type: ignore[attr-defined]
+            try:
+                report = self.tts.test_speech_blocking(test_text, on_audio_ready=playback_observer)  # type: ignore[attr-defined]
+            except TypeError:
+                report = self.tts.test_speech_blocking(test_text)  # type: ignore[attr-defined]
         except AttributeError:
             self.tts.speak(test_text)
             report = {"ok": True, "message": "speech test sent", "backend_requested": self.cfg.get("tts_backend", "unknown")}
@@ -5504,22 +5571,22 @@ class BX1RobotBodyService:
                 except Exception:
                     pass
         if isinstance(report, dict):
-            report["request_source"] = "robot_web_speech_test"
+            report["request_source"] = source or "robot_web_speech_test"
             report["forced_brain_voice_defaults"] = forced_brain_defaults
         kind = "system" if report.get("ok") else "error"
         self.web_log(kind, "Speech test: " + str(report.get("message", "sent")), {
-            "request_source": "robot_web_speech_test",
+            "request_source": source or "robot_web_speech_test",
             "backend_requested": report.get("backend_requested"),
             "voice": report.get("voice"),
             "forced_brain_voice_defaults": forced_brain_defaults,
             "brain_tts": report.get("brain_tts", {}),
             "playback_device": self.cfg.get("tts_playback_device", "default"),
         })
+        return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
     def _speaker_gate_event(self, name: str, data: Dict[str, Any]) -> None:
         """Expose concise, stable gate diagnostics to Logs and the voice UI."""
         self.web_log("audio_gate", name, data)
-        return {"ok": bool(report.get("ok")), "text": test_text, "audio": self.get_audio_settings(), "report": report}
 
     def web_snapshot(self) -> Dict[str, Any]:
         state = self.latest_state or self.read_body_state()
@@ -5618,14 +5685,14 @@ class BX1RobotBodyService:
             with self.metrics_lock:
                 self.performance["last_brain_latency_ms"] = latency_ms
             self.web_log("system", f"Brain App connection OK: {self.brain.base_url} ({latency_ms} ms)")
-            return {"ok": True, "base_url": self.brain.base_url, "latency_ms": latency_ms, "status": status}
+            return {"ok": True, "base_url": self.brain.base_url, "latency_ms": latency_ms, "endpoint": self.brain.endpoint_status(), "status": status}
         except Exception as exc:
             latency_ms = round((time.perf_counter() - t0) * 1000.0, 1)
             with self.metrics_lock:
                 self.performance["last_brain_latency_ms"] = latency_ms
                 self.performance["last_error"] = str(exc)[:300]
             self.web_log("error", f"Brain App connection test failed: {exc}")
-            return {"ok": False, "base_url": self.brain.base_url, "latency_ms": latency_ms, "error": str(exc)}
+            return {"ok": False, "base_url": self.brain.base_url, "latency_ms": latency_ms, "endpoint": self.brain.endpoint_status(), "error": str(exc)}
 
     def get_chat_bridge_settings(self) -> Dict[str, Any]:
         configured = normalise_text_list(self.cfg.get("vision_trigger_phrases", []))
@@ -5697,6 +5764,7 @@ class BX1RobotBodyService:
             result = stt.listen_once_detailed(
                 float(self.cfg.get("stt_start_timeout_s", self.cfg.get("record_seconds", 8))),
                 defer_local_recognition=self._defer_local_vosk_for_primary_stt(),
+                frame_guard=self.production_microphone_frame_guard,
             )
             result = self._apply_primary_stt(result, source="web_stt_diagnostic", stt_engine=stt)
         finally:
@@ -5813,14 +5881,14 @@ class BX1RobotBodyService:
         try:
             self.brain.status()
         except Exception:
-            return {"ok": False, "state": "not_connected", "reason": "brain_status_unavailable"}
+            return {"ok": False, "state": "not_connected", "reason": "brain_status_unavailable", "endpoint": self.brain.endpoint_status()}
         try:
             # Keep the deployed Body patch to its three approved files.  Older
             # Brain clients already expose the same authenticated GET transport.
             self.brain._get_json("/api/tts/status", timeout=10)
         except Exception:
-            return {"ok": False, "state": "degraded", "reason": "brain_tts_unavailable"}
-        return {"ok": True, "state": "connected", "reason": "brain_and_tts_ready"}
+            return {"ok": False, "state": "degraded", "reason": "brain_tts_unavailable", "endpoint": self.brain.endpoint_status()}
+        return {"ok": True, "state": "connected", "reason": "brain_and_tts_ready", "endpoint": self.brain.endpoint_status()}
 
     def get_identity_settings(self) -> Dict[str, Any]:
         profile = self.get_robot_profile_payload()
@@ -6142,7 +6210,7 @@ class BX1RobotBodyService:
             state_detail = "Leo speaking — microphone wake detection temporarily suppressed"
         elif state == "echo suppressed":
             state_detail = f"Speaker echo tail — wake detection suppressed ({float(suppression.get('echo_tail_remaining_s') or 0):.1f} s remaining)"
-        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "playback_generation": suppression.get("playback_generation"), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "quiet_dwell_remaining_s": suppression.get("quiet_dwell_remaining_s"), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "vision_context": str(runtime.get("last_request_vision_context") or "off"), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
+        return {"ok": True, "schema": "bx1.body.live_voice_observation.v2", "audio": {"available": live_available, "unavailable_reason": reason, "rms_dbfs": rms if live_available else None, "peak_dbfs": peak if live_available else None, "noise_floor_dbfs": noise, "threshold_dbfs": threshold, "gate_open": bool(live.get("gate_open")) if live_available else None, "state": display_state, "state_detail": state_detail[:240], "pipeline_state": state, "wake_phrase": str(runtime.get("last_wake_word") or "")[:48], "wake_timestamp": runtime.get("last_wake_at"), "wake_remaining_s": wake_remaining, "speaker_playback_active": bool(suppression.get("playback_active")), "playback_generation": suppression.get("playback_generation"), "echo_tail_remaining_s": suppression.get("echo_tail_remaining_s"), "quiet_dwell_remaining_s": suppression.get("quiet_dwell_remaining_s"), "quiet_dwell_active": bool(suppression.get("rearm_required")), "microphone_submission_inhibited": bool(suppression.get("suppressed") or self.listening_paused or self.microphone_privacy_muted), "inhibit_reason": "speaker_playback" if suppression.get("playback_active") else ("echo_tail" if suppression.get("echo_tail_remaining_s") else ("quiet_dwell" if suppression.get("rearm_required") else ("privacy_mute" if self.microphone_privacy_muted else ("listening_paused" if self.listening_paused else "")))), "playback_started_at": self.speaker_playback_started_at, "playback_finished_at": self.speaker_playback_finished_at, "discarded_speaker_frames": int(getattr(self, "discarded_speaker_frames_total", 0)), "cleared_pre_roll_frames": int(getattr(self, "cleared_pre_roll_frames_total", 0)), "pending_stt_queue_depth": int(self.voice_stt_queue.qsize()), "last_failure_reason": rejection, "device": str(self.cfg.get("mic_device", "default")), "gain_db": float(self.cfg.get("mic_software_gain_db", 0.0)), "timestamp": sample_at, "age_seconds": age, "last_successful_update": sample_at}, "heartbeat": heartbeat, "recognition": {"latest_text": latest_text, "last_accepted_request": accepted_request, "last_discarded_audio": discarded_audio, "latest_reply": latest_reply, "engine": engine, "confidence": metrics.get("confidence"), "rejection_reason": rejection, "handoff": metrics.get("primary_stt_handoff", {}), "vision_context": str(runtime.get("last_request_vision_context") or "off"), "timestamp": runtime.get("updated_at")}, "settings": self._bx1_audio_bridge_settings(), "voice_settings": self.web_bx1_voice_settings(), "boundary": "Robot Body owns microphone capture, STT and speaker playback; BX1 OS receives bounded metadata only and never opens a device."}
 
     def _bx1_audio_bridge_settings(self) -> Dict[str, Any]:
         specs = {"mic_gain_db": ("mic_software_gain_db", -24.0, 36.0, 0.0, "dB"), "vad_threshold_dbfs": ("mic_noise_gate_dbfs", -90.0, -5.0, -48.0, "dBFS"), "minimum_speech_ms": ("stt_min_voiced_ms", 80, 3000, 280, "ms"), "end_silence_ms": ("stt_end_silence_ms", 250, 4000, 1350, "ms"), "wake_listen_timeout_s": ("wake_command_window_s", 3.0, 60.0, 15.0, "s")}
@@ -6388,17 +6456,51 @@ class BX1RobotBodyService:
         return {"ok": True, "loopback": dict(self.loopback_state), "filename": self.loopback_wav if Path(self.loopback_wav).is_file() else ""}
 
     def web_loopback_test(self, data: Dict[str, Any]) -> Dict[str, Any]:
+        """Validate and launch an isolated loopback test asynchronously."""
+        with self.loopback_lock:
+            worker = self.loopback_session.get("worker")
+            if self.loopback_session.get("running") and worker is not None and worker.is_alive():
+                return {"ok": False, "state": "failed", "error_code": "already_running", "error": "A loopback test is already running."}
+            self.loopback_session = {"capture_id": "", "running": False, "worker": None}
+        phrase_value = data.get("expected_phrase")
+        phrase = str(phrase_value or "").strip()
+        if not phrase:
+            return {"ok": False, "state": "failed", "error_code": "missing_phrase", "error": "Expected phrase is required.", "field": "expected_phrase", "received_value": phrase_value}
+        try:
+            volume = max(0, min(100, int(float(data.get("speaker_volume", self.cfg.get("tts_volume", 80))))))
+            post_roll = max(0.0, min(5.0, float(data.get("post_roll_seconds", data.get("post_roll_s", 1.0)))))
+        except (TypeError, ValueError, OverflowError):
+            return {"ok": False, "state": "failed", "error_code": "invalid_parameters", "error": "Speaker volume and post-roll must be numeric.", "field": "speaker_volume or post_roll_seconds"}
+        capture_id = str(data.get("_capture_id") or f"loopback-{int(time.time())}-{uuid.uuid4().hex[:10]}")
+        with self.loopback_lock:
+            self.loopback_cancel.clear()
+            self.loopback_wav = ""
+            self.loopback_state = {"state": "preparing", "capture_id": capture_id, "expected_phrase": phrase,
+                                   "speaker_volume": volume, "post_roll_s": post_roll, "error_code": "", "error": "",
+                                   "stage": "preparing", "started_at": now_iso(), "last_progress_at": now_iso(),
+                                   "raw_frames_received": 0, "raw_bytes_received": 0, "diagnostic_frames_written": 0,
+                                   "production_frames_discarded": 0, "production_listening_gated": True,
+                                   "diagnostic_capture_active": False, "microphone_capture_started": False,
+                                   "microphone_capture_completed": False, "playback_started": False,
+                                   "playback_completed": False, "generated_audio_duration_s": None,
+                                   "playback_timeout_s": None, "playback_elapsed_s": None}
+        worker_data = dict(data or {})
+        worker_data.update({"_capture_id": capture_id, "expected_phrase": phrase, "speaker_volume": volume, "post_roll_seconds": post_roll})
+        worker = threading.Thread(target=self._run_loopback_test, args=(worker_data,), name="bx1-loopback-test", daemon=True)
+        with self.loopback_lock:
+            self.loopback_session = {"capture_id": capture_id, "running": True, "worker": worker}
+        worker.start()
+        return {"ok": True, "state": "preparing", "capture_id": capture_id, "expected_phrase": phrase}
+
+    def _run_loopback_test(self, data: Dict[str, Any]) -> Dict[str, Any]:
         """Run an isolated speaker-to-microphone diagnostic.
 
         This deliberately uses the existing Body capture lock and playback
         lifecycle. It never enters the voice command worker or conversation.
         """
-        if not self.loopback_lock.acquire(blocking=False):
-            return {"ok": False, "state": "failed", "error_code": "already_running", "error": "A loopback test is already running."}
         phrase_value = data.get("expected_phrase")
         phrase = str(phrase_value or "").strip()
         if not phrase:
-            self.loopback_lock.release()
             return {"ok": False, "state": "failed", "error_code": "missing_phrase", "error": "Expected phrase is required.", "field": "expected_phrase", "received_value": phrase_value}
         try:
             volume_value = data.get("speaker_volume", self.cfg.get("tts_volume", 80))
@@ -6406,22 +6508,56 @@ class BX1RobotBodyService:
             volume = max(0, min(100, int(float(volume_value))))
             post_roll = max(0.0, min(5.0, float(post_roll_value)))
         except (TypeError, ValueError, OverflowError):
-            self.loopback_lock.release()
             return {"ok": False, "state": "failed", "error_code": "invalid_parameters", "error": "Speaker volume and post-roll must be numeric.", "field": "speaker_volume or post_roll_seconds"}
-        capture_id = f"loopback-{int(time.time())}-{uuid.uuid4().hex[:10]}"
+        capture_id = str(data.get("_capture_id") or f"loopback-{int(time.time())}-{uuid.uuid4().hex[:10]}")
         part = Path(tempfile.gettempdir()) / f".{capture_id}.part.wav"
         target = Path(tempfile.gettempdir()) / f"{capture_id}.wav"
-        with self.loopback_lock:
-            self.loopback_cancel.clear()
-            self.loopback_wav = ""
-            self.loopback_state = {"state": "preparing", "capture_id": capture_id, "expected_phrase": phrase,
-                                   "speaker_volume": volume, "post_roll_s": post_roll, "error_code": "", "error": "",
-                                   "started_at": now_iso()}
+        self.loopback_cancel.clear()
+        self.loopback_wav = ""
+        self.loopback_state = {"state": "preparing", "capture_id": capture_id, "expected_phrase": phrase,
+                               "speaker_volume": volume, "post_roll_s": post_roll, "error_code": "", "error": "",
+                               "stage": "preparing", "started_at": now_iso(), "last_progress_at": now_iso(),
+                               "raw_frames_received": 0, "raw_bytes_received": 0, "diagnostic_frames_written": 0,
+                               "production_frames_discarded": 0, "production_listening_gated": True,
+                               "diagnostic_capture_active": False, "microphone_capture_started": False,
+                               "microphone_capture_completed": False, "playback_started": False,
+                               "playback_completed": False, "generated_audio_duration_s": None,
+                               "playback_timeout_s": None, "playback_elapsed_s": None}
         old_volume = self.cfg.get("tts_volume", 80)
         monitor_was_running = bool(self.mic_monitor.is_running())
         got_capture_lock = False
         capture_report: Dict[str, Any] = {}
         playback_report: Dict[str, Any] = {}
+        playback_timed_out = False
+        capture_stop = self.loopback_capture_stop
+        capture_stop.clear()
+        capture_done: Optional[threading.Event] = None
+        capture_preserved = False
+        def diagnostic_frame_sink(frame: bytes) -> None:
+            self.loopback_state["raw_frames_received"] = int(self.loopback_state.get("raw_frames_received", 0)) + 1
+            self.loopback_state["raw_bytes_received"] = int(self.loopback_state.get("raw_bytes_received", 0)) + len(frame)
+            self.loopback_state["diagnostic_frames_written"] = int(self.loopback_state.get("diagnostic_frames_written", 0)) + 1
+            self.loopback_state["last_progress_at"] = now_iso()
+
+        def preserve_capture_if_valid() -> bool:
+            nonlocal capture_preserved
+            capture_stop.set()
+            if capture_done is None:
+                return False
+            try:
+                capture_done.wait(timeout=3.0)
+                if not capture_report.get("ok") or not part.is_file():
+                    return False
+                with wave.open(str(part), "rb") as wav:
+                    valid = (wav.getframerate(), wav.getnchannels(), wav.getsampwidth(), wav.getnframes()) == (16000, 1, 2, wav.getnframes()) and wav.getnframes() > 0
+                if not valid:
+                    return False
+                os.replace(part, target)
+                self.loopback_wav = str(target)
+                capture_preserved = True
+                return True
+            except (OSError, EOFError, ValueError, wave.Error):
+                return False
         try:
             self.manual_audio_capture_requested.set()
             got_capture_lock = self.audio_capture_lock.acquire(timeout=4.0)
@@ -6431,8 +6567,8 @@ class BX1RobotBodyService:
                 self.mic_monitor.stop()
                 time.sleep(0.15)
             # Include pre-roll before playback and a bounded post-roll after it.
-            capture_seconds = max(2.0, min(30.0, self.estimate_speech_guard_s(phrase, 1.2) + post_roll + 0.5))
-            self.loopback_state.update({"state": "capturing", "capture_seconds": capture_seconds})
+            capture_seconds = 30.0
+            self.loopback_state.update({"state": "capturing", "stage": "capturing", "capture_seconds": capture_seconds, "capture_started_at": now_iso(), "last_progress_at": now_iso(), "microphone_capture_started": True, "diagnostic_capture_active": True, "production_listening_gated": True})
             capture_done = threading.Event()
             def capture() -> None:
                 nonlocal capture_report
@@ -6441,34 +6577,61 @@ class BX1RobotBodyService:
                         part, device=str(self.cfg.get("mic_device", "default")),
                         sample_rate=int(self.cfg.get("sample_rate", 16000)), seconds=capture_seconds,
                         channels=int(self.cfg.get("mic_channels", 1)), cancel_event=self.loopback_cancel,
+                        frame_sink=diagnostic_frame_sink, stop_event=capture_stop,
                     )
+                    self.loopback_state["capture_finished_at"] = now_iso()
+                    self.loopback_state["last_progress_at"] = now_iso()
+                    self.loopback_state["microphone_capture_completed"] = True
+                    self.loopback_state["diagnostic_capture_active"] = False
                 finally:
                     capture_done.set()
             thread = threading.Thread(target=capture, name="bx1-loopback-capture", daemon=True)
             thread.start()
             time.sleep(0.4)  # pre-roll before the speaker is driven
-            self.loopback_state["state"] = "playing"
-            self.cfg["tts_volume"] = volume
-            try:
-                self.tts.update_config(self.build_audio_config())
-            except Exception:
-                pass
+            self.loopback_state.update({"state": "playing", "stage": "playing", "playback_started_at": now_iso(), "last_progress_at": now_iso(), "playback_started": True})
             playback_done = threading.Event()
+            playback_ready = threading.Event()
+            def playback_observer(info: Dict[str, Any]) -> None:
+                duration = info.get("generated_audio_duration_s")
+                if duration is not None:
+                    self.loopback_state.update({"generated_audio_duration_s": float(duration), "playback_timeout_s": max(3.0, float(duration) + 3.0), "last_progress_at": now_iso()})
+                playback_ready.set()
             def play_phrase() -> None:
                 nonlocal playback_report
-                try: playback_report = self.web_test_speech(phrase) or {"ok": True, "message": "speech test completed"}
-                finally: playback_done.set()
+                try:
+                    speech_result = self.web_test_speech(phrase, volume_percent=volume, playback_device=str(self.cfg.get("tts_playback_device", "plughw:CARD=Device,DEV=0")), source="loopback", playback_observer=playback_observer) or {"ok": True, "message": "speech test completed"}
+                    playback_report = dict(speech_result.get("report") or speech_result)
+                    playback = playback_report.get("playback") if isinstance(playback_report.get("playback"), dict) else {}
+                    self.loopback_state.update({"playback_completed": True, "playback_elapsed_s": playback.get("playback_elapsed_s"), "playback_return_code": playback.get("returncode"), "playback_termination_state": playback.get("playback_termination_state"), "playback_device": playback.get("output_device", self.cfg.get("tts_playback_device")), "requested_volume_percent": volume, "effective_volume_percent": playback_report.get("speaker", {}).get("effective_volume_percent", volume), "output_rms_dbfs": playback.get("output_rms_dbfs"), "output_peak_dbfs": playback.get("output_peak_dbfs"), "output_non_silent": bool(playback.get("output_non_silent", False)), "last_progress_at": now_iso()})
+                except Exception as exc:
+                    playback_report = {"ok": False, "message": str(exc), "exception": str(exc)}
+                finally:
+                    playback_ready.set()
+                    playback_done.set()
             threading.Thread(target=play_phrase, name="bx1-loopback-playback", daemon=True).start()
-            if not playback_done.wait(timeout=max(8.0, self.estimate_speech_guard_s(phrase, 1.0) + 6.0)):
+            if not playback_ready.wait(timeout=120.0):
+                raise RuntimeError("tts_generation_failed")
+            if playback_report and not playback_report.get("ok", True):
+                playback = playback_report.get("playback") if isinstance(playback_report.get("playback"), dict) else {}
+                raise RuntimeError("playback_device_failed" if playback.get("output_device") or playback.get("returncode") is not None else "playback_start_failed")
+            generated_duration = float(self.loopback_state.get("generated_audio_duration_s") or self.estimate_speech_guard_s(phrase, 1.0))
+            playback_timeout_s = max(3.0, generated_duration + 3.0)
+            self.loopback_state["playback_timeout_s"] = playback_timeout_s
+            if not playback_done.wait(timeout=playback_timeout_s):
+                playback_timed_out = True
                 try: self.web_stop_speaking()
                 except Exception: pass
-                raise RuntimeError("speaker_playback_timeout")
-            if playback_report and not playback_report.get("ok", True):
-                raise RuntimeError(str(playback_report.get("message") or "speaker_playback_failed"))
-            self.loopback_state["state"] = "transcribing"
-            capture_done.wait(timeout=capture_seconds + 4.0)
+                self.loopback_state.update({"error_code": "playback_completion_timeout", "error": "Playback did not report completion within generated duration plus safety margin."})
+            self.loopback_state.update({"state": "post_roll", "stage": "post_roll", "playback_finished_at": now_iso(), "last_progress_at": now_iso()})
+            time.sleep(post_roll)
+            capture_stop.set()
+            if not capture_done.wait(timeout=5.0):
+                raise RuntimeError("capture_timeout")
             if not capture_report.get("ok"):
-                raise RuntimeError(str(capture_report.get("error") or capture_report.get("stderr") or "microphone_capture_failed"))
+                if self.loopback_cancel.is_set() or capture_report.get("cancelled"):
+                    raise RuntimeError("cancelled")
+                raise RuntimeError("microphone_capture_failed")
+            self.loopback_state.update({"state": "transcribing", "stage": "transcribing", "last_progress_at": now_iso()})
             with wave.open(str(part), "rb") as wav:
                 if (wav.getframerate(), wav.getnchannels(), wav.getsampwidth(), wav.getnframes()) != (16000, 1, 2, wav.getnframes()) or wav.getnframes() <= 0:
                     raise RuntimeError("invalid_loopback_wav")
@@ -6476,20 +6639,49 @@ class BX1RobotBodyService:
             self.loopback_wav = str(target)
             audio_bytes = target.read_bytes()
             stt_result = self._apply_primary_stt({"_submitted_wav_bytes": audio_bytes, "captured_at": now_iso(), "capture_method": "loopback"}, source="loopback", stt_engine=self.stt)
-            stt_state = "completed" if bool(stt_result.get("accepted")) or bool(stt_result.get("text")) else "stt_unavailable"
-            self.loopback_state.update({"state": stt_state, "recognised_phrase": str(stt_result.get("text") or ""),
+            stt_backend = str(stt_result.get("transcription_backend") or "")
+            stt_ran = stt_backend.startswith("brain_faster_whisper") or bool(stt_result.get("brain_stt"))
+            if stt_ran:
+                stt_state = "completed" if (bool(stt_result.get("accepted")) or bool(stt_result.get("text"))) else "stt_rejected"
+            elif stt_result.get("transcription_backend") == "brain_faster_whisper_rejected":
+                stt_state = "stt_rejected"
+            else:
+                stt_state = "stt_unavailable"
+            output_non_silent = bool(self.loopback_state.get("output_non_silent", False))
+            capture_analysis = capture_report.get("analysis") if isinstance(capture_report.get("analysis"), dict) else {}
+            capture_non_silent = bool(capture_analysis.get("non_silent", capture_report.get("non_silent", False))) or float(capture_analysis.get("peak_dbfs", -120.0) or -120.0) > -50.0
+            if not output_non_silent:
+                stt_state = "no_output_signal"
+            elif not capture_non_silent and not stt_result.get("text"):
+                stt_state = "no_acoustic_return"
+            elif stt_state == "stt_rejected" and not stt_result.get("text"):
+                stt_state = "no_speech_detected"
+            if playback_timed_out:
+                stt_state = "playback_completion_timeout"
+            self.loopback_state.update({"state": stt_state, "stage": stt_state, "recognised_phrase": str(stt_result.get("text") or ""),
                                         "stt": {k: v for k, v in stt_result.items() if not k.startswith("_")},
-                                        "playback": playback_report, "completed_at": now_iso(), "duration_s": capture_report.get("actual_duration_s")})
-            return {"ok": True, "state": stt_state, "capture_id": capture_id, "filename": str(target), "expected_phrase": phrase,
+                                        "playback": playback_report, "playback_device": playback_report.get("playback", {}).get("output_device", self.cfg.get("tts_playback_device")),
+                                        "effective_volume": playback_report.get("playback", {}).get("effective_volume_percent", volume),
+                                        "completed_at": now_iso(), "duration_s": capture_report.get("actual_duration_s"), "microphone_capture_duration_s": capture_report.get("actual_duration_s"),
+                                        "diagnostic_stage": "STT result", "acoustic_speech_detected": capture_non_silent,
+                                        "stt_backend": stt_backend or stt_result.get("transcription_backend", ""),
+                                        "stt_outcome": stt_state})
+            return {"ok": not playback_timed_out, "state": stt_state, "capture_id": capture_id, "filename": str(target), "expected_phrase": phrase,
                     "recognised_phrase": str(stt_result.get("text") or ""), "stt": self.loopback_state.get("stt", {}), "playback": playback_report}
         except Exception as exc:
             code = str(exc).split(":", 1)[0] or "loopback_failed"
-            self.loopback_state.update({"state": "failed", "error_code": code, "error": str(exc)[:240], "playback": playback_report, "capture": capture_report})
-            try: part.unlink(missing_ok=True)
-            except OSError: pass
-            return {"ok": False, "state": "failed", "capture_id": capture_id, "error_code": code, "error": str(exc)[:240], "playback": playback_report}
+            stage = str(self.loopback_state.get("stage") or "loopback")
+            if "timeout" in str(exc).lower() and code == "capture_timeout": stage = "capturing"
+            cancelled = self.loopback_cancel.is_set() or str(exc).lower() == "cancelled"
+            if code in {"playback_start_failed", "playback_device_failed", "tts_generation_failed"}:
+                capture_preserved = preserve_capture_if_valid()
+            self.loopback_state.update({"state": "cancelled" if cancelled else "failed", "stage": "cancelled" if cancelled else stage, "error_code": "cancelled" if cancelled else code, "error": "Loopback test cancelled." if cancelled else str(exc)[:240], "playback": playback_report, "capture": capture_report, "capture_preserved": capture_preserved, "last_progress_at": now_iso()})
+            if not capture_preserved:
+                try: part.unlink(missing_ok=True)
+                except OSError: pass
+            return {"ok": False, "state": "failed", "capture_id": capture_id, "error_code": code, "error": str(exc)[:240], "filename": str(target) if capture_preserved else "", "playback": playback_report}
         finally:
-            self.cfg["tts_volume"] = old_volume
+            capture_stop.set()
             try: self.tts.update_config(self.build_audio_config())
             except Exception: pass
             if got_capture_lock:
@@ -6499,16 +6691,19 @@ class BX1RobotBodyService:
                 try:
                     self._refresh_mic_monitor_settings(); self.mic_monitor.start()
                 except Exception: pass
-            self.loopback_lock.release()
+            with self.loopback_lock:
+                if self.loopback_session.get("capture_id") == capture_id:
+                    self.loopback_session.update({"running": False, "worker": None})
 
     def web_loopback_action(self, action: str) -> Dict[str, Any]:
         if action == "cancel":
             self.loopback_cancel.set()
+            self.loopback_capture_stop.set()
             self.manual_audio_capture_requested.set()
             try: self.web_stop_speaking()
             except Exception: pass
-            self.loopback_state.update({"state": "failed", "error_code": "cancelled", "error": "Loopback test cancelled."})
-            return {"ok": True, "state": "failed", "error_code": "cancelled"}
+            self.loopback_state.update({"state": "cancelled", "error_code": "cancelled", "error": "Loopback test cancelled."})
+            return {"ok": True, "state": "cancelled", "error_code": "cancelled"}
         if action == "delete":
             path = Path(self.loopback_wav) if self.loopback_wav else None
             if path and path.is_file(): path.unlink(missing_ok=True)

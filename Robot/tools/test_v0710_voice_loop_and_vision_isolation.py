@@ -17,6 +17,7 @@ class VoiceLoopAndVisionIsolationTests(unittest.TestCase):
         cls.body = (ROOT / "main.py").read_text(encoding="utf-8")
         cls.client = (ROOT / "bx1_robot_client.py").read_text(encoding="utf-8")
         cls.brain = (REPO / "Brain" / "main_pyqt.py").read_text(encoding="utf-8")
+        cls.audio = (ROOT / "audio_io.py").read_text(encoding="utf-8")
         ast.parse(cls.body)
         ast.parse(cls.client)
         ast.parse(cls.brain)
@@ -32,6 +33,16 @@ class VoiceLoopAndVisionIsolationTests(unittest.TestCase):
         self.assertIn("speaker_rearm_quiet_since_mono", self.body)
         self.assertIn('self.set_voice_runtime("listening", "Ready for wake."', self.body)
         self.assertIn('"quiet_dwell_remaining_s"', self.body)
+
+    def test_speaker_gate_is_applied_before_endpointing_and_queue_handoff(self) -> None:
+        self.assertIn("frame_guard: Optional[Callable[[bytes], bool]] = None", self.audio)
+        self.assertIn("if frame_guard(block):", self.audio)
+        self.assertIn("pre.clear()", self.audio)
+        self.assertIn("frame_guard=self.production_microphone_frame_guard", self.body)
+
+    def test_diagnostics_expose_inhibit_and_discard_state(self) -> None:
+        for field in ("microphone_submission_inhibited", "inhibit_reason", "discarded_speaker_frames", "pending_stt_queue_depth"):
+            self.assertIn(field, self.body)
 
     def test_normal_chat_explicitly_disables_vision_context(self) -> None:
         self.assertIn('"vision_context": False', self.client)

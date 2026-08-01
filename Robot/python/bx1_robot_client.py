@@ -4,6 +4,7 @@ import base64
 import json
 import tempfile
 import time
+import uuid
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -19,6 +20,90 @@ class BrainClientConfig:
     chat_timeout_s: int = 180
     vision_timeout_s: int = 180
     command_ack_timeout_s: int = 10
+    endpoint_candidates: Optional[List[str]] = None
+
+
+class EndpointResolver:
+    """Local-first endpoint selection without replaying non-idempotent calls."""
+
+    def __init__(self, configured: str, candidates: Optional[List[str]] = None) -> None:
+        configured = str(configured or "").rstrip("/")
+        raw = [str(item or "").rstrip("/") for item in (candidates or [])]
+        if not raw:
+            raw = ["http://192.168.68.53:8765", "http://100.92.216.101:8765"]
+        # Local is always preferred for the known BX1 routes. Preserve a
+        # legacy single URL by retaining it after the preferred candidates.
+        preferred = ["http://192.168.68.53:8765", "http://100.92.216.101:8765"]
+        if configured and configured not in raw:
+            raw.append(configured)
+        raw = preferred + raw
+        self.candidates = list(dict.fromkeys(item for item in raw if item))
+        self.active = self.candidates[0] if self.candidates else ""
+        self.active_route = self._route(self.active)
+        self.last_success_at = ""
+        self.last_failure_reason = ""
+        self.last_latency_ms: Optional[float] = None
+        self.last_local_probe: Dict[str, Any] = {"state": "not_probed"}
+        self.last_fallback_probe: Dict[str, Any] = {"state": "not_probed"}
+        self._last_probe = 0.0
+
+    @staticmethod
+    def _route(url: str) -> str:
+        if "100.92.216.101" in url or "100.72.130.12" in url:
+            return "tailscale"
+        if "192.168." in url or "127.0.0.1" in url or "localhost" in url:
+            return "local"
+        return "configured"
+
+    def snapshot(self) -> Dict[str, Any]:
+        return {
+            "preferred_endpoint": self.candidates[0] if self.candidates else "",
+            "active_endpoint": self.active,
+            "active_route": self.active_route,
+            "candidates": list(self.candidates),
+            "latency_ms": self.last_latency_ms,
+            "last_success_at": self.last_success_at,
+            "last_failure_reason": self.last_failure_reason,
+            "local_probe": dict(self.last_local_probe),
+            "fallback_probe": dict(self.last_fallback_probe),
+        }
+
+    def choose(self, headers: Optional[Dict[str, str]] = None, timeout: float = 1.5, force: bool = False) -> str:
+        if self.active and not force and (time.monotonic() - self._last_probe) < 10.0:
+            return self.active
+        last_error = ""
+        for candidate in self.candidates:
+            started = time.perf_counter()
+            try:
+                response = requests.get(f"{candidate}/api/status", headers=headers or {}, timeout=timeout)
+                if response.status_code >= 500:
+                    raise RuntimeError(f"HTTP {response.status_code}")
+                self.active = candidate
+                self.active_route = self._route(candidate)
+                self.last_latency_ms = round((time.perf_counter() - started) * 1000.0, 1)
+                self.last_success_at = now_iso()
+                self.last_failure_reason = ""
+                probe = {"state": "available", "latency_ms": self.last_latency_ms, "at": self.last_success_at}
+                if self._route(candidate) == "local":
+                    self.last_local_probe = probe
+                elif self._route(candidate) == "tailscale":
+                    self.last_fallback_probe = probe
+                self._last_probe = time.monotonic()
+                return candidate
+            except Exception as exc:
+                last_error = str(exc)
+                probe = {"state": "unavailable", "error": last_error}
+                if self._route(candidate) == "local":
+                    self.last_local_probe = probe
+                elif self._route(candidate) == "tailscale":
+                    self.last_fallback_probe = probe
+        self._last_probe = time.monotonic()
+        self.last_failure_reason = last_error or "no endpoint candidates configured"
+        raise RuntimeError(f"No Brain endpoint is reachable: {self.last_failure_reason}")
+
+    def mark_failure(self, reason: str) -> None:
+        self.last_failure_reason = str(reason or "request failed")
+        self._last_probe = 0.0
 
 
 class BX1BrainClient:
@@ -27,6 +112,13 @@ class BX1BrainClient:
     def __init__(self, cfg: BrainClientConfig) -> None:
         self.cfg = cfg
         self.base_url = cfg.base_url.rstrip("/")
+        candidates = cfg.endpoint_candidates or [
+            self.base_url,
+            "http://192.168.68.53:8765",
+            "http://100.92.216.101:8765",
+        ]
+        self.endpoint_resolver = EndpointResolver(self.base_url, candidates)
+        self.base_url = self.endpoint_resolver.active
 
     def _headers(self) -> Dict[str, str]:
         headers = {"Content-Type": "application/json"}
@@ -59,23 +151,38 @@ class BX1BrainClient:
         return data
 
     def _require_base_url(self) -> None:
-        if not self.base_url:
+        if not self.base_url and not self.endpoint_resolver.candidates:
             raise RuntimeError("Brain App URL is not configured. Save the Brain PC address in Brain Connection.")
 
     def _get_json(self, endpoint: str, timeout: int | float = 10) -> Dict[str, Any]:
         self._require_base_url()
-        r = requests.get(f"{self.base_url}{endpoint}", headers=self._headers(), timeout=timeout)
-        return self._response_json_or_error(r, endpoint)
+        try:
+            self.base_url = self.endpoint_resolver.choose(self._headers(), timeout=min(float(timeout), 2.0))
+            r = requests.get(f"{self.base_url}{endpoint}", headers=self._headers(), timeout=timeout)
+            result = self._response_json_or_error(r, endpoint)
+            return result
+        except Exception as exc:
+            self.endpoint_resolver.mark_failure(str(exc))
+            raise
 
     def _post_json(self, endpoint: str, payload: Dict[str, Any], timeout: int | float) -> Dict[str, Any]:
         self._require_base_url()
-        r = requests.post(
-            f"{self.base_url}{endpoint}",
-            headers=self._headers(),
-            json=payload,
-            timeout=timeout,
-        )
-        return self._response_json_or_error(r, endpoint)
+        try:
+            # Probe/select before POST. A failed POST is never replayed on another route.
+            self.base_url = self.endpoint_resolver.choose(self._headers(), timeout=min(float(timeout), 2.0))
+            request_id = str(payload.get("request_id") or uuid.uuid4())
+            payload = dict(payload)
+            payload.setdefault("request_id", request_id)
+            headers = self._headers()
+            headers["X-BX1-Request-ID"] = request_id
+            r = requests.post(f"{self.base_url}{endpoint}", headers=headers, json=payload, timeout=timeout)
+            return self._response_json_or_error(r, endpoint)
+        except Exception as exc:
+            self.endpoint_resolver.mark_failure(str(exc))
+            raise
+
+    def endpoint_status(self) -> Dict[str, Any]:
+        return self.endpoint_resolver.snapshot()
 
     def status(self) -> Dict[str, Any]:
         return self._get_json("/api/status", timeout=10)

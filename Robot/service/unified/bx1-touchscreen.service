@@ -1,0 +1,20 @@
+[Unit]
+Description=BX1 Touchscreen Kiosk
+After=graphical-session.target bx1-management.service
+Wants=bx1-management.service
+ConditionPathIsDirectory=/home/arduino/BX1/current/management
+
+[Service]
+Type=simple
+User=arduino
+Group=arduino
+WorkingDirectory=/home/arduino/BX1/current/management
+EnvironmentFile=-/home/arduino/BX1/config/bx1.env
+Environment=BX1_ROOT=/home/arduino/BX1
+Environment=BX1_RUNTIME_DIR=/home/arduino/BX1/runtime
+ExecStart=/home/arduino/BX1/current/management/tools/bx1_touchscreen_kiosk.sh
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=graphical.target

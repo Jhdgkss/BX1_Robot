@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+from bx1_modules.robot_endpoint_resolver import RobotEndpointResolver
 
 
 def _safe_profile_slug(value: str) -> str:
@@ -333,6 +334,7 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "speech_cache_voice_signature": "",
     "api_include_latest_body_state_in_chat": True,
     "api_body_state_max_age_sec": 30,
+    "robot_endpoint_candidates": ["http://192.168.68.54:8088", "http://100.72.130.12:8088"],
     "live_context_followup_window_s": 900,
     "project_context": (
         "This Brain instance belongs to the BX1 robot project. John is building a two-wheel balancing body for {robot_name} "
@@ -1548,6 +1550,10 @@ class BX1BrainCore:
     def __init__(self, signals: GuiSignals, cfg: Dict[str, Any]) -> None:
         self.signals = signals
         self.cfg = cfg
+        self.robot_endpoint_resolver = RobotEndpointResolver(
+            str(cfg.get("robot_base_url", "") or ""),
+            cfg.get("robot_endpoint_candidates") if isinstance(cfg.get("robot_endpoint_candidates"), list) else None,
+        )
         self.startup_messages: List[str] = []
         self.configuration_errors: List[str] = []
         self.latest_body_state: Dict[str, Any] = {}
@@ -4248,6 +4254,12 @@ class BX1BrainCore:
             request_events = [dict(item) for item in self.request_events[-30:]]
         raw_state = state.get("raw") if isinstance(state.get("raw"), dict) else {}
         hardware_doctor = raw_state.get("hardware_doctor") if isinstance(raw_state.get("hardware_doctor"), dict) else {}
+        try:
+            robot_endpoint = self.robot_endpoint_resolver.snapshot()
+            self.robot_endpoint_resolver.choose()
+            robot_endpoint = self.robot_endpoint_resolver.snapshot()
+        except Exception:
+            robot_endpoint = self.robot_endpoint_resolver.snapshot()
         return {
             "ok": True,
             "app": "Universal Robot Brain PyQt",
@@ -4258,6 +4270,7 @@ class BX1BrainCore:
             "runtime_dir": str(RUNTIME_DIR),
             "time": now_iso(),
             "robot_api": "running",
+            "robot_endpoint": robot_endpoint,
             "telemetry_summary": summarise_body_state(state) if state else "No body telemetry yet.",
             "latest_body_state": state,
             "latest_vision_frame": frame,
