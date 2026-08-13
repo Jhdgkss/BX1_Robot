@@ -1,0 +1,110 @@
+BX1_DEV PROJECT FILE MANIFEST
+================================================================================
+
+Project root : C:\Git WorkSpace\BX_Dev\BX1_Dev
+Generated    : 2026-08-07 14:24:51
+Files found  : 52
+
+Python status:
+  USED       = reachable from configured Python entry points
+  CANDIDATE  = not found in that static dependency chain
+  -          = non-Python file / not analysed
+
+IMPORTANT:
+CANDIDATE does not prove that a file is unused.
+Dynamic imports and external/deployment scripts cannot always be detected.
+
+
+[PROJECT ROOT]
+--------------
+[-        ] .gitattributes                                             66.0 B
+[-        ] .gitignore                                                 71.0 B
+[USED     ] audio_to_robot_streamer.py                                 9.4 KB
+
+GUI
+---
+[USED     ] __init__.py                                               302.0 B
+[USED     ] connection_settings.py                                     4.8 KB
+[USED     ] gui_config.py                                              1.1 KB
+[USED     ] gui_controller.py                                          7.0 KB
+[-        ] GUI_INTEGRATION_NOTES.txt                               1,011.0 B
+[USED     ] gui_main.py                                               48.1 KB
+
+GUI\icons
+---------
+[-        ] README.txt                                                223.0 B
+
+HTML\images
+-----------
+[-        ] Robot.jpg                                                  3.3 KB
+
+HTML
+----
+[-        ] index.html                                                698.0 B
+
+[PROJECT ROOT]
+--------------
+[USED     ] incoming_audio.py                                          3.0 KB
+[-        ] leo_mic_test.wav                                         156.3 KB
+[USED     ] llm_client.py                                             84.0 KB
+[-        ] llm_client.zip                                            591.0 B
+[USED     ] Master_Main.py                                            40.0 KB
+[USED     ] Master_Main_GUI.py                                        59.5 KB
+
+memory
+------
+[-        ] conversation_history.json                                 38.7 KB
+[-        ] conversation_summary.json                                  2.6 KB
+
+[PROJECT ROOT]
+--------------
+[USED     ] pc_audio.py                                                8.3 KB
+[KEEP     ] Project_Clean_Tool.py                                     20.0 KB
+[-        ] qwen_leo_test.wav                                         93.8 KB
+[-        ] README.md                                                 787.0 B
+[-        ] README_FIRST.txt                                           2.0 KB
+[-        ] README_GUI_DEVELOPMENT.txt                                723.0 B
+[-        ] reference.wav                                            244.1 KB
+[-        ] requirements.txt                                           78.0 B
+
+settings
+--------
+[USED     ] config.py                                                  1.1 KB
+[-        ] gui_settings.json                                         148.0 B
+[USED     ] leo_prompt.py                                              8.8 KB
+[-        ] personality.json                                          276.0 B
+[USED     ] personality_manager.py                                     6.8 KB
+
+[PROJECT ROOT]
+--------------
+[USED     ] sound_effects.py                                          13.0 KB
+[-        ] sound_effects_config.json                                 879.0 B
+
+sounds
+------
+[-        ] error.wav                                                 14.8 KB
+[-        ] LEO_Sound_Pack_Bright_Engaging.zip                       190.7 KB
+[-        ] LEO_Sound_Pack_Soft_Futuristic.zip                        81.2 KB
+[-        ] listening.wav                                              6.5 KB
+[-        ] preview_all.wav                                          211.9 KB
+[-        ] README.txt                                                 1.1 KB
+[-        ] response_received.wav                                     18.1 KB
+[-        ] Sound Pack_1.zip                                          75.8 KB
+[-        ] still_thinking.wav                                        19.3 KB
+[-        ] stt_complete.wav                                           9.0 KB
+[-        ] thinking.wav                                              12.6 KB
+[-        ] wake.wav                                                  16.8 KB
+
+[PROJECT ROOT]
+--------------
+[USED     ] speech_segmenter.py                                        2.7 KB
+[USED     ] stt_engine.py                                             13.9 KB
+[USED     ] transcript_processor.py                                    4.9 KB
+[USED     ] tts_engine.py                                             14.8 KB
+
+TTS_Tests
+---------
+[-        ] reference.wav                                            244.1 KB
+
+================================================================================
+End of manifest

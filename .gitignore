@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+*.pyo
+.vscode/
+*.log
+*.tmp
+*.wav
+*.raw
+*.pcm
+
+memory/conversation_history.json
+memory/conversation_summary.json

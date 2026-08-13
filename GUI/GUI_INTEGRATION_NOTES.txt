@@ -1,0 +1,42 @@
+BX1 GUI v7 - PERSONALITY EDITOR
+
+Run:
+    python Master_Main_GUI.py
+
+New sidebar page:
+    Personality
+
+Editable:
+    Robot name
+    Honesty
+    Humour
+    Sarcasm
+    Confidence
+    Curiosity
+    Warmth
+    Directness
+    Independence
+    Emotional expression
+    Formality
+    Technical depth
+    Chattiness
+
+Saved in:
+    settings/personality.json
+
+Changing the name updates immediately:
+    Sidebar name
+    Chat heading
+    New assistant messages
+    Existing assistant messages in the current GUI session
+    Reply Inspector sender
+    Window title
+    Active LLM system prompt
+
+The active LLM conversation is retained. Master_Main_GUI.py reloads the
+existing PersonalityManager and calls llm_client._refresh_system_prompt(),
+which is the same refresh path already used by the LLM personality tool.
+
+Wake words are NOT automatically changed by renaming the personality.
+WAKE_WORDS remain controlled by settings/config.py so a display-name
+change cannot accidentally break the proven voice wake behaviour.

@@ -1,0 +1,48 @@
+BX1 PC VISION - RESTRUCTURED
+============================
+
+All PC-side vision files now live under:
+
+    Vision/
+
+Structure:
+    Vision/
+        __init__.py
+        incoming_video.py
+        vision_yolo.py
+        vision_config.py
+
+Architecture:
+    Robot webcam streamer (next stage)
+            |
+            | JPEG / WebSocket / port 8772
+            v
+    Vision/incoming_video.py
+            |
+            v
+    Master_Main_GUI.py
+            | \
+            |  +--> GUIController -> Vision page (live frame)
+            |
+            +----> Vision/vision_yolo.py
+                        |
+                        v
+                  Master_Main_GUI.py
+                        |
+                        v
+                  GUIController
+                        |
+                        v
+                  Vision page
+
+Important:
+    Master_Main_GUI.py remains the orchestrator.
+    Vision modules do not call the GUI or each other directly.
+
+Install YOLO:
+    python -m pip install ultralytics
+
+Default settings are now in:
+    Vision/vision_config.py
+
+No frames are written to disk.

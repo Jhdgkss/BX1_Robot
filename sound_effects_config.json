@@ -1,0 +1,44 @@
+{
+  "enabled": true,
+  "sounds_folder": "sounds",
+  "target_sample_rate": 24000,
+  "volume": 1.0,
+  "events": {
+    "wake_detected": {
+      "enabled": true,
+      "file": "wake.wav",
+      "volume": 1.0
+    },
+    "stt_started": {
+      "enabled": true,
+      "file": "listening.wav",
+      "volume": 0.1
+    },
+    "stt_complete": {
+      "enabled": false,
+      "file": "stt_complete.wav",
+      "volume": 1.0
+    },
+    "llm_request_sent": {
+      "enabled": true,
+      "file": "thinking.wav",
+      "volume": 1.0
+    },
+    "llm_waiting": {
+      "enabled": true,
+      "file": "still_thinking.wav",
+      "volume": 1.0,
+      "delay_seconds": 3.0
+    },
+    "llm_response_received": {
+      "enabled": false,
+      "file": "response_received.wav",
+      "volume": 1.0
+    },
+    "error": {
+      "enabled": true,
+      "file": "error.wav",
+      "volume": 1.0
+    }
+  }
+}

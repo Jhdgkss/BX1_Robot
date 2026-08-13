@@ -1,0 +1,41 @@
+{
+  "stability_history": [
+    {
+      "timestamp": "2026-08-12T22:36:12",
+      "kp": 10.0,
+      "kd": 0.5,
+      "samples": 50.0,
+      "rms_error": 0.12378085473933358,
+      "peak_error": 0.247,
+      "rms_rate": 2.500643317228589,
+      "mean_effort": 1.22,
+      "peak_effort": 2.0,
+      "score": 89.09484943284149
+    },
+    {
+      "timestamp": "2026-08-12T22:54:29",
+      "kp": 10.0,
+      "kd": 0.4,
+      "samples": 50.0,
+      "rms_error": 0.06986615775896081,
+      "peak_error": 0.205,
+      "rms_rate": 1.0418721322695985,
+      "mean_effort": 0.34,
+      "peak_effort": 2.0,
+      "score": 94.2120033182099
+    },
+    {
+      "timestamp": "2026-08-12T23:29:25",
+      "kp": 10.0,
+      "kd": 0.4,
+      "samples": 21.0,
+      "rms_error": 1.7912140336335338,
+      "peak_error": 4.856,
+      "rms_rate": 12.409428508386755,
+      "mean_effort": 5.761904761904762,
+      "peak_effort": 20.0,
+      "score": 0.0
+    }
+  ],
+  "mechanical_history": []
+}

@@ -1,0 +1,8 @@
+{
+  "robot_connection": {
+    "preferred": "LOCAL",
+    "local_ip": "192.168.68.54",
+    "tailscale_ip": "100.72.130.12",
+    "web_port": 8088
+  }
+}

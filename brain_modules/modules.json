@@ -1,0 +1,33 @@
+{
+  "format": "bx1.brain.modules.v1",
+  "modules": [
+    {
+      "id": "keyboard_drive",
+      "name": "Keyboard Drive",
+      "file": "brain_modules/modules/drive/keyboard_drive.py",
+      "enabled": false,
+      "autostart": false
+    },
+    {
+      "id": "joystick_drive",
+      "name": "Joystick / Gamepad Drive",
+      "file": "brain_modules/modules/drive/joystick_drive.py",
+      "enabled": false,
+      "autostart": false
+    },
+    {
+      "id": "my_script",
+      "name": "My Script Template",
+      "file": "brain_modules/modules/examples/my_script.py",
+      "enabled": false,
+      "autostart": false
+    },
+    {
+      "id": "led_module_example",
+      "name": "LED Module Example",
+      "file": "LED_Control/modules/led_module_example.py",
+      "enabled": false,
+      "autostart": false
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+{
+  "model_name": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+  "reference_audio": "C:/Git WorkSpace/BX_Dev/BX1_Dev/TTS_Tests/reference_Matt.wav",
+  "reference_text": "By the way, the council have left us a present. So i'm at the kitchen window washing some cup and everything to make a drink. And you know the hole at the bottom of the gate? I'm looking at it and i'm like see something on the other side. And it looks like something fury sat on the path. But you know, outside so neighbors passing can see. And i thought and then i'm looking at is , is it one of them or is it a cat? I think it might be a cat. And i thought, well i wounder if its a cat becouse its not moving.",
+  "x_vector_only_mode": true,
+  "language": "Auto",
+  "max_chunk_chars": 54,
+  "split_on_commas": true,
+  "max_new_tokens": 128,
+  "max_batch_chunks": 6,
+  "do_sample": true,
+  "top_k": 50,
+  "top_p": 0.9,
+  "temperature": 0.9,
+  "repetition_penalty": 1.05,
+  "normalise_quiet_audio": true,
+  "quiet_peak_threshold": 0.2,
+  "normalise_target_peak": 0.9
+}
